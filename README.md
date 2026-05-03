@@ -1,4 +1,4 @@
-# samanth-codex
+# samantha-codex
 
 Codex-only Samantha prototype.
 

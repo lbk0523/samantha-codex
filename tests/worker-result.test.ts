@@ -9,7 +9,7 @@ import { evaluateWorkerResult } from "../src/lib/worker-result";
 let tmpRoots: string[] = [];
 
 async function makeRepo(): Promise<{ root: string; baseCommit: string }> {
-  const root = await mkdtemp(join(tmpdir(), "samanth-codex-result-"));
+  const root = await mkdtemp(join(tmpdir(), "samantha-codex-result-"));
   tmpRoots.push(root);
   await git(["init"], root);
   await git(["config", "user.email", "samantha@example.local"], root);

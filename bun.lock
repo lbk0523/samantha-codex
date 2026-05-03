@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "samanth-codex",
+      "name": "samantha-codex",
       "devDependencies": {
         "@types/bun": "^1.3.13",
         "typescript": "^5.9.0",

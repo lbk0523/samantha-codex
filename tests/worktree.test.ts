@@ -8,7 +8,7 @@ import { git } from "../src/lib/git";
 let tmpRoots: string[] = [];
 
 async function makeRepo(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "samanth-codex-worktree-"));
+  const root = await mkdtemp(join(tmpdir(), "samantha-codex-worktree-"));
   tmpRoots.push(root);
   await git(["init"], root);
   await git(["config", "user.email", "samantha@example.local"], root);
