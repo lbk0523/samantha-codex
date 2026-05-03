@@ -1,6 +1,6 @@
 # Samantha-Codex Build Plan
 
-Last updated: 2026-05-03
+Last updated: 2026-05-04
 
 Current planning status: MVP control plane built, read-only dogfood completed, the first low-risk writer dogfood passed with a Samantha-owned commit, explicit merge apply/push gates are implemented, and the local daemon has heartbeat/lock hardening. Current focus is Telegram remote adapter dogfood using the legacy Samantha bot environment.
 
@@ -56,6 +56,10 @@ Already implemented:
 - accepted proposal to task draft flow under `state/task-drafts.jsonl`
 - local-only task draft check, update, and approval gate
 - local-only pending task dispatch into existing worker run logs and run index
+- task draft `setupCommands` promotion into worker setup
+- existing clean worktree reuse for same-task dispatch retries
+- local `tasks:retry` and `tasks:finalize-worktree` recovery commands
+- read-only `/next-action` Telegram command
 - systemd timer templates for Telegram polling and outbox replies
 - read-only static dashboard generation
 - OMHT read-only canary
@@ -64,6 +68,9 @@ Already implemented:
 Important dogfood findings:
 
 - Fresh worktrees need deterministic setup. This is why `setupCommands` exists.
+- `setupCommands` must be set before task approval when the target repo needs dependencies in an isolated worktree.
+- Failed dispatch attempts may leave clean worktrees behind; Samantha can now reuse or finalize them instead of forcing manual branch cleanup.
+- Already-merged runs should report as already integrated, not as generic HEAD mismatch failures.
 - Codex workers should not receive parent `.git` metadata write access.
 - Samantha should create commits itself after worker output passes scope and verify gates.
 - Audit logs are mandatory before 24/7 operation; otherwise Samantha cannot explain what happened after the fact.

@@ -171,6 +171,7 @@ describe("inbox and remote commands", () => {
       type: "drafts:show",
       args: { id: "draft-1" },
     });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/next-action" }, "bk").type).toBe("ops:next-action");
     expect(
       commandFromRemoteInput(
         { senderId: "bk", text: "/propose Improve status reports", receivedAt: "2026-05-03T10:00:00.000Z" },

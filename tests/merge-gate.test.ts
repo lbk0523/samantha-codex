@@ -120,8 +120,24 @@ describe("evaluateMergeGate", () => {
     const result = await evaluateMergeGate({ runLogPath: logPath, repoRoot: root });
 
     expect(result.mayMerge).toBe(true);
+    expect(result.alreadyMerged).toBe(false);
     expect(result.commit).toBe(workerCommit);
     expect(result.command).toEqual(["git", "merge", "--ff-only", workerCommit]);
+  });
+
+  test("recognizes an already integrated worker commit", async () => {
+    const { root, workerCommit, logPath } = await makeRepo();
+    await git(["merge", "--ff-only", workerCommit], root);
+
+    const result = await evaluateMergeGate({ runLogPath: logPath, repoRoot: root });
+    const apply = await applyMerge({ runLogPath: logPath, repoRoot: root });
+
+    expect(result.mayMerge).toBe(false);
+    expect(result.alreadyMerged).toBe(true);
+    expect(result.command).toBeUndefined();
+    expect(result.violations).toEqual([]);
+    expect(apply.applied).toBe(false);
+    expect(apply.verified).toBe(true);
   });
 
   test("blocks dirty target repositories", async () => {

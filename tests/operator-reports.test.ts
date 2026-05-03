@@ -7,6 +7,7 @@ import {
   draftProposeAddedReport,
   failuresReport,
   healthReport,
+  nextActionReport,
   proposalAddedReport,
   proposalsListReport,
   proposalReviewedReport,
@@ -109,12 +110,15 @@ describe("operator reports", () => {
     expect(report).toContain("/draft-propose <text>");
     expect(report).toContain("/draft <proposal-id>");
     expect(report).toContain("/run <run-id>");
+    expect(report).toContain("/next-action");
     expect(report).toContain("cannot dispatch workers");
   });
 
   test("renders compact run and failure summaries", () => {
     expect(runsListReport([passRun, failRun])).toContain("Total runs: 2");
     expect(runShowReport("run-pass", passRun)).toContain("Commit: `abcdef1234567890`");
+    expect(runShowReport("run-pass", passRun)).toContain("merge:apply");
+    expect(runShowReport("run-fail", failRun)).toContain("tasks:retry task-fail");
 
     const failures = failuresReport([passRun, failRun]);
     expect(failures).toContain("Total non-passing runs: 1");
@@ -181,6 +185,12 @@ describe("operator reports", () => {
 
     expect(report).toContain("Total tasks: 1");
     expect(report).toContain("task-pass");
+  });
+
+  test("renders next action reports", () => {
+    expect(nextActionReport({ runs: [passRun], tasks: [task] })).toContain("tasks:dispatch task-pass");
+    expect(nextActionReport({ runs: [passRun], tasks: [] })).toContain("merge:check");
+    expect(nextActionReport({ runs: [failRun], tasks: [] })).toContain("tasks:retry task-fail");
   });
 
   test("renders proposal reports without implying execution", () => {

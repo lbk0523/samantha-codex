@@ -52,6 +52,7 @@ describe("TaskDraftStore", () => {
       title: "Improve proposal copy/paste UX.",
       targetAgent: "codex-worker",
       targetFiles: [],
+      setupCommands: [],
       verifyCommands: [],
       instructions: proposal.text,
     });
@@ -72,6 +73,7 @@ describe("TaskDraftStore", () => {
     const ready = {
       ...draft,
       targetFiles: ["src/lib/task-draft-store.ts"],
+      setupCommands: ["bun install"],
       verifyCommands: ["bun test tests/task-draft-store.test.ts"],
     };
     expect(checkTaskDraft(ready, { knownAgentIds: ["codex-worker"] })).toEqual({
@@ -88,6 +90,7 @@ describe("TaskDraftStore", () => {
     const task = taskSpecFromDraft({
       ...draft,
       targetFiles: ["src/lib/task-draft-store.ts"],
+      setupCommands: ["bun install"],
       verifyCommands: ["bun test tests/task-draft-store.test.ts"],
     });
 
@@ -96,6 +99,7 @@ describe("TaskDraftStore", () => {
       status: "pending",
       targetAgent: "codex-worker",
       targetFiles: ["src/lib/task-draft-store.ts"],
+      setupCommands: ["bun install"],
       verifyCommands: ["bun test tests/task-draft-store.test.ts"],
     });
   });
@@ -130,6 +134,7 @@ describe("TaskDraftStore", () => {
       draft.id,
       {
         targetFiles: ["src/lib/task-draft-store.ts"],
+        setupCommands: ["bun install"],
         verifyCommands: ["bun test tests/task-draft-store.test.ts"],
       },
       "2026-05-04T10:03:00.000Z",
@@ -137,6 +142,7 @@ describe("TaskDraftStore", () => {
     const approved = await store.markApproved(draft.id, "2026-05-04T10:04:00.000Z");
 
     expect(updated.targetFiles).toEqual(["src/lib/task-draft-store.ts"]);
+    expect(updated.setupCommands).toEqual(["bun install"]);
     expect(approved.status).toBe("approved");
     expect(approved.approvedAt).toBe("2026-05-04T10:04:00.000Z");
     await expect(store.update(draft.id, { title: "Nope" }, "2026-05-04T10:05:00.000Z")).rejects.toThrow(
@@ -148,6 +154,7 @@ describe("TaskDraftStore", () => {
     const patch = parseTaskDraftUpdatePatch({
       title: "Updated title",
       targetFiles: ["src/lib/task-draft-store.ts"],
+      setupCommands: ["bun install"],
       status: "approved",
     });
 
@@ -156,11 +163,15 @@ describe("TaskDraftStore", () => {
       targetAgent: undefined,
       targetFiles: ["src/lib/task-draft-store.ts"],
       forbiddenChanges: undefined,
+      setupCommands: ["bun install"],
       verifyCommands: undefined,
       instructions: undefined,
     });
     expect(() => parseTaskDraftUpdatePatch({ targetFiles: "src/lib/task-draft-store.ts" })).toThrow(
       "targetFiles must be a string array",
+    );
+    expect(() => parseTaskDraftUpdatePatch({ setupCommands: "bun install" })).toThrow(
+      "setupCommands must be a string array",
     );
   });
 });

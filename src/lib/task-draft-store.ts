@@ -15,6 +15,7 @@ export interface TaskDraftRecord {
   targetAgent: string;
   targetFiles: string[];
   forbiddenChanges: string[];
+  setupCommands?: string[];
   verifyCommands: string[];
   instructions: string;
   createdAt: string;
@@ -34,6 +35,7 @@ export interface TaskDraftUpdatePatch {
   targetAgent?: string;
   targetFiles?: string[];
   forbiddenChanges?: string[];
+  setupCommands?: string[];
   verifyCommands?: string[];
   instructions?: string;
 }
@@ -59,6 +61,7 @@ export function parseTaskDraftUpdatePatch(raw: unknown): TaskDraftUpdatePatch {
     targetAgent: optionalString(value.targetAgent, "targetAgent"),
     targetFiles: optionalStringArray(value.targetFiles, "targetFiles"),
     forbiddenChanges: optionalStringArray(value.forbiddenChanges, "forbiddenChanges"),
+    setupCommands: optionalStringArray(value.setupCommands, "setupCommands"),
     verifyCommands: optionalStringArray(value.verifyCommands, "verifyCommands"),
     instructions: optionalString(value.instructions, "instructions"),
   };
@@ -109,6 +112,7 @@ export function taskDraftFromProposal(proposal: ProposalRecord, createdAt: strin
     targetAgent: "codex-worker",
     targetFiles: [],
     forbiddenChanges: [],
+    setupCommands: [],
     verifyCommands: [],
     instructions: proposal.text.trim(),
     createdAt,
@@ -149,6 +153,7 @@ export function taskSpecFromDraft(draft: TaskDraftRecord): TaskSpec {
     targetAgent: draft.targetAgent,
     targetFiles: draft.targetFiles,
     forbiddenChanges: draft.forbiddenChanges,
+    setupCommands: draft.setupCommands && draft.setupCommands.length > 0 ? draft.setupCommands : undefined,
     verifyCommands: draft.verifyCommands,
     instructions: draft.instructions,
     status: "pending",
@@ -193,6 +198,7 @@ export class TaskDraftStore {
     if (patch.targetAgent !== undefined) updated.targetAgent = patch.targetAgent;
     if (patch.targetFiles !== undefined) updated.targetFiles = patch.targetFiles;
     if (patch.forbiddenChanges !== undefined) updated.forbiddenChanges = patch.forbiddenChanges;
+    if (patch.setupCommands !== undefined) updated.setupCommands = patch.setupCommands;
     if (patch.verifyCommands !== undefined) updated.verifyCommands = patch.verifyCommands;
     if (patch.instructions !== undefined) updated.instructions = patch.instructions;
     const next = [...drafts];

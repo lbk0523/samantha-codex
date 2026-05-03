@@ -48,6 +48,37 @@ function draftLine(draft: TaskDraftRecord): string {
   return `- ${code(draft.id)} status=${code(draft.status)} source=${code(draft.sourceProposalId)} created=${code(draft.createdAt)} title=${oneLine(draft.title)}`;
 }
 
+function nextActionLinesForRun(run: RunSummary): string[] {
+  if (run.pass && run.commit) {
+    return [
+      "Suggested local next action:",
+      code(`bun run samantha merge:check --run-log=${run.logPath} --repo-root=${run.repoRoot}`),
+      code(`bun run samantha merge:apply --run-log=${run.logPath} --repo-root=${run.repoRoot}`),
+      "After merge/push, cleanup:",
+      code(`bun run samantha worktree:cleanup --run-log=${run.logPath} --repo-root=${run.repoRoot}`),
+    ];
+  }
+
+  if (run.outcome === "blocked") {
+    return [
+      "Suggested local next action:",
+      "Fix or verify the existing worker worktree, then finalize it if the changed files are acceptable.",
+      code(`bun run samantha tasks:finalize-worktree ${run.taskId} --repo-root=${run.repoRoot} --worktree=${run.worktreePath}`),
+    ];
+  }
+
+  if (!run.pass) {
+    return [
+      "Suggested local next action:",
+      "Inspect the run log and retry only after the cause is understood.",
+      code(`bun run samantha runs:show ${run.runId}`),
+      code(`bun run samantha tasks:retry ${run.taskId}`),
+    ];
+  }
+
+  return ["Suggested local next action: none"];
+}
+
 export function remoteHelpReport(): string {
   return [
     "# remote:help",
@@ -72,6 +103,7 @@ export function remoteHelpReport(): string {
     "- `/draft <draft-id>`: show one task draft",
     "- `/tasks`: show known tasks",
     "- `/task <task-id>`: show one task",
+    "- `/next-action`: show the safest local next action",
     "- `/dashboard`: rebuild the read-only dashboard",
     "",
     "Remote commands are safe-gated. They cannot dispatch workers, merge, push, clean worktrees, or run shell commands.",
@@ -101,9 +133,34 @@ export function runShowReport(runId: string, run: RunSummary | undefined): strin
     run.commit ? `Commit: ${code(run.commit)}` : "Commit: none",
     run.failureReason ? `Failure: ${code(run.failureReason)}` : "",
     `Log: ${code(run.logPath)}`,
+    "",
+    ...nextActionLinesForRun(run),
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+export function nextActionReport(input: { runs: RunSummary[]; tasks: TaskSpec[] }): string {
+  const pending = input.tasks.find((task) => task.status === "pending");
+  if (pending) {
+    return [
+      "# next-action",
+      "",
+      "Pending task found.",
+      `Task: ${code(pending.id)}`,
+      "",
+      "Suggested local next action:",
+      code(`bun run samantha tasks:dispatch ${pending.id} --repo-root=<repo>`),
+      code(`bun run samantha tasks:dispatch ${pending.id} --repo-root=<repo> --execute`),
+    ].join("\n");
+  }
+
+  const latest = input.runs.at(-1);
+  if (latest) {
+    return ["# next-action", "", `Latest run: ${code(latest.runId)}`, "", ...nextActionLinesForRun(latest)].join("\n");
+  }
+
+  return ["# next-action", "", "No tasks or runs recorded.", "", "Suggested local next action: create a proposal or task draft."].join("\n");
 }
 
 export function failuresReport(runs: RunSummary[], limit = 10): string {
@@ -137,6 +194,7 @@ export function taskShowReport(taskId: string, task: TaskSpec | undefined): stri
     `Status: ${code(task.status)}`,
     `Agent: ${code(task.targetAgent)}`,
     `Target files: ${task.targetFiles.map(code).join(", ") || "none"}`,
+    `Setup commands: ${(task.setupCommands ?? []).map(code).join(", ") || "none"}`,
     `Verify commands: ${task.verifyCommands.map(code).join(", ") || "none"}`,
   ].join("\n");
 }
@@ -253,6 +311,7 @@ export function taskDraftShowReport(draftId: string, draft: TaskDraftRecord | un
     `Title: ${oneLine(draft.title)}`,
     `Agent: ${code(draft.targetAgent)}`,
     `Target files: ${draft.targetFiles.map(code).join(", ") || "none"}`,
+    `Setup commands: ${(draft.setupCommands ?? []).map(code).join(", ") || "none"}`,
     `Verify commands: ${draft.verifyCommands.map(code).join(", ") || "none"}`,
     "",
     "Instructions:",

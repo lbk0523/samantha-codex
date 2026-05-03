@@ -10,6 +10,7 @@ export interface MergeGateInput {
 
 export interface MergeGateResult {
   mayMerge: boolean;
+  alreadyMerged: boolean;
   targetBranch: string;
   commit: string;
   command?: string[];
@@ -136,12 +137,19 @@ export async function evaluateMergeGate(input: MergeGateInput): Promise<MergeGat
       violations.push("reported commit is not descended from the worker base commit");
     }
   }
+  const head = await gitHead(input.repoRoot);
+  const alreadyMerged = commit ? await gitSucceeds(["merge-base", "--is-ancestor", commit, head], input.repoRoot) : false;
+  if (alreadyMerged) {
+    const baseMismatchIndex = violations.indexOf("target repo HEAD no longer matches the worker base commit");
+    if (baseMismatchIndex !== -1) violations.splice(baseMismatchIndex, 1);
+  }
 
   return {
-    mayMerge: violations.length === 0,
+    mayMerge: violations.length === 0 && !alreadyMerged,
+    alreadyMerged,
     targetBranch,
     commit,
-    command: violations.length === 0 ? ["git", "merge", "--ff-only", commit] : undefined,
+    command: violations.length === 0 && !alreadyMerged ? ["git", "merge", "--ff-only", commit] : undefined,
     violations,
   };
 }
@@ -154,7 +162,7 @@ export async function applyMerge(input: MergeGateInput): Promise<MergeApplyResul
     return {
       gate,
       applied: false,
-      verified: false,
+      verified: gate.alreadyMerged && violations.length === 0,
       verifyResults: [],
       violations,
     };

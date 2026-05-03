@@ -33,6 +33,7 @@ The current remote command mapper supports only:
 - `/drafts`
 - `/draft <draft-id>`
 - `/tasks`
+- `/next-action`
 - `/dashboard`
 - `/task <task-id>`
 
@@ -74,6 +75,15 @@ bun run samantha drafts:approve <draft-id>
 
 `drafts:approve` refuses drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker.
 
+Draft patches may include `setupCommands`. Use this for fresh worktree dependencies, for example:
+
+```json
+{
+  "setupCommands": ["bun install"],
+  "verifyCommands": ["bun typecheck"]
+}
+```
+
 Worker dispatch is local-only:
 
 ```bash
@@ -82,6 +92,23 @@ bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute
 ```
 
 Without `--execute`, `tasks:dispatch` only prepares and prints the Codex command. With `--execute`, it writes a run log under `runs/`, appends `state/runs.jsonl`, and updates the task to `completed` or `failed`. Remote adapters cannot call this command.
+
+If a worker run fails for a recoverable reason, keep the recovery local:
+
+```bash
+bun run samantha tasks:retry <task-id>
+bun run samantha tasks:finalize-worktree <task-id> --repo-root=<repo> --worktree=<worker-worktree>
+```
+
+Use `tasks:retry` only after understanding the failed run. Use `tasks:finalize-worktree` only after fixing/verifying the existing worker worktree locally.
+
+`/next-action` is read-only. It reports the safest next local command, such as dispatching a pending task, checking/applying a merge candidate, retrying a failed task, finalizing a blocked worktree, or cleaning up after merge/push.
+
+After a successful merge and push, clean the worker worktree locally:
+
+```bash
+bun run samantha worktree:cleanup --run-log=<run-log.json> --repo-root=<repo>
+```
 
 ## Telegram Poll Adapter
 

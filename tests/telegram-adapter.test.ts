@@ -31,7 +31,7 @@ describe("pollTelegramToInbox", () => {
               update_id: 10,
               message: {
                 date: 1770000000,
-                text: "/runs",
+                text: "/next-action",
                 from: { id: 12345 },
                 chat: { id: 12345 },
               },
@@ -51,9 +51,9 @@ describe("pollTelegramToInbox", () => {
 
     expect(result.nextOffset).toBe(11);
     expect(result.enqueued).toHaveLength(1);
-    expect(result.enqueued[0]?.command.type).toBe("runs:list");
-    expect(result.enqueued[0]?.command.id?.endsWith("-10-runs")).toBe(true);
-    expect(await readFile(result.enqueued[0]?.path ?? "", "utf8")).toContain("runs:list");
+    expect(result.enqueued[0]?.command.type).toBe("ops:next-action");
+    expect(result.enqueued[0]?.command.id?.endsWith("-10-next-action")).toBe(true);
+    expect(await readFile(result.enqueued[0]?.path ?? "", "utf8")).toContain("ops:next-action");
   });
 
   test("can authorize by Telegram chat id for legacy Samantha env compatibility", async () => {

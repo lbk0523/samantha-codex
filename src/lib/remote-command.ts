@@ -132,6 +132,9 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   if (text === "/tasks") {
     return { id: `remote-${commandToken}-tasks`, type: "tasks:list", args: { source: "remote" } };
   }
+  if (text === "/next-action") {
+    return { id: `remote-${commandToken}-next-action`, type: "ops:next-action", args: { source: "remote" } };
+  }
   if (text === "/dashboard") {
     return { id: `remote-${commandToken}-dashboard`, type: "dashboard:build", args: { source: "remote" } };
   }

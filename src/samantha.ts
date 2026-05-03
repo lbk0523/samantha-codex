@@ -15,6 +15,7 @@ import {
   proposalsListReport,
   proposalReviewedReport,
   proposalShowReport,
+  nextActionReport,
   remoteHelpReport,
   runsListReport,
   runShowReport,
@@ -317,6 +318,12 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const task = (await new TaskStore(tasksPath(args)).list()).find((item) => item.id === id);
     return taskShowReport(id, task);
   }
+  if (command.type === "ops:next-action") {
+    return nextActionReport({
+      runs: await new RunIndex(runsPath(args)).list(),
+      tasks: await new TaskStore(tasksPath(args)).list(),
+    });
+  }
   if (command.type === "dashboard:build") {
     const out = resolve(flag(args, "out", join(root, "dashboard/index.html")));
     await buildDashboard(args, out);
@@ -407,6 +414,19 @@ async function main(): Promise<void> {
     await taskStore.updateStatus(task.id, runSummary.pass ? "completed" : "failed");
     printJson({ runLog, runSummary });
     if (!runSummary.pass) process.exitCode = 1;
+    return;
+  }
+
+  if (args.command === "tasks:retry") {
+    const taskId = args.positionals[0];
+    if (!taskId) throw new Error("usage: tasks:retry <task-id>");
+    const taskStore = new TaskStore(tasksPath(args));
+    const task = await taskStore.find(taskId);
+    if (!task) throw new Error(`task not found: ${taskId}`);
+    if (task.status !== "failed" && task.status !== "blocked") {
+      throw new Error(`task must be failed or blocked to retry: ${task.status}`);
+    }
+    printJson(await taskStore.updateStatus(task.id, "pending"));
     return;
   }
 
@@ -613,6 +633,16 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "next-action" || args.command === "ops:next-action") {
+    printJson({
+      report: nextActionReport({
+        runs: await new RunIndex(runsPath(args)).list(),
+        tasks: await new TaskStore(tasksPath(args)).list(),
+      }),
+    });
+    return;
+  }
+
   if (args.command === "worktree:cleanup") {
     printJson(
       await cleanupCompletedWorktree({
@@ -803,6 +833,8 @@ async function main(): Promise<void> {
       "  tasks:show <task-id>",
       "  tasks:dispatch <task-id> --repo-root=<repo> [--execute]",
       "  tasks:finalize-worktree <task-id> --repo-root=<repo> [--worktree=<path>] [--note=<text>]",
+      "  tasks:retry <task-id>",
+      "  next-action",
       "  proposals:list",
       "  proposals:show <proposal-id>",
       "  proposals:accept <proposal-id> [--note=<text>]",
