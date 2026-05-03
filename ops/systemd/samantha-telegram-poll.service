@@ -1,0 +1,11 @@
+[Unit]
+Description=Samantha Codex Telegram poll adapter
+Documentation=https://github.com/lbk0523/samantha-codex
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/samantha-codex
+EnvironmentFile=-%h/projects/samantha-codex/.env
+ExecStart=/usr/bin/env bun run samantha telegram:poll --timeout-seconds=25

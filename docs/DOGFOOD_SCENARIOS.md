@@ -466,8 +466,10 @@ Pass criteria:
 - allowed `/runs`, `/tasks`, `/dashboard`, and `/task <id>` messages create inbox files
 - unsupported messages are ignored
 - messages from other sender ids are ignored
+- `state/telegram-offset.json` is updated after a successful poll
 - no remote path executes shell, merge, push, cleanup, or worker dispatch directly
 - `inbox:watch` processes the created inbox commands later
+- the systemd timer can be enabled after one manual real-token poll passes
 
 ## Stop Conditions
 
@@ -508,6 +510,6 @@ After Scenarios 9-16, Samantha should additionally demonstrate:
 - separate clean-worktree push gating
 - completed worktree cleanup
 - daemon lock, heartbeat, health check, and dashboard daemon status
-- narrow Telegram polling into inbox
+- narrow Telegram polling into inbox, including legacy `TELEGRAM_CHAT_ID` authorization
 
-At that point the next engineering step is a longer 24/7 soak and real-world Telegram dogfood.
+At that point the next engineering step is enabling the Telegram timer after one manual real-world Telegram dogfood pass.

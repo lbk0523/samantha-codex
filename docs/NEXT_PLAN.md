@@ -16,142 +16,104 @@ The Phase 1-7 MVP exists:
 
 The first full dogfood pass completed through read-only real Codex execution against `oh-my-health-trainer`. No critical stop condition occurred.
 
-The next plan should not jump directly to Telegram or autonomous merging. The next useful proof is one fresh writer dogfood task that exercises the full write path while keeping merge execution manual.
+The writer dogfood, merge apply/push gates, completed worktree cleanup, daemon hardening, and Telegram adapter scaffold are now implemented. The next useful proof is real Telegram dogfood using the existing Samantha bot environment, while keeping the adapter limited to inbox writes.
 
 ## Current Constraints
 
-- `oh-my-health-trainer` main is clean but ahead of its remote by one commit from prior work.
-- The old `omht-schema-07-new-block-fixture-canary` task must not be rerun because it was already applied.
-- Read-only reviewer dogfood suggested a good next write candidate: schema `0.7` should reject unknown `document_blocks[].type`.
+- `oh-my-health-trainer` main is clean and pushed.
+- The old `omht-schema-07-new-block-fixture-canary` and `omht-schema-07-unknown-block-negative-canary` tasks must not be rerun because they were already applied.
 - Non-writer agents no longer receive parent `.git` metadata write access.
 - Writer agents do not receive parent `.git` metadata access. They edit and verify files only; Samantha creates commits after scope and verify gates pass.
+- Real Telegram dogfood is blocked until `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are available in the Samantha-Codex runtime.
 
 ## Objective
 
-Prove Samantha can safely handle a real writer task end to end:
+Prove Samantha can safely receive a real remote Telegram command end to end:
 
-1. prepare task contract
-2. allocate writer worktree
-3. run setup commands
-4. execute Codex writer
-5. capture full audit log
-6. append compact run summary
-7. render dashboard state
-8. run merge gate
-9. stop before actual merge unless BK explicitly approves integration
+1. keep `inbox:watch` healthy
+2. poll Telegram using `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
+3. authorize by the legacy chat id
+4. map a narrow command such as `/runs` into `inbox/*.json`
+5. let `inbox:watch` process it
+6. verify an outbox report is written
+7. preserve offset state so the same Telegram update is not replayed
 
-## Stage A: Writer Dogfood Task Definition
+## Stage A: Local Daemon Soak
 
-Create a new task under `references/tasks/`.
+Run `inbox:watch` for a longer local soak before real Telegram polling.
 
-Suggested task id:
+Success criteria:
 
-```text
-omht-schema-07-unknown-block-negative-canary
-```
+- `health:check` stays healthy
+- duplicate watcher start is blocked
+- one local inbox command moves to outbox and archive
+- heartbeat `processedTotal` increments
 
-Target files:
+## Stage B: Legacy Telegram Env Setup
 
-```text
-tests/unit/zod-plan-schema.spec.ts
-03 Prompts/(C) 2026-05-03 codex-omht-schema-07-unknown-block-negative-canary-report.md
-```
-
-Instructions:
-
-- add one tests-only negative canary
-- prove `LLMOutputSchema` rejects an unknown `document_blocks[].type` under `schema_version: "0.7"`
-- do not modify production code or schema code
-- do not commit or push
-- Samantha creates the commit with the expected subject after gates pass
-
-Setup commands:
-
-```bash
-bun install
-```
-
-Verify commands:
-
-```bash
-bun typecheck
-bun test tests/unit/zod-plan-schema.spec.ts
-```
-
-Expected commit subject:
+Use local, uncommitted env values:
 
 ```text
-test(w8): reject unknown schema 0.7 document block
+TELEGRAM_BOT_TOKEN=<token>
+TELEGRAM_CHAT_ID=<telegram-chat-id>
 ```
 
 Success criteria:
 
-- task file declares exact target files
-- forbidden changes cover production/app/docs areas broadly
-- task can dry-run through `dispatch-worker`
+- no secret is committed
+- `TELEGRAM_CHAT_ID` is accepted without requiring a renamed variable
+- `telegram:poll` can also accept `--allowed-sender-id` for explicit overrides
 
-## Stage B: Writer Dogfood Execution
+## Stage C: Real Telegram Poll Dogfood
 
-Run:
+Send `/runs` or `/tasks` to the bot, then run:
 
 ```bash
-bun run dispatch-worker \
-  --task=references/tasks/omht-schema-07-unknown-block-negative-canary.json \
-  --agent=references/agent-profiles/codex-worker.json \
-  --repo-root=/home/lbk0523/projects/oh-my-health-trainer \
-  --allocate \
-  --execute
+bun run samantha telegram:poll --timeout-seconds=0
 ```
 
 Success criteria:
 
-- `pass` is `true`
-- `runSummary.outcome` is `pass`
-- `runSummary.commit` is non-empty after Samantha-owned commit creation
-- changed files are exactly within target files
-- verify commands pass in Samantha evaluation
-- full run log exists under `runs/`
-- compact summary exists in `state/runs.jsonl`
+- exactly one allowed update is enqueued
+- disallowed senders are ignored
+- unsupported commands fail closed
+- offset state is written under `state/telegram-offset.json`
+- `inbox:watch` writes the final report to `outbox/`
 
 Critical stop conditions:
 
-- production code changes
-- files outside `targetFiles`
-- verify commands fail but run summary says pass
-- worker commits or pushes
-- target repo main becomes dirty
+- Telegram token or chat id is missing from local runtime
+- poll returns updates from an unexpected chat
+- adapter attempts to execute work directly instead of writing inbox
+- duplicate update replay creates repeated inbox commands
 
-## Stage C: Merge Gate Review
+## Stage D: Enable 24/7 Timer
 
-Run `merge:check` with the writer run log:
+After a manual real poll passes, enable the timer:
 
 ```bash
-bun run samantha merge:check \
-  --run-log=<writer-run-log-path> \
-  --repo-root=/home/lbk0523/projects/oh-my-health-trainer
+mkdir -p ~/.config/systemd/user
+cp ops/systemd/samantha-telegram-poll.service ~/.config/systemd/user/
+cp ops/systemd/samantha-telegram-poll.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now samantha-telegram-poll.timer
 ```
 
 Success criteria:
 
-- `mayMerge` is `true`
-- command candidate is `git merge --ff-only <commit>`
-- target repo is on `main`
-- target repo is clean
-- target repo `HEAD` matches worker base commit
-- reported commit exists and descends from base commit
+- timer runs without overlapping failures
+- each poll writes only inbox files
+- `inbox:watch` remains the only processor
+- journal logs do not print token values
 
-Do not execute the merge automatically in this stage. The merge command is a candidate for BK review.
+## Stage E: Post-Dogfood Hardening
 
-## Stage D: Post-Dogfood Hardening
+Harden whatever Telegram dogfood reveals. Likely areas:
 
-Harden whatever the writer dogfood reveals. Likely areas:
-
-- duplicate task/run handling
-- cleanup command for allocated worktrees
-- better `runs:show` output for long Codex JSONL logs
-- dashboard links to full run logs
-- explicit `writer:cleanup` or `worktree:cleanup` command
-- plan runner failure handling when one task in a batch fails
+- clearer failure outbox reports for remote commands
+- dashboard display for latest remote command
+- timer failure health signal
+- duplicate update protection beyond Telegram offset
 
 Success criteria:
 
@@ -159,7 +121,7 @@ Success criteria:
 - tests cover each fix
 - `BUILD_PLAN.md` and `DOGFOOD_SCENARIOS.md` stay consistent
 
-## Stage E: Integration Gate Design
+## Already Stable: Integration Gate Design
 
 After one writer dogfood passes and BK approves the integration model, use separate integration gates.
 
@@ -188,7 +150,7 @@ Current behavior:
 - `merge:apply` reuses `merge:check`, executes `git merge --ff-only <commit>`, then runs the task `verifyCommands` on the target main worktree.
 - `merge:push` checks branch and clean worktree state, then runs `git push <remote> <branch>`.
 
-## Stage F: Daemon Packaging
+## Already Stable: Daemon Packaging
 
 Only after writer dogfood and integration gate are stable:
 
@@ -205,7 +167,7 @@ Success criteria:
 - dashboard can show last heartbeat
 - bad inbox commands produce outbox failure reports and are archived
 
-## Stage G: Remote Adapter
+## Already Stable: Remote Adapter Scaffold
 
 Only after file-backed daemon is stable:
 
@@ -221,7 +183,7 @@ Success criteria:
 - unsupported commands fail closed
 - remote UX stays read-mostly until merge gate is mature
 
-## Stage H: Dashboard Upgrade
+## Later: Dashboard Upgrade
 
 After writer dogfood:
 
@@ -238,11 +200,11 @@ Keep dashboard read-only.
 
 The next cycle is complete when:
 
-- one fresh writer dogfood task passes
-- run log and run index capture the writer result
-- dashboard displays the writer result
-- merge gate returns the correct conservative answer
-- no automatic merge or push happens without BK approval
+- local daemon soak stays healthy
+- real Telegram `/runs` or `/tasks` enqueues exactly one inbox command
+- `inbox:watch` writes the final outbox report
+- Telegram offset state prevents replay
+- Telegram timer templates are either enabled or blocked only by missing local token/chat id
 - any hardening fix is committed and pushed
 
 ## Execution Notes

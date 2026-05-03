@@ -73,6 +73,40 @@ If the service should run after logout, enable lingering once:
 loginctl enable-linger "$USER"
 ```
 
+## Telegram Timer
+
+`telegram:poll` is a one-shot remote adapter. For 24/7 remote commands, run it through the included user timer while `inbox:watch` handles processing.
+
+Prepare local env:
+
+```bash
+cp .env.example .env
+```
+
+Set local, uncommitted values:
+
+```text
+TELEGRAM_BOT_TOKEN=<token>
+TELEGRAM_CHAT_ID=<telegram-chat-id>
+```
+
+Install and enable:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ops/systemd/samantha-telegram-poll.service ~/.config/systemd/user/
+cp ops/systemd/samantha-telegram-poll.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now samantha-telegram-poll.timer
+```
+
+Inspect:
+
+```bash
+systemctl --user status samantha-telegram-poll.timer
+journalctl --user -u samantha-telegram-poll.service -n 100 --no-pager
+```
+
 ## Safety Notes
 
 - Do not run multiple watchers manually; the lock should block duplicates, but one service instance is the intended shape.

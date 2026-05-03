@@ -143,4 +143,14 @@ describe("daemon lock and health", () => {
     expect(service).toContain("Restart=on-failure");
     expect(service).toContain("WantedBy=default.target");
   });
+
+  test("ships systemd user timer templates for Telegram polling", async () => {
+    const service = await readFile(resolve("ops/systemd/samantha-telegram-poll.service"), "utf8");
+    const timer = await readFile(resolve("ops/systemd/samantha-telegram-poll.timer"), "utf8");
+
+    expect(service).toContain("EnvironmentFile=-%h/projects/samantha-codex/.env");
+    expect(service).toContain("ExecStart=/usr/bin/env bun run samantha telegram:poll --timeout-seconds=25");
+    expect(timer).toContain("OnUnitActiveSec=30s");
+    expect(timer).toContain("WantedBy=timers.target");
+  });
 });

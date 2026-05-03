@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-03
 
-Current planning status: MVP control plane built, read-only dogfood completed, and the first low-risk writer dogfood passed with a Samantha-owned commit. Next focus is explicit merge apply/push gates.
+Current planning status: MVP control plane built, read-only dogfood completed, the first low-risk writer dogfood passed with a Samantha-owned commit, explicit merge apply/push gates are implemented, and the local daemon has heartbeat/lock hardening. Current focus is Telegram remote adapter dogfood using the legacy Samantha bot environment.
 
 ## Purpose
 
@@ -43,9 +43,14 @@ Already implemented:
 - local task ledger under `state/tasks.jsonl`
 - `samantha` operator CLI
 - merge candidate checks
+- explicit `merge:apply` and `merge:push` gates
+- completed worktree cleanup gate
 - multi-task plan runner
 - file-backed local inbox/outbox processing
+- daemon lock, heartbeat, health check, and systemd service template
 - narrow remote command enqueueing
+- Telegram polling adapter with legacy `TELEGRAM_CHAT_ID` support
+- systemd timer template for Telegram polling
 - read-only static dashboard generation
 - OMHT read-only canary
 - OMHT tests-only write canary
@@ -174,7 +179,7 @@ Success criteria:
 
 ### Phase 6: Remote Command Surface
 
-MVP status: implemented as `remote:enqueue` plus `telegram:poll`, both mapping narrow remote input into the local inbox.
+MVP status: implemented as `remote:enqueue` plus `telegram:poll`, both mapping narrow remote input into the local inbox. Telegram supports both `TELEGRAM_ALLOWED_SENDER_ID` and the older Claude-side `TELEGRAM_CHAT_ID` env name.
 
 Goal: let BK instruct Samantha remotely after local loop safety is proven.
 
@@ -228,24 +233,26 @@ These gates should not be weakened for convenience:
 
 ## What Not To Build Yet
 
-Do not prioritize these until writer dogfood proves the control plane can handle safe write/verify/merge-check loops:
+Do not prioritize these until Telegram dogfood proves the remote command loop is stable:
 
-- Telegram-first 24/7 loop
 - multi-writer parallelism
 - web dashboard with write controls
+- broad Telegram command surface beyond read-mostly status commands
 - general marketplace-style multi-agent platform
 - complex plugin system beyond pinned skill bundle references
 - autonomous push/deploy behavior
 
 ## Immediate Next Step
 
-Dogfood completed-worktree cleanup now that merge application and push gates exist.
+Dogfood the Telegram adapter with a real bot token after the local `inbox:watch` soak remains healthy.
 
 The practical next implementation should:
 
-1. run `worktree:cleanup --run-log=<path>` for the completed OMHT writer run
-2. confirm the worker worktree is removed
-3. confirm the completed worker branch is deleted
-4. keep daemon hardening as the next follow-up
+1. keep `inbox:watch` running through the systemd user service
+2. configure local, uncommitted Telegram env values in `.env`
+3. run one manual `telegram:poll --timeout-seconds=0` with `/runs` or `/tasks`
+4. verify the adapter only writes an inbox command
+5. verify `inbox:watch` writes the final outbox report
+6. then enable `samantha-telegram-poll.timer`
 
 The detailed next plan is in [NEXT_PLAN.md](NEXT_PLAN.md).

@@ -33,6 +33,7 @@ Required:
 - `TELEGRAM_ALLOWED_SENDER_ID`, `TELEGRAM_CHAT_ID`, or `--allowed-sender-id=<id>`
 
 `TELEGRAM_CHAT_ID` is supported for compatibility with the older Claude-side Samantha Telegram environment.
+`telegram:poll` authorizes by Telegram `chat.id` first, then falls back to `from.id`.
 
 Example:
 
@@ -40,6 +41,19 @@ Example:
 TELEGRAM_BOT_TOKEN=<token> \
 TELEGRAM_CHAT_ID=<telegram-chat-id> \
 bun run samantha telegram:poll --timeout-seconds=0
+```
+
+Local env file:
+
+```bash
+cp .env.example .env
+```
+
+Then fill only local, uncommitted values:
+
+```text
+TELEGRAM_BOT_TOKEN=<token>
+TELEGRAM_CHAT_ID=<telegram-chat-id>
 ```
 
 Offset state is stored in:
@@ -55,6 +69,18 @@ bun run samantha inbox:watch
 ```
 
 Then run `telegram:poll` periodically from a separate timer or service. The adapter only writes to `inbox/`; `inbox:watch` remains responsible for processing.
+
+systemd user timer templates are included:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ops/systemd/samantha-telegram-poll.service ~/.config/systemd/user/
+cp ops/systemd/samantha-telegram-poll.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now samantha-telegram-poll.timer
+```
+
+The timer reads `%h/projects/samantha-codex/.env`. If the older Claude-side Samantha environment file exists elsewhere, either copy only the two Telegram values into this repo's ignored `.env` or adjust the copied service's `EnvironmentFile=` path locally.
 
 ## Safety
 
