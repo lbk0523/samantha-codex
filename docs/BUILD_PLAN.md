@@ -50,7 +50,8 @@ Already implemented:
 - daemon lock, heartbeat, health check, and systemd service template
 - narrow remote command enqueueing
 - Telegram polling adapter with legacy `TELEGRAM_CHAT_ID` support
-- systemd timer template for Telegram polling
+- Telegram outbox reply adapter
+- systemd timer templates for Telegram polling and outbox replies
 - read-only static dashboard generation
 - OMHT read-only canary
 - OMHT tests-only write canary

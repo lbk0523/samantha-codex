@@ -96,15 +96,23 @@ Install and enable:
 mkdir -p ~/.config/systemd/user
 cp ops/systemd/samantha-telegram-poll.service ~/.config/systemd/user/
 cp ops/systemd/samantha-telegram-poll.timer ~/.config/systemd/user/
+cp ops/systemd/samantha-telegram-reply.service ~/.config/systemd/user/
+cp ops/systemd/samantha-telegram-reply.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
+systemctl --user start samantha-telegram-reply.service
 systemctl --user enable --now samantha-telegram-poll.timer
+systemctl --user enable --now samantha-telegram-reply.timer
 ```
+
+The first `samantha-telegram-reply.service` run baselines existing `outbox/remote-*.md` files without sending them. New remote outbox reports are sent after that.
 
 Inspect:
 
 ```bash
 systemctl --user status samantha-telegram-poll.timer
+systemctl --user status samantha-telegram-reply.timer
 journalctl --user -u samantha-telegram-poll.service -n 100 --no-pager
+journalctl --user -u samantha-telegram-reply.service -n 100 --no-pager
 ```
 
 ## Safety Notes

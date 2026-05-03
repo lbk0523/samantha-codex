@@ -20,6 +20,7 @@ import { runPlan } from "./lib/plan-runner";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { TaskStore } from "./lib/task-store";
 import { pollTelegramToInbox } from "./lib/telegram-adapter";
+import { sendOutboxReplies } from "./lib/telegram-reply-adapter";
 import { cleanupCompletedWorktree } from "./lib/worktree-cleanup";
 
 interface ParsedArgs {
@@ -78,6 +79,10 @@ function heartbeatPath(args: ParsedArgs): string {
 
 function telegramOffsetPath(args: ParsedArgs): string {
   return resolve(flag(args, "telegram-offset-file", join(stateDir(args), "telegram-offset.json")));
+}
+
+function telegramRepliesPath(args: ParsedArgs): string {
+  return resolve(flag(args, "telegram-replies-file", join(stateDir(args), "telegram-replies.json")));
 }
 
 async function readJson<T>(path: string): Promise<T> {
@@ -375,6 +380,31 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "telegram:reply") {
+    const token = flag(args, "bot-token", process.env.TELEGRAM_BOT_TOKEN ?? "");
+    const chatId = flag(
+      args,
+      "chat-id",
+      process.env.TELEGRAM_REPLY_CHAT_ID ??
+        process.env.TELEGRAM_CHAT_ID ??
+        process.env.TELEGRAM_ALLOWED_SENDER_ID ??
+        "",
+    );
+    printJson(
+      await sendOutboxReplies({
+        token,
+        chatId,
+        outboxDir: resolve(flag(args, "outbox-dir", join(root, "outbox"))),
+        statePath: telegramRepliesPath(args),
+        limit: Number(flag(args, "limit", "10")),
+        minAgeMs: Number(flag(args, "min-age-ms", "1000")),
+        markExisting: args.flags.get("mark-existing") === true,
+        sendExisting: args.flags.get("send-existing") === true,
+      }),
+    );
+    return;
+  }
+
   if (args.command === "dashboard:build") {
     const out = resolve(flag(args, "out", join(root, "dashboard/index.html")));
     const runs = await buildDashboard(args, out);
@@ -402,6 +432,7 @@ async function main(): Promise<void> {
       "  inbox:watch",
       "  remote:enqueue <remote-command.json>",
       "  telegram:poll [--allowed-sender-id=<id>] [--bot-token=<token>]",
+      "  telegram:reply [--chat-id=<id>] [--mark-existing] [--send-existing]",
       "  dashboard:build",
     ].join("\n"),
   );

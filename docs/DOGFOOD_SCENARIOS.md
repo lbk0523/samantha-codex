@@ -450,7 +450,7 @@ Pass criteria:
 
 ## Scenario 16: Telegram Poll Adapter
 
-Goal: confirm Telegram input can only create allowlisted inbox commands.
+Goal: confirm Telegram input can only create allowlisted inbox commands and Telegram replies only send outbox reports.
 
 Command:
 
@@ -461,14 +461,25 @@ TELEGRAM_CHAT_ID=<telegram-chat-id> \
 bun run samantha telegram:poll --timeout-seconds=0
 ```
 
+Reply command:
+
+```bash
+cd /home/lbk0523/projects/samantha-codex
+TELEGRAM_BOT_TOKEN=<token> \
+TELEGRAM_CHAT_ID=<telegram-chat-id> \
+bun run samantha telegram:reply
+```
+
 Pass criteria:
 
 - allowed `/help`, `/status`, `/health`, `/runs`, `/run <id>`, `/failures`, `/tasks`, `/dashboard`, and `/task <id>` messages create inbox files
 - unsupported messages are ignored
 - messages from other sender ids are ignored
 - `state/telegram-offset.json` is updated after a successful poll
+- `state/telegram-replies.json` prevents duplicate Telegram replies
 - no remote path executes shell, merge, push, cleanup, or worker dispatch directly
 - `inbox:watch` processes the created inbox commands later
+- `telegram:reply` sends only `outbox/remote-*.md` report text to Telegram
 - the systemd timer can be enabled after one manual real-token poll passes
 
 ## Stop Conditions
@@ -483,6 +494,8 @@ Stop dogfood and fix Samantha before continuing if any of these happen:
 - `merge:push` pushes from a dirty worktree or wrong branch
 - `worktree:cleanup` removes an unmerged or dirty worker worktree
 - Telegram input bypasses the inbox or sender allowlist
+- Telegram reply sends local non-remote outbox files unexpectedly
+- Telegram reply resends the same outbox file repeatedly
 - remote command can create arbitrary shell execution
 - writer task modifies files outside `targetFiles`
 - target repo main worktree becomes dirty unexpectedly
@@ -511,5 +524,6 @@ After Scenarios 9-16, Samantha should additionally demonstrate:
 - completed worktree cleanup
 - daemon lock, heartbeat, health check, and dashboard daemon status
 - narrow Telegram polling into inbox, including legacy `TELEGRAM_CHAT_ID` authorization
+- Telegram outbox replies for remote command reports
 
-At that point the next engineering step is enabling the Telegram timer after one manual real-world Telegram dogfood pass.
+At that point the next engineering step is enabling the Telegram poll and reply timers after one manual real-world Telegram dogfood pass.

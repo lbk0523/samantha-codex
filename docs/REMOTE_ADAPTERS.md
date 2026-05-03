@@ -77,14 +77,40 @@ bun run samantha inbox:watch
 
 Then run `telegram:poll` periodically from a separate timer or service. The adapter only writes to `inbox/`; `inbox:watch` remains responsible for processing.
 
+## Telegram Reply Adapter
+
+`telegram:reply` performs one outbound pass over remote outbox reports and sends unsent reports to Telegram with `sendMessage`.
+
+Required:
+
+- `TELEGRAM_BOT_TOKEN` or `--bot-token=<token>`
+- `TELEGRAM_REPLY_CHAT_ID`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ALLOWED_SENDER_ID`, or `--chat-id=<id>`
+
+The adapter only reads `outbox/remote-*.md` by default. It does not execute commands, dispatch workers, merge, push, or clean worktrees.
+
+Sent state is stored in:
+
+```text
+state/telegram-replies.json
+```
+
+Safe first-run behavior:
+
+- If `state/telegram-replies.json` does not exist, existing `outbox/remote-*.md` files are marked as already sent and no Telegram message is sent.
+- Use `--send-existing` only if you intentionally want to send existing historical remote outbox files.
+- Use `--mark-existing` to explicitly baseline current remote outbox files before enabling the timer.
+
 systemd user timer templates are included:
 
 ```bash
 mkdir -p ~/.config/systemd/user
 cp ops/systemd/samantha-telegram-poll.service ~/.config/systemd/user/
 cp ops/systemd/samantha-telegram-poll.timer ~/.config/systemd/user/
+cp ops/systemd/samantha-telegram-reply.service ~/.config/systemd/user/
+cp ops/systemd/samantha-telegram-reply.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now samantha-telegram-poll.timer
+systemctl --user enable --now samantha-telegram-reply.timer
 ```
 
 The timer reads `%h/projects/samantha-codex/.env`. If the older Claude-side Samantha environment file exists elsewhere, either copy only the two Telegram values into this repo's ignored `.env` or adjust the copied service's `EnvironmentFile=` path locally.

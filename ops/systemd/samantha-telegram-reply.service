@@ -1,0 +1,12 @@
+[Unit]
+Description=Samantha Codex Telegram outbox reply adapter
+Documentation=https://github.com/lbk0523/samantha-codex
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/samantha-codex
+EnvironmentFile=-%h/projects/samantha-codex/.env
+ExecStart=%h/.bun/bin/bun run samantha telegram:reply
+TimeoutStartSec=45
