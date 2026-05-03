@@ -77,6 +77,28 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       args: { id, source: "remote", receivedAt },
     };
   }
+  if (text === "/drafts") {
+    return { id: `remote-${commandToken}-drafts`, type: "drafts:list", args: { source: "remote" } };
+  }
+  if (text.startsWith("/draft ")) {
+    const id = text.slice("/draft ".length).trim();
+    if (!id) throw new Error("missing draft or proposal id");
+    if (id.startsWith("proposal-")) {
+      return {
+        id: `remote-${commandToken}-draft`,
+        type: "drafts:add",
+        args: { proposalId: id, source: "remote", receivedAt },
+      };
+    }
+    if (id.startsWith("draft-")) {
+      return {
+        id: `remote-${commandToken}-draft`,
+        type: "drafts:show",
+        args: { id, source: "remote" },
+      };
+    }
+    throw new Error("draft command id must start with proposal- or draft-");
+  }
   if (text.startsWith("/propose ")) {
     const proposalText = text.slice("/propose ".length).trim();
     if (!proposalText) throw new Error("missing proposal text");

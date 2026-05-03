@@ -14,10 +14,14 @@ import {
   runsListReport,
   runShowReport,
   statusReport,
+  taskDraftAddedReport,
+  taskDraftShowReport,
+  taskDraftsListReport,
   tasksListReport,
 } from "../src/lib/operator-reports";
 import type { OpsSnapshot } from "../src/lib/ops-diagnostics";
 import type { ProposalRecord } from "../src/lib/proposal-store";
+import type { TaskDraftRecord } from "../src/lib/task-draft-store";
 
 const passRun: RunSummary = {
   schemaVersion: 1,
@@ -81,12 +85,27 @@ const proposal: ProposalRecord = {
   createdAt: "2026-05-03T10:00:00.000Z",
 };
 
+const draft: TaskDraftRecord = {
+  schemaVersion: 1,
+  id: "draft-1",
+  sourceProposalId: "proposal-1",
+  status: "drafted",
+  title: "Improve status reports",
+  targetAgent: "codex-worker",
+  targetFiles: [],
+  forbiddenChanges: [],
+  verifyCommands: [],
+  instructions: "Improve status reports",
+  createdAt: "2026-05-03T10:04:00.000Z",
+};
+
 describe("operator reports", () => {
   test("documents safe-gated remote commands", () => {
     const report = remoteHelpReport();
 
     expect(report).toContain("/status");
     expect(report).toContain("/propose <text>");
+    expect(report).toContain("/draft <proposal-id>");
     expect(report).toContain("/run <run-id>");
     expect(report).toContain("cannot dispatch workers");
   });
@@ -127,13 +146,21 @@ describe("operator reports", () => {
       warnings: [],
       failures: [],
     };
-    const status = statusReport({ runs: [passRun, failRun], heartbeat, pendingInboxCount: 2, ops, proposals: [proposal] });
+    const status = statusReport({
+      runs: [passRun, failRun],
+      heartbeat,
+      pendingInboxCount: 2,
+      ops,
+      proposals: [proposal],
+      drafts: [draft],
+    });
     expect(status).toContain("- pending inbox: 2");
     expect(status).toContain("Operation: ok");
     expect(status).toContain("- non-passing: 1");
     expect(status).toContain("- next offset: 42");
     expect(status).toContain("- unsent remote outbox: 1");
     expect(status).toContain("- pending_review: 1 accepted: 0 rejected: 0");
+    expect(status).toContain("- drafted: 1 approved: 0 discarded: 0");
 
     const health: DaemonHealthResult = {
       ok: false,
@@ -159,5 +186,11 @@ describe("operator reports", () => {
     expect(proposalsListReport([proposal])).toContain("Total proposals: 1");
     expect(proposalShowReport("proposal-1", proposal)).toContain("Improve status reports");
     expect(proposalReviewedReport("accept", { ...proposal, status: "accepted" })).toContain("only updates proposal review state");
+  });
+
+  test("renders task draft reports without implying execution", () => {
+    expect(taskDraftAddedReport(draft)).toContain("No worker was dispatched");
+    expect(taskDraftsListReport([draft])).toContain("Total drafts: 1");
+    expect(taskDraftShowReport("draft-1", draft)).toContain("Improve status reports");
   });
 });

@@ -104,10 +104,13 @@ export function copyableIdsFromReport(report: string): string[] {
   for (const rawLine of report.split(/\r?\n/)) {
     const line = rawLine.trim();
     push(matchFirst(/^Saved proposal:\s+`([^`]+)`$/, line));
+    push(matchFirst(/^Saved draft:\s+`([^`]+)`$/, line));
     push(matchFirst(/^Proposal:\s+`([^`]+)`$/, line));
+    push(matchFirst(/^Draft:\s+`([^`]+)`$/, line));
+    push(matchFirst(/^Source proposal:\s+`([^`]+)`$/, line));
     push(matchFirst(/^Run:\s+`([^`]+)`$/, line));
     push(matchFirst(/^Task:\s+`([^`]+)`(?:\s+-.*)?$/, line));
-    push(matchFirst(/^- `([^`]+)`\s+status=`[^`]+`\s+(?:agent|created)=/, line));
+    push(matchFirst(/^- `([^`]+)`\s+status=`[^`]+`\s+(?:agent|created|source)=/, line));
     push(matchFirst(/^- `([^`]+)`\s+outcome=`[^`]+`/, line));
     push(matchFirst(/^- latest:\s+`([^`]+)`\s+outcome=`[^`]+`/, line));
   }

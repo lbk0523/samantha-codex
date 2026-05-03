@@ -18,6 +18,9 @@ import {
   runsListReport,
   runShowReport,
   statusReport,
+  taskDraftAddedReport,
+  taskDraftShowReport,
+  taskDraftsListReport,
   tasksListReport,
   taskShowReport,
 } from "./lib/operator-reports";
@@ -25,6 +28,7 @@ import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnos
 import { runPlan } from "./lib/plan-runner";
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
+import { TaskDraftStore, taskDraftFromProposal } from "./lib/task-draft-store";
 import { TaskStore } from "./lib/task-store";
 import { pollTelegramToInbox } from "./lib/telegram-adapter";
 import { sendOutboxReplies } from "./lib/telegram-reply-adapter";
@@ -78,6 +82,10 @@ function tasksPath(args: ParsedArgs): string {
 
 function proposalsPath(args: ParsedArgs): string {
   return join(stateDir(args), "proposals.jsonl");
+}
+
+function taskDraftsPath(args: ParsedArgs): string {
+  return join(stateDir(args), "task-drafts.jsonl");
 }
 
 function daemonLockPath(args: ParsedArgs): string {
@@ -162,6 +170,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       pendingInboxCount: ops.queues.pendingInboxCount,
       ops,
       proposals: await new ProposalStore(proposalsPath(args)).list(),
+      drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
     });
   }
   if (command.type === "ops:doctor") {
@@ -226,6 +235,24 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       },
     );
     return proposalReviewedReport(action, proposal);
+  }
+  if (command.type === "drafts:add") {
+    const proposalId = String(command.args?.proposalId ?? "");
+    if (!proposalId) throw new Error("proposal id is required");
+    const proposal = await new ProposalStore(proposalsPath(args)).find(proposalId);
+    if (!proposal) throw new Error(`proposal not found: ${proposalId}`);
+    const draft = taskDraftFromProposal(proposal, String(command.args?.receivedAt ?? new Date().toISOString()));
+    await new TaskDraftStore(taskDraftsPath(args)).append(draft);
+    return taskDraftAddedReport(draft);
+  }
+  if (command.type === "drafts:list") {
+    const drafts = await new TaskDraftStore(taskDraftsPath(args)).list();
+    return taskDraftsListReport(drafts);
+  }
+  if (command.type === "drafts:show") {
+    const id = String(command.args?.id ?? "");
+    const draft = await new TaskDraftStore(taskDraftsPath(args)).find(id);
+    return taskDraftShowReport(id, draft);
   }
   if (command.type === "tasks:list") {
     const tasks = await new TaskStore(tasksPath(args)).list();
@@ -305,6 +332,29 @@ async function main(): Promise<void> {
         reviewNote: typeof args.flags.get("note") === "string" ? String(args.flags.get("note")) : undefined,
       }),
     );
+    return;
+  }
+
+  if (args.command === "proposals:draft-task") {
+    const proposalId = args.positionals[0];
+    if (!proposalId) throw new Error("usage: proposals:draft-task <proposal-id>");
+    const proposal = await new ProposalStore(proposalsPath(args)).find(proposalId);
+    if (!proposal) throw new Error(`proposal not found: ${proposalId}`);
+    const draft = taskDraftFromProposal(proposal, new Date().toISOString());
+    await new TaskDraftStore(taskDraftsPath(args)).append(draft);
+    printJson(draft);
+    return;
+  }
+
+  if (args.command === "drafts:list") {
+    printJson(await new TaskDraftStore(taskDraftsPath(args)).list());
+    return;
+  }
+
+  if (args.command === "drafts:show") {
+    const draftId = args.positionals[0];
+    if (!draftId) throw new Error("usage: drafts:show <draft-id>");
+    printJson((await new TaskDraftStore(taskDraftsPath(args)).find(draftId)) ?? null);
     return;
   }
 
@@ -533,6 +583,9 @@ async function main(): Promise<void> {
       "  proposals:show <proposal-id>",
       "  proposals:accept <proposal-id> [--note=<text>]",
       "  proposals:reject <proposal-id> [--note=<text>]",
+      "  proposals:draft-task <proposal-id>",
+      "  drafts:list",
+      "  drafts:show <draft-id>",
       "  merge:check --run-log=<path> --repo-root=<repo>",
       "  merge:apply --run-log=<path> --repo-root=<repo>",
       "  merge:push --repo-root=<repo> [--remote=origin] [--branch=main]",

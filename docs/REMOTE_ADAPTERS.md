@@ -28,15 +28,18 @@ The current remote command mapper supports only:
 - `/proposal <proposal-id>`
 - `/accept <proposal-id>`
 - `/reject <proposal-id>`
+- `/draft <proposal-id>`
+- `/drafts`
+- `/draft <draft-id>`
 - `/tasks`
 - `/dashboard`
 - `/task <task-id>`
 
 Unsupported commands are ignored or rejected.
 
-Supported remote commands are operational reports, a safe dashboard rebuild, and proposal intake/review. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/accept` and `/reject` may update proposal review state. Worker dispatch, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
+Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, and conservative task draft creation. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/accept` and `/reject` may update proposal review state; `/draft <proposal-id>` may write a draft to `state/task-drafts.jsonl`. Worker dispatch, task ledger promotion, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
 
-`/status` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, latest run, Telegram offset, reply state, and unsent remote outbox count.
+`/status` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, draft counts, latest run, Telegram offset, reply state, and unsent remote outbox count.
 
 `/doctor` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, and expected systemd template installation without printing secret values.
 
@@ -49,6 +52,14 @@ Proposal commands are intake/review only:
 - `/reject <proposal-id>` marks one proposal rejected
 
 No proposal command dispatches workers or creates commits. Accepted proposals must still be converted into explicit tasks before execution.
+
+Task draft commands are draft-only:
+
+- `/draft <proposal-id>` creates one draft from an accepted proposal
+- `/drafts` lists recent task drafts
+- `/draft <draft-id>` shows one task draft
+
+Drafts use conservative defaults and empty `targetFiles` / `verifyCommands`. Draft creation does not add to `state/tasks.jsonl`, dispatch workers, or create commits.
 
 ## Telegram Poll Adapter
 
@@ -110,7 +121,7 @@ The adapter only reads `outbox/remote-*.md` by default. It does not execute comm
 
 Long outbox reports are split into multiple Telegram messages instead of truncated.
 
-Reports that return proposal, run, or task IDs also send each detected ID as its own follow-up message. This keeps iPhone Telegram copy/paste practical; status values, timestamps, and paths are not sent as copy-only messages.
+Reports that return proposal, draft, run, or task IDs also send each detected ID as its own follow-up message. This keeps iPhone Telegram copy/paste practical; status values, timestamps, and paths are not sent as copy-only messages.
 
 Sent state is stored in:
 

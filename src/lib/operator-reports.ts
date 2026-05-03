@@ -3,6 +3,7 @@ import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import type { ProposalRecord } from "./proposal-store";
+import type { TaskDraftRecord } from "./task-draft-store";
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -43,6 +44,10 @@ function proposalLine(proposal: ProposalRecord): string {
   return `- ${code(proposal.id)} status=${code(proposal.status)} created=${code(proposal.createdAt)} text=${oneLine(proposal.text)}`;
 }
 
+function draftLine(draft: TaskDraftRecord): string {
+  return `- ${code(draft.id)} status=${code(draft.status)} source=${code(draft.sourceProposalId)} created=${code(draft.createdAt)} title=${oneLine(draft.title)}`;
+}
+
 export function remoteHelpReport(): string {
   return [
     "# remote:help",
@@ -61,6 +66,9 @@ export function remoteHelpReport(): string {
     "- `/proposal <proposal-id>`: show one proposal",
     "- `/accept <proposal-id>`: mark one proposal accepted without executing it",
     "- `/reject <proposal-id>`: mark one proposal rejected without executing it",
+    "- `/draft <proposal-id>`: create a task draft from an accepted proposal",
+    "- `/drafts`: show recent task drafts",
+    "- `/draft <draft-id>`: show one task draft",
     "- `/tasks`: show known tasks",
     "- `/task <task-id>`: show one task",
     "- `/dashboard`: rebuild the read-only dashboard",
@@ -195,12 +203,54 @@ export function proposalReviewedReport(action: "accept" | "reject", proposal: Pr
     .join("\n");
 }
 
+export function taskDraftAddedReport(draft: TaskDraftRecord): string {
+  return [
+    "# drafts:add",
+    "",
+    `Saved draft: ${code(draft.id)}`,
+    `Source proposal: ${code(draft.sourceProposalId)}`,
+    `Status: ${code(draft.status)}`,
+    "",
+    `Title: ${oneLine(draft.title)}`,
+    "",
+    "No worker was dispatched. Fill targetFiles and verifyCommands before promoting this draft to a task.",
+  ].join("\n");
+}
+
+export function taskDraftsListReport(drafts: TaskDraftRecord[], limit = 10): string {
+  const lines = recent(drafts, limit).map(draftLine);
+  return ["# drafts:list", "", `Total drafts: ${drafts.length}`, "", ...(lines.length ? lines : ["No task drafts recorded."])].join("\n");
+}
+
+export function taskDraftShowReport(draftId: string, draft: TaskDraftRecord | undefined): string {
+  if (!draft) {
+    return ["# drafts:show", "", `Draft not found: ${code(draftId)}`].join("\n");
+  }
+
+  return [
+    "# drafts:show",
+    "",
+    `Draft: ${code(draft.id)}`,
+    `Source proposal: ${code(draft.sourceProposalId)}`,
+    `Status: ${code(draft.status)}`,
+    `Created: ${code(draft.createdAt)}`,
+    `Title: ${oneLine(draft.title)}`,
+    `Agent: ${code(draft.targetAgent)}`,
+    `Target files: ${draft.targetFiles.map(code).join(", ") || "none"}`,
+    `Verify commands: ${draft.verifyCommands.map(code).join(", ") || "none"}`,
+    "",
+    "Instructions:",
+    draft.instructions.trim(),
+  ].join("\n");
+}
+
 export function statusReport(input: {
   runs: RunSummary[];
   heartbeat?: DaemonHeartbeat;
   pendingInboxCount: number;
   ops?: OpsSnapshot;
   proposals?: ProposalRecord[];
+  drafts?: TaskDraftRecord[];
 }): string {
   const latest = input.runs.at(-1);
   const failureCount = input.runs.filter((run) => !run.pass).length;
@@ -209,6 +259,13 @@ export function statusReport(input: {
         pending: input.proposals.filter((proposal) => proposal.status === "pending_review").length,
         accepted: input.proposals.filter((proposal) => proposal.status === "accepted").length,
         rejected: input.proposals.filter((proposal) => proposal.status === "rejected").length,
+      }
+    : undefined;
+  const draftCounts = input.drafts
+    ? {
+        drafted: input.drafts.filter((draft) => draft.status === "drafted").length,
+        approved: input.drafts.filter((draft) => draft.status === "approved").length,
+        discarded: input.drafts.filter((draft) => draft.status === "discarded").length,
       }
     : undefined;
   const heartbeat = input.heartbeat
@@ -245,6 +302,9 @@ export function statusReport(input: {
     proposalCounts
       ? `- pending_review: ${proposalCounts.pending} accepted: ${proposalCounts.accepted} rejected: ${proposalCounts.rejected}`
       : "- unknown",
+    "",
+    "Drafts:",
+    draftCounts ? `- drafted: ${draftCounts.drafted} approved: ${draftCounts.approved} discarded: ${draftCounts.discarded}` : "- unknown",
     "",
     "Runs:",
     `- total: ${input.runs.length}`,

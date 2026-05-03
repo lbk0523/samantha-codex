@@ -53,6 +53,7 @@ Already implemented:
 - Telegram polling adapter with legacy `TELEGRAM_CHAT_ID` support
 - Telegram outbox reply adapter
 - remote proposal intake and review state under `state/proposals.jsonl`
+- accepted proposal to task draft flow under `state/task-drafts.jsonl`
 - systemd timer templates for Telegram polling and outbox replies
 - read-only static dashboard generation
 - OMHT read-only canary

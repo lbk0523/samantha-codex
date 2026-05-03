@@ -12,6 +12,7 @@ The Phase 1-7 MVP exists:
 - plan runner
 - local inbox/outbox loop
 - narrow remote command enqueueing
+- proposal intake/review and accepted-proposal task drafts
 - read-only static dashboard
 
 The first full dogfood pass completed through read-only real Codex execution against `oh-my-health-trainer`. No critical stop condition occurred.
@@ -232,4 +233,14 @@ git merge --ff-only 61824293b56fdf8ed84258c70de419b6f4353171
 
 ## Recommended Next Action
 
-Next, dogfood `telegram:poll` with a real bot token after one longer `inbox:watch` soak.
+Next, dogfood the remote proposal flow end to end:
+
+```text
+/propose <work request>
+/accept <proposal-id>
+/draft <proposal-id>
+/drafts
+/draft <draft-id>
+```
+
+Keep the next implementation focused on the local-only draft approval gate. Do not open remote worker dispatch yet.
