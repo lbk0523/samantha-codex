@@ -251,6 +251,13 @@ bun run samantha drafts:check <draft-id>
 bun run samantha drafts:update <draft-id> --from=<draft-patch.json>
 bun run samantha drafts:approve <draft-id>
 bun run samantha tasks:show <task-id>
+bun run samantha tasks:dispatch <task-id> --repo-root=<repo>
+```
+
+After dry-run dispatch is correct, run local-only execution:
+
+```bash
+bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute
 ```
 
 Do not open remote worker dispatch yet.

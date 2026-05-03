@@ -29,6 +29,7 @@ describe("TaskStore", () => {
     await store.append(task);
 
     expect(await store.list()).toEqual([task]);
+    expect(await store.find(task.id)).toEqual(task);
   });
 
   test("rejects duplicate task ids", async () => {
@@ -37,5 +38,16 @@ describe("TaskStore", () => {
     await store.append(task);
 
     await expect(store.append(task)).rejects.toThrow("task already exists");
+  });
+
+  test("updates task status", async () => {
+    const store = new TaskStore(path);
+
+    await store.append(task);
+    const updated = await store.updateStatus(task.id, "completed");
+
+    expect(updated.status).toBe("completed");
+    expect(await store.find(task.id)).toEqual(updated);
+    await expect(store.updateStatus("missing-task", "failed")).rejects.toThrow("task not found");
   });
 });

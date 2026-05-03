@@ -1,6 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { TaskSpec } from "./contracts";
+import type { TaskSpec, TaskStatus } from "./contracts";
+
+async function writeTasks(path: string, tasks: TaskSpec[]): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const next = tasks.map((item) => JSON.stringify(item)).join("\n") + "\n";
+  await writeFile(path, next, "utf8");
+}
 
 export class TaskStore {
   constructor(private readonly path: string) {}
@@ -18,13 +24,27 @@ export class TaskStore {
     }
   }
 
+  async find(id: string): Promise<TaskSpec | undefined> {
+    return (await this.list()).find((task) => task.id === id);
+  }
+
   async append(task: TaskSpec): Promise<void> {
     const tasks = await this.list();
     if (tasks.some((existing) => existing.id === task.id)) {
       throw new Error(`task already exists: ${task.id}`);
     }
-    await mkdir(dirname(this.path), { recursive: true });
-    const next = [...tasks, task].map((item) => JSON.stringify(item)).join("\n") + "\n";
-    await writeFile(this.path, next, "utf8");
+    await writeTasks(this.path, [...tasks, task]);
+  }
+
+  async updateStatus(id: string, status: TaskStatus): Promise<TaskSpec> {
+    const tasks = await this.list();
+    const index = tasks.findIndex((task) => task.id === id);
+    if (index === -1) throw new Error(`task not found: ${id}`);
+
+    const updated = { ...tasks[index], status };
+    const next = [...tasks];
+    next[index] = updated;
+    await writeTasks(this.path, next);
+    return updated;
   }
 }

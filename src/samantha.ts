@@ -4,7 +4,7 @@ import type { AgentProfile, TaskSpec } from "./lib/contracts";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
 import { writeDashboard } from "./lib/dashboard";
 import { processInbox, type InboxCommand } from "./lib/inbox";
-import { RunIndex } from "./lib/ledger";
+import { RunIndex, summarizeWorkerRun } from "./lib/ledger";
 import { applyMerge, evaluateMergeGate, pushMerge } from "./lib/merge-gate";
 import {
   doctorReport,
@@ -29,6 +29,7 @@ import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnos
 import { runPlan } from "./lib/plan-runner";
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
+import { writeWorkerRunLog } from "./lib/run-log";
 import {
   checkTaskDraft,
   parseTaskDraftUpdatePatch,
@@ -40,6 +41,7 @@ import { TaskStore } from "./lib/task-store";
 import { pollTelegramToInbox } from "./lib/telegram-adapter";
 import { sendOutboxReplies } from "./lib/telegram-reply-adapter";
 import { cleanupCompletedWorktree } from "./lib/worktree-cleanup";
+import { executeWorkerDispatch, prepareWorkerDispatch } from "./lib/worker-dispatch";
 
 interface ParsedArgs {
   command: string;
@@ -150,6 +152,16 @@ async function knownAgentIds(args: ParsedArgs): Promise<string[]> {
   const files = (await readdir(dir)).filter((file) => file.endsWith(".json")).sort();
   const agents = await Promise.all(files.map((file) => readJson<AgentProfile>(join(dir, file))));
   return agents.map((agent) => agent.id);
+}
+
+async function loadAgentProfile(args: ParsedArgs, agentId: string): Promise<AgentProfile> {
+  const dir = agentProfilesDir(args);
+  const files = (await readdir(dir)).filter((file) => file.endsWith(".json")).sort();
+  for (const file of files) {
+    const agent = await readJson<AgentProfile>(join(dir, file));
+    if (agent.id === agentId) return agent;
+  }
+  throw new Error(`agent profile not found: ${agentId}`);
 }
 
 async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
@@ -345,7 +357,53 @@ async function main(): Promise<void> {
   if (args.command === "tasks:show") {
     const taskId = args.positionals[0];
     if (!taskId) throw new Error("usage: tasks:show <task-id>");
-    printJson((await new TaskStore(tasksPath(args)).list()).find((task) => task.id === taskId) ?? null);
+    printJson((await new TaskStore(tasksPath(args)).find(taskId)) ?? null);
+    return;
+  }
+
+  if (args.command === "tasks:dispatch") {
+    const taskId = args.positionals[0];
+    const repoRoot = flag(args, "repo-root", "");
+    if (!taskId || !repoRoot) throw new Error("usage: tasks:dispatch <task-id> --repo-root=<repo> [--execute]");
+
+    const taskStore = new TaskStore(tasksPath(args));
+    const task = await taskStore.find(taskId);
+    if (!task) throw new Error(`task not found: ${taskId}`);
+    if (task.status !== "pending") throw new Error(`task must be pending to dispatch: ${task.status}`);
+
+    const agent = await loadAgentProfile(args, task.targetAgent);
+    const execute = args.flags.get("execute") === true;
+    const allocate = args.flags.get("allocate") === true || (execute && agent.worktreePolicy === "per-task");
+    const worktreesDir = flag(args, "worktrees-dir", "");
+    const input = {
+      task,
+      agent,
+      repoRoot: resolve(repoRoot),
+      allocate,
+      worktreesDir: worktreesDir || undefined,
+    };
+
+    if (!execute) {
+      printJson(await prepareWorkerDispatch(input));
+      return;
+    }
+
+    const startedAt = new Date().toISOString();
+    const execution = await executeWorkerDispatch(input);
+    const finishedAt = new Date().toISOString();
+    const logInput = {
+      ...input,
+      execute: true,
+      startedAt,
+      finishedAt,
+      execution,
+    };
+    const runLog = await writeWorkerRunLog(resolve(flag(args, "log-dir", join(root, "runs"))), logInput);
+    const runSummary = summarizeWorkerRun({ ...logInput, runId: runLog.runId, logPath: runLog.path });
+    await new RunIndex(runsPath(args)).append(runSummary);
+    await taskStore.updateStatus(task.id, runSummary.pass ? "completed" : "failed");
+    printJson({ runLog, runSummary });
+    if (!runSummary.pass) process.exitCode = 1;
     return;
   }
 
@@ -655,6 +713,7 @@ async function main(): Promise<void> {
       "  tasks:add <task.json>",
       "  tasks:list",
       "  tasks:show <task-id>",
+      "  tasks:dispatch <task-id> --repo-root=<repo> [--execute]",
       "  proposals:list",
       "  proposals:show <proposal-id>",
       "  proposals:accept <proposal-id> [--note=<text>]",

@@ -485,6 +485,7 @@ Pass criteria:
 - `/draft <proposal-id>` writes only to `state/task-drafts.jsonl`; unaccepted proposals are rejected
 - `drafts:check`, `drafts:update`, and `drafts:approve` stay local-only
 - `drafts:approve` writes one pending task to `state/tasks.jsonl` only after `targetFiles`, `verifyCommands`, `instructions`, and `targetAgent` pass checks
+- `tasks:dispatch` stays local-only; dry-run prints the prepared Codex command, and `--execute` writes run logs and run index entries
 - no remote path executes shell, merge, push, cleanup, or worker dispatch directly
 - `inbox:watch` processes the created inbox commands later
 - `telegram:reply` sends only `outbox/remote-*.md` report text to Telegram
@@ -510,6 +511,7 @@ Stop dogfood and fix Samantha before continuing if any of these happen:
 - `/accept` or `/reject` dispatches a worker, creates a commit, or changes project files
 - `/draft` dispatches a worker, creates a commit, writes `state/tasks.jsonl`, or changes project files
 - any remote Telegram command can run `drafts:approve` or write `state/tasks.jsonl`
+- any remote Telegram command can run `tasks:dispatch`
 - remote command can create arbitrary shell execution
 - writer task modifies files outside `targetFiles`
 - target repo main worktree becomes dirty unexpectedly

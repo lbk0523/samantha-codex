@@ -74,6 +74,15 @@ bun run samantha drafts:approve <draft-id>
 
 `drafts:approve` refuses drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker.
 
+Worker dispatch is local-only:
+
+```bash
+bun run samantha tasks:dispatch <task-id> --repo-root=<repo>
+bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute
+```
+
+Without `--execute`, `tasks:dispatch` only prepares and prints the Codex command. With `--execute`, it writes a run log under `runs/`, appends `state/runs.jsonl`, and updates the task to `completed` or `failed`. Remote adapters cannot call this command.
+
 ## Telegram Poll Adapter
 
 `telegram:poll` performs one Telegram `getUpdates` poll and writes allowed commands into `inbox/`.

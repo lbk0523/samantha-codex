@@ -55,6 +55,7 @@ Already implemented:
 - remote proposal intake and review state under `state/proposals.jsonl`
 - accepted proposal to task draft flow under `state/task-drafts.jsonl`
 - local-only task draft check, update, and approval gate
+- local-only pending task dispatch into existing worker run logs and run index
 - systemd timer templates for Telegram polling and outbox replies
 - read-only static dashboard generation
 - OMHT read-only canary
