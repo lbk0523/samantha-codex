@@ -12,6 +12,8 @@ export interface ProposalRecord {
   senderId?: string;
   status: ProposalStatus;
   createdAt: string;
+  reviewedAt?: string;
+  reviewNote?: string;
 }
 
 async function readJsonLines<T>(path: string): Promise<T[]> {
@@ -54,5 +56,26 @@ export class ProposalStore {
       throw new Error(`proposal already exists: ${proposal.id}`);
     }
     await writeJsonLines(this.path, [...proposals, proposal]);
+  }
+
+  async updateStatus(
+    id: string,
+    status: ProposalStatus,
+    input: { reviewedAt: string; reviewNote?: string },
+  ): Promise<ProposalRecord> {
+    const proposals = await this.list();
+    const index = proposals.findIndex((proposal) => proposal.id === id);
+    if (index === -1) throw new Error(`proposal not found: ${id}`);
+
+    const updated: ProposalRecord = {
+      ...proposals[index],
+      status,
+      reviewedAt: input.reviewedAt,
+      reviewNote: input.reviewNote,
+    };
+    const next = [...proposals];
+    next[index] = updated;
+    await writeJsonLines(this.path, next);
+    return updated;
   }
 }

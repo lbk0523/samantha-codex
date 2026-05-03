@@ -59,6 +59,8 @@ export function remoteHelpReport(): string {
     "- `/propose <text>`: save a pending work proposal without executing it",
     "- `/proposals`: show recent proposals",
     "- `/proposal <proposal-id>`: show one proposal",
+    "- `/accept <proposal-id>`: mark one proposal accepted without executing it",
+    "- `/reject <proposal-id>`: mark one proposal rejected without executing it",
     "- `/tasks`: show known tasks",
     "- `/task <task-id>`: show one task",
     "- `/dashboard`: rebuild the read-only dashboard",
@@ -168,9 +170,26 @@ export function proposalShowReport(proposalId: string, proposal: ProposalRecord 
     `Source: ${code(proposal.source)}`,
     proposal.senderId ? `Sender: ${code(proposal.senderId)}` : "",
     `Created: ${code(proposal.createdAt)}`,
+    proposal.reviewedAt ? `Reviewed: ${code(proposal.reviewedAt)}` : "",
+    proposal.reviewNote ? `Review note: ${oneLine(proposal.reviewNote)}` : "",
     "",
     "Text:",
     proposal.text.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function proposalReviewedReport(action: "accept" | "reject", proposal: ProposalRecord): string {
+  return [
+    `# proposals:${action}`,
+    "",
+    `Proposal: ${code(proposal.id)}`,
+    `Status: ${code(proposal.status)}`,
+    proposal.reviewedAt ? `Reviewed: ${code(proposal.reviewedAt)}` : "",
+    proposal.reviewNote ? `Note: ${oneLine(proposal.reviewNote)}` : "",
+    "",
+    "No worker was dispatched. This only updates proposal review state.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -181,9 +200,17 @@ export function statusReport(input: {
   heartbeat?: DaemonHeartbeat;
   pendingInboxCount: number;
   ops?: OpsSnapshot;
+  proposals?: ProposalRecord[];
 }): string {
   const latest = input.runs.at(-1);
   const failureCount = input.runs.filter((run) => !run.pass).length;
+  const proposalCounts = input.proposals
+    ? {
+        pending: input.proposals.filter((proposal) => proposal.status === "pending_review").length,
+        accepted: input.proposals.filter((proposal) => proposal.status === "accepted").length,
+        rejected: input.proposals.filter((proposal) => proposal.status === "rejected").length,
+      }
+    : undefined;
   const heartbeat = input.heartbeat
     ? `${input.heartbeat.status} pid=${input.heartbeat.pid} updated=${input.heartbeat.updatedAt} processed=${input.heartbeat.processedTotal}`
     : "missing";
@@ -213,6 +240,11 @@ export function statusReport(input: {
         ? `- replies: sent=${input.ops.telegram.replyState.sentFiles.length} failures=${input.ops.telegram.replyState.failures?.length ?? 0} updated=${code(input.ops.telegram.replyState.updatedAt)}`
         : "- replies: missing"
       : "",
+    "",
+    "Proposals:",
+    proposalCounts
+      ? `- pending_review: ${proposalCounts.pending} accepted: ${proposalCounts.accepted} rejected: ${proposalCounts.rejected}`
+      : "- unknown",
     "",
     "Runs:",
     `- total: ${input.runs.length}`,

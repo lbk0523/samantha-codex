@@ -47,6 +47,34 @@ describe("ProposalStore", () => {
     await expect(store.append(proposal)).rejects.toThrow("proposal already exists");
   });
 
+  test("updates proposal review status", async () => {
+    const root = await makeRoot();
+    const store = new ProposalStore(join(root, "state", "proposals.jsonl"));
+
+    await store.append(proposal);
+    const updated = await store.updateStatus(proposal.id, "accepted", {
+      reviewedAt: "2026-05-03T10:10:00.000Z",
+      reviewNote: "Ready for task drafting.",
+    });
+
+    expect(updated).toMatchObject({
+      id: proposal.id,
+      status: "accepted",
+      reviewedAt: "2026-05-03T10:10:00.000Z",
+      reviewNote: "Ready for task drafting.",
+    });
+    expect(await store.find(proposal.id)).toEqual(updated);
+  });
+
+  test("fails review status updates for missing proposals", async () => {
+    const root = await makeRoot();
+    const store = new ProposalStore(join(root, "state", "proposals.jsonl"));
+
+    await expect(
+      store.updateStatus("proposal-missing", "rejected", { reviewedAt: "2026-05-03T10:10:00.000Z" }),
+    ).rejects.toThrow("proposal not found");
+  });
+
   test("builds stable proposal ids from timestamps", () => {
     expect(buildProposalId("2026-05-03T10:00:00.000Z")).toBe("proposal-2026-05-03t10-00-00.000z");
     expect(buildProposalId("2026-05-03T10:00:00.000Z", 123)).toBe("proposal-2026-05-03t10-00-00.000z-123");

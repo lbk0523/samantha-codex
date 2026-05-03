@@ -12,6 +12,7 @@ import {
   healthReport,
   proposalAddedReport,
   proposalsListReport,
+  proposalReviewedReport,
   proposalShowReport,
   remoteHelpReport,
   runsListReport,
@@ -160,6 +161,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       heartbeat: ops.health.heartbeat,
       pendingInboxCount: ops.queues.pendingInboxCount,
       ops,
+      proposals: await new ProposalStore(proposalsPath(args)).list(),
     });
   }
   if (command.type === "ops:doctor") {
@@ -210,6 +212,20 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const id = String(command.args?.id ?? "");
     const proposal = await new ProposalStore(proposalsPath(args)).find(id);
     return proposalShowReport(id, proposal);
+  }
+  if (command.type === "proposals:accept" || command.type === "proposals:reject") {
+    const id = String(command.args?.id ?? "");
+    if (!id) throw new Error("proposal id is required");
+    const action = command.type === "proposals:accept" ? "accept" : "reject";
+    const proposal = await new ProposalStore(proposalsPath(args)).updateStatus(
+      id,
+      action === "accept" ? "accepted" : "rejected",
+      {
+        reviewedAt: String(command.args?.receivedAt ?? new Date().toISOString()),
+        reviewNote: typeof command.args?.note === "string" ? command.args.note : undefined,
+      },
+    );
+    return proposalReviewedReport(action, proposal);
   }
   if (command.type === "tasks:list") {
     const tasks = await new TaskStore(tasksPath(args)).list();
@@ -276,6 +292,19 @@ async function main(): Promise<void> {
     const proposalId = args.positionals[0];
     if (!proposalId) throw new Error("usage: proposals:show <proposal-id>");
     printJson((await new ProposalStore(proposalsPath(args)).find(proposalId)) ?? null);
+    return;
+  }
+
+  if (args.command === "proposals:accept" || args.command === "proposals:reject") {
+    const proposalId = args.positionals[0];
+    if (!proposalId) throw new Error(`usage: ${args.command} <proposal-id> [--note=<text>]`);
+    const status = args.command === "proposals:accept" ? "accepted" : "rejected";
+    printJson(
+      await new ProposalStore(proposalsPath(args)).updateStatus(proposalId, status, {
+        reviewedAt: new Date().toISOString(),
+        reviewNote: typeof args.flags.get("note") === "string" ? String(args.flags.get("note")) : undefined,
+      }),
+    );
     return;
   }
 
@@ -502,6 +531,8 @@ async function main(): Promise<void> {
       "  tasks:show <task-id>",
       "  proposals:list",
       "  proposals:show <proposal-id>",
+      "  proposals:accept <proposal-id> [--note=<text>]",
+      "  proposals:reject <proposal-id> [--note=<text>]",
       "  merge:check --run-log=<path> --repo-root=<repo>",
       "  merge:apply --run-log=<path> --repo-root=<repo>",
       "  merge:push --repo-root=<repo> [--remote=origin] [--branch=main]",

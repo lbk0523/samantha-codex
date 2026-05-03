@@ -26,25 +26,29 @@ The current remote command mapper supports only:
 - `/propose <text>`
 - `/proposals`
 - `/proposal <proposal-id>`
+- `/accept <proposal-id>`
+- `/reject <proposal-id>`
 - `/tasks`
 - `/dashboard`
 - `/task <task-id>`
 
 Unsupported commands are ignored or rejected.
 
-Supported remote commands are operational reports, a safe dashboard rebuild, and proposal intake. `/propose` may write a pending proposal to `state/proposals.jsonl`; worker dispatch, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
+Supported remote commands are operational reports, a safe dashboard rebuild, and proposal intake/review. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/accept` and `/reject` may update proposal review state. Worker dispatch, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
 
-`/status` is the quick operational view. It includes daemon heartbeat, queue counts, latest run, Telegram offset, reply state, and unsent remote outbox count.
+`/status` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, latest run, Telegram offset, reply state, and unsent remote outbox count.
 
 `/doctor` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, and expected systemd template installation without printing secret values.
 
-Proposal commands are intake only:
+Proposal commands are intake/review only:
 
 - `/propose <text>` writes a pending proposal to `state/proposals.jsonl`
 - `/proposals` lists recent proposals
 - `/proposal <proposal-id>` shows one proposal
+- `/accept <proposal-id>` marks one proposal accepted
+- `/reject <proposal-id>` marks one proposal rejected
 
-No proposal command dispatches workers or creates commits. A proposal must still be reviewed and converted into an explicit task before execution.
+No proposal command dispatches workers or creates commits. Accepted proposals must still be converted into explicit tasks before execution.
 
 ## Telegram Poll Adapter
 

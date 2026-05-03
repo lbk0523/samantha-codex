@@ -8,6 +8,7 @@ import {
   healthReport,
   proposalAddedReport,
   proposalsListReport,
+  proposalReviewedReport,
   proposalShowReport,
   remoteHelpReport,
   runsListReport,
@@ -126,12 +127,13 @@ describe("operator reports", () => {
       warnings: [],
       failures: [],
     };
-    const status = statusReport({ runs: [passRun, failRun], heartbeat, pendingInboxCount: 2, ops });
+    const status = statusReport({ runs: [passRun, failRun], heartbeat, pendingInboxCount: 2, ops, proposals: [proposal] });
     expect(status).toContain("- pending inbox: 2");
     expect(status).toContain("Operation: ok");
     expect(status).toContain("- non-passing: 1");
     expect(status).toContain("- next offset: 42");
     expect(status).toContain("- unsent remote outbox: 1");
+    expect(status).toContain("- pending_review: 1 accepted: 0 rejected: 0");
 
     const health: DaemonHealthResult = {
       ok: false,
@@ -156,5 +158,6 @@ describe("operator reports", () => {
     expect(proposalAddedReport(proposal)).toContain("No worker was dispatched");
     expect(proposalsListReport([proposal])).toContain("Total proposals: 1");
     expect(proposalShowReport("proposal-1", proposal)).toContain("Improve status reports");
+    expect(proposalReviewedReport("accept", { ...proposal, status: "accepted" })).toContain("only updates proposal review state");
   });
 });

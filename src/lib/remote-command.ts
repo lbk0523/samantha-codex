@@ -59,6 +59,24 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       args: { id, source: "remote" },
     };
   }
+  if (text.startsWith("/accept ")) {
+    const id = text.slice("/accept ".length).trim();
+    if (!id) throw new Error("missing proposal id");
+    return {
+      id: `remote-${commandToken}-accept`,
+      type: "proposals:accept",
+      args: { id, source: "remote", receivedAt },
+    };
+  }
+  if (text.startsWith("/reject ")) {
+    const id = text.slice("/reject ".length).trim();
+    if (!id) throw new Error("missing proposal id");
+    return {
+      id: `remote-${commandToken}-reject`,
+      type: "proposals:reject",
+      args: { id, source: "remote", receivedAt },
+    };
+  }
   if (text.startsWith("/propose ")) {
     const proposalText = text.slice("/propose ".length).trim();
     if (!proposalText) throw new Error("missing proposal text");
