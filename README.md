@@ -85,4 +85,4 @@ bun run dispatch-worker \
 
 ## Design Notes
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md), and [docs/DOGFOOD_SCENARIOS.md](docs/DOGFOOD_SCENARIOS.md).
