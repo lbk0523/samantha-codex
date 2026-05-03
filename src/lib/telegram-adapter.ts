@@ -104,6 +104,7 @@ export async function pollTelegramToInbox(input: {
           senderId: String(senderId),
           text,
           receivedAt: update.message?.date ? new Date(update.message.date * 1000).toISOString() : undefined,
+          remoteId: update.update_id,
         },
         inboxDir: input.inboxDir,
         allowedSenderId: input.allowedSenderId,

@@ -2,6 +2,7 @@ import type { TaskSpec } from "./contracts";
 import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
+import type { ProposalRecord } from "./proposal-store";
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -38,6 +39,10 @@ function taskLine(task: TaskSpec): string {
   return `- ${code(task.id)} status=${code(task.status)} agent=${code(task.targetAgent)}`;
 }
 
+function proposalLine(proposal: ProposalRecord): string {
+  return `- ${code(proposal.id)} status=${code(proposal.status)} created=${code(proposal.createdAt)} text=${oneLine(proposal.text)}`;
+}
+
 export function remoteHelpReport(): string {
   return [
     "# remote:help",
@@ -51,11 +56,14 @@ export function remoteHelpReport(): string {
     "- `/runs`: show recent run summaries",
     "- `/run <run-id>`: show one run summary",
     "- `/failures`: show recent non-passing runs",
+    "- `/propose <text>`: save a pending work proposal without executing it",
+    "- `/proposals`: show recent proposals",
+    "- `/proposal <proposal-id>`: show one proposal",
     "- `/tasks`: show known tasks",
     "- `/task <task-id>`: show one task",
     "- `/dashboard`: rebuild the read-only dashboard",
     "",
-    "Remote commands are read-only. They cannot dispatch workers, merge, push, clean worktrees, or run shell commands.",
+    "Remote commands are safe-gated. They cannot dispatch workers, merge, push, clean worktrees, or run shell commands.",
   ].join("\n");
 }
 
@@ -93,8 +101,9 @@ export function failuresReport(runs: RunSummary[], limit = 10): string {
   return [
     "# runs:failures",
     "",
-    `Total failures: ${failures.length}`,
+    `Total non-passing runs: ${failures.length}`,
     "",
+    "Recent:",
     ...(lines.length ? lines : ["No non-passing runs recorded."]),
   ].join("\n");
 }
@@ -121,6 +130,52 @@ export function taskShowReport(taskId: string, task: TaskSpec | undefined): stri
   ].join("\n");
 }
 
+export function proposalAddedReport(proposal: ProposalRecord): string {
+  return [
+    "# proposals:add",
+    "",
+    `Saved proposal: ${code(proposal.id)}`,
+    `Status: ${code(proposal.status)}`,
+    "",
+    "Text:",
+    oneLine(proposal.text),
+    "",
+    "No worker was dispatched. Review this proposal locally before creating a task.",
+  ].join("\n");
+}
+
+export function proposalsListReport(proposals: ProposalRecord[], limit = 10): string {
+  const lines = recent(proposals, limit).map(proposalLine);
+  return [
+    "# proposals:list",
+    "",
+    `Total proposals: ${proposals.length}`,
+    "",
+    ...(lines.length ? lines : ["No proposals recorded."]),
+  ].join("\n");
+}
+
+export function proposalShowReport(proposalId: string, proposal: ProposalRecord | undefined): string {
+  if (!proposal) {
+    return ["# proposals:show", "", `Proposal not found: ${code(proposalId)}`].join("\n");
+  }
+
+  return [
+    "# proposals:show",
+    "",
+    `Proposal: ${code(proposal.id)}`,
+    `Status: ${code(proposal.status)}`,
+    `Source: ${code(proposal.source)}`,
+    proposal.senderId ? `Sender: ${code(proposal.senderId)}` : "",
+    `Created: ${code(proposal.createdAt)}`,
+    "",
+    "Text:",
+    proposal.text.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export function statusReport(input: {
   runs: RunSummary[];
   heartbeat?: DaemonHeartbeat;
@@ -136,26 +191,33 @@ export function statusReport(input: {
   return [
     "# status",
     "",
-    `Daemon heartbeat: ${code(heartbeat)}`,
-    input.ops ? `Operation health: ${input.ops.ok ? "ok" : "needs attention"}` : "",
-    input.ops ? `Doctor failures: ${input.ops.failures.length}` : "",
-    input.ops ? `Doctor warnings: ${input.ops.warnings.length}` : "",
-    `Pending inbox commands: ${input.pendingInboxCount}`,
-    input.ops ? `Remote outbox reports: ${input.ops.queues.remoteOutboxCount}` : "",
-    input.ops ? `Unsent remote outbox reports: ${input.ops.queues.unsentRemoteOutboxCount}` : "",
+    `Operation: ${input.ops ? (input.ops.ok ? "ok" : "needs attention") : "unknown"}`,
+    input.ops ? `Doctor: failures=${input.ops.failures.length} warnings=${input.ops.warnings.length}` : "",
+    "",
+    "Daemon:",
+    `- heartbeat: ${code(heartbeat)}`,
+    "",
+    "Queues:",
+    `- pending inbox: ${input.pendingInboxCount}`,
+    input.ops ? `- remote outbox: ${input.ops.queues.remoteOutboxCount}` : "",
+    input.ops ? `- unsent remote outbox: ${input.ops.queues.unsentRemoteOutboxCount}` : "",
+    "",
+    "Telegram:",
     input.ops
       ? input.ops.telegram.offset?.nextOffset !== undefined
-        ? `Telegram next offset: ${input.ops.telegram.offset.nextOffset}`
-        : "Telegram next offset: missing"
+        ? `- next offset: ${input.ops.telegram.offset.nextOffset}`
+        : "- next offset: missing"
       : "",
     input.ops
       ? input.ops.telegram.replyState
-        ? `Telegram replies: sent=${input.ops.telegram.replyState.sentFiles.length} updated=${code(input.ops.telegram.replyState.updatedAt)}`
-        : "Telegram replies: missing"
+        ? `- replies: sent=${input.ops.telegram.replyState.sentFiles.length} failures=${input.ops.telegram.replyState.failures?.length ?? 0} updated=${code(input.ops.telegram.replyState.updatedAt)}`
+        : "- replies: missing"
       : "",
-    `Total runs: ${input.runs.length}`,
-    `Non-passing runs: ${failureCount}`,
-    latest ? `Latest run: ${oneLine(runLine(latest).slice(2))}` : "Latest run: none",
+    "",
+    "Runs:",
+    `- total: ${input.runs.length}`,
+    `- non-passing: ${failureCount}`,
+    latest ? `- latest: ${oneLine(runLine(latest).slice(2))}` : "- latest: none",
   ]
     .filter(Boolean)
     .join("\n");
@@ -212,7 +274,7 @@ export function doctorReport(snapshot: OpsSnapshot): string {
       ? `- next offset: ${snapshot.telegram.offset.nextOffset}`
       : "- next offset: missing",
     snapshot.telegram.replyState
-      ? `- replies: sent=${snapshot.telegram.replyState.sentFiles.length} updated=${code(snapshot.telegram.replyState.updatedAt)}`
+      ? `- replies: sent=${snapshot.telegram.replyState.sentFiles.length} failures=${snapshot.telegram.replyState.failures?.length ?? 0} updated=${code(snapshot.telegram.replyState.updatedAt)}`
       : "- replies: missing",
     "",
     "systemd templates:",

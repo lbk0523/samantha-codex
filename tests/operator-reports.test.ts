@@ -6,6 +6,9 @@ import {
   doctorReport,
   failuresReport,
   healthReport,
+  proposalAddedReport,
+  proposalsListReport,
+  proposalShowReport,
   remoteHelpReport,
   runsListReport,
   runShowReport,
@@ -13,6 +16,7 @@ import {
   tasksListReport,
 } from "../src/lib/operator-reports";
 import type { OpsSnapshot } from "../src/lib/ops-diagnostics";
+import type { ProposalRecord } from "../src/lib/proposal-store";
 
 const passRun: RunSummary = {
   schemaVersion: 1,
@@ -66,11 +70,22 @@ const task: TaskSpec = {
   status: "pending",
 };
 
+const proposal: ProposalRecord = {
+  schemaVersion: 1,
+  id: "proposal-1",
+  text: "Improve status reports",
+  source: "remote",
+  senderId: "bk",
+  status: "pending_review",
+  createdAt: "2026-05-03T10:00:00.000Z",
+};
+
 describe("operator reports", () => {
-  test("documents read-only remote commands", () => {
+  test("documents safe-gated remote commands", () => {
     const report = remoteHelpReport();
 
     expect(report).toContain("/status");
+    expect(report).toContain("/propose <text>");
     expect(report).toContain("/run <run-id>");
     expect(report).toContain("cannot dispatch workers");
   });
@@ -80,7 +95,7 @@ describe("operator reports", () => {
     expect(runShowReport("run-pass", passRun)).toContain("Commit: `abcdef1234567890`");
 
     const failures = failuresReport([passRun, failRun]);
-    expect(failures).toContain("Total failures: 1");
+    expect(failures).toContain("Total non-passing runs: 1");
     expect(failures).toContain("run-fail");
     expect(failures).not.toContain("run-pass");
   });
@@ -112,11 +127,11 @@ describe("operator reports", () => {
       failures: [],
     };
     const status = statusReport({ runs: [passRun, failRun], heartbeat, pendingInboxCount: 2, ops });
-    expect(status).toContain("Pending inbox commands: 2");
-    expect(status).toContain("Operation health: ok");
-    expect(status).toContain("Non-passing runs: 1");
-    expect(status).toContain("Telegram next offset: 42");
-    expect(status).toContain("Unsent remote outbox reports: 1");
+    expect(status).toContain("- pending inbox: 2");
+    expect(status).toContain("Operation: ok");
+    expect(status).toContain("- non-passing: 1");
+    expect(status).toContain("- next offset: 42");
+    expect(status).toContain("- unsent remote outbox: 1");
 
     const health: DaemonHealthResult = {
       ok: false,
@@ -135,5 +150,11 @@ describe("operator reports", () => {
 
     expect(report).toContain("Total tasks: 1");
     expect(report).toContain("task-pass");
+  });
+
+  test("renders proposal reports without implying execution", () => {
+    expect(proposalAddedReport(proposal)).toContain("No worker was dispatched");
+    expect(proposalsListReport([proposal])).toContain("Total proposals: 1");
+    expect(proposalShowReport("proposal-1", proposal)).toContain("Improve status reports");
   });
 });

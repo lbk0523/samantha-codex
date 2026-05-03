@@ -472,11 +472,13 @@ bun run samantha telegram:reply
 
 Pass criteria:
 
-- allowed `/help`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/tasks`, `/dashboard`, and `/task <id>` messages create inbox files
+- allowed `/help`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/proposals`, `/proposal <id>`, `/tasks`, `/dashboard`, and `/task <id>` messages create inbox files
 - unsupported messages are ignored
 - messages from other sender ids are ignored
 - `state/telegram-offset.json` is updated after a successful poll
 - `state/telegram-replies.json` prevents duplicate Telegram replies
+- long remote outbox replies are split into multiple Telegram messages instead of truncated
+- `/propose <text>` writes only to `state/proposals.jsonl` and does not dispatch a worker
 - no remote path executes shell, merge, push, cleanup, or worker dispatch directly
 - `inbox:watch` processes the created inbox commands later
 - `telegram:reply` sends only `outbox/remote-*.md` report text to Telegram
@@ -496,6 +498,7 @@ Stop dogfood and fix Samantha before continuing if any of these happen:
 - Telegram input bypasses the inbox or sender allowlist
 - Telegram reply sends local non-remote outbox files unexpectedly
 - Telegram reply resends the same outbox file repeatedly
+- `/propose` dispatches a worker, creates a commit, or changes project files
 - remote command can create arbitrary shell execution
 - writer task modifies files outside `targetFiles`
 - target repo main worktree becomes dirty unexpectedly
@@ -525,5 +528,6 @@ After Scenarios 9-16, Samantha should additionally demonstrate:
 - daemon lock, heartbeat, health check, and dashboard daemon status
 - narrow Telegram polling into inbox, including legacy `TELEGRAM_CHAT_ID` authorization
 - Telegram outbox replies for remote command reports
+- remote proposal intake without worker execution
 
 At that point the next engineering step is enabling the Telegram poll and reply timers after one manual real-world Telegram dogfood pass.

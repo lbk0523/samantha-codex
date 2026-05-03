@@ -4,12 +4,30 @@ import { basename, dirname, join } from "node:path";
 export interface TelegramReplyState {
   schemaVersion: 1;
   sentFiles: string[];
+  failures?: TelegramReplyFailure[];
   updatedAt: string;
 }
 
 export interface TelegramReplySent {
   file: string;
   path: string;
+  messages: number;
+}
+
+export interface TelegramReplyFailure {
+  file: string;
+  attempts: number;
+  lastError: string;
+  nextMessageIndex?: number;
+  updatedAt: string;
+}
+
+export interface TelegramReplyFailed {
+  file: string;
+  path: string;
+  error: string;
+  attempts: number;
+  nextMessageIndex: number;
 }
 
 export interface TelegramReplySkipped {
@@ -21,6 +39,7 @@ export interface TelegramReplyResult {
   ok: boolean;
   initialized: boolean;
   sent: TelegramReplySent[];
+  failed: TelegramReplyFailed[];
   skipped: TelegramReplySkipped[];
 }
 
@@ -38,24 +57,51 @@ async function readReplyState(path: string): Promise<TelegramReplyState | undefi
   }
 }
 
-async function writeReplyState(path: string, sentFiles: Set<string>): Promise<void> {
+async function writeReplyState(path: string, sentFiles: Set<string>, failures = new Map<string, TelegramReplyFailure>()): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const state: TelegramReplyState = {
     schemaVersion: 1,
     sentFiles: [...sentFiles].sort(),
+    failures: [...failures.values()].sort((a, b) => a.file.localeCompare(b.file)),
     updatedAt: new Date().toISOString(),
   };
   await writeFile(path, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
-function truncateForTelegram(input: string, limit: number): string {
-  if (input.length <= limit) return input;
-  const suffix = "\n\n[truncated]";
-  return `${input.slice(0, limit - suffix.length)}${suffix}`;
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function splitText(input: string, limit: number): string[] {
+  const chunks: string[] = [];
+  let remaining = input;
+
+  while (remaining.length > limit) {
+    const window = remaining.slice(0, limit);
+    const candidates = [window.lastIndexOf("\n\n"), window.lastIndexOf("\n"), window.lastIndexOf(" ")];
+    const splitAt = Math.max(...candidates) > limit * 0.5 ? Math.max(...candidates) : limit;
+    chunks.push(remaining.slice(0, splitAt).trimEnd());
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+export function telegramReplyMessages(file: string, report: string, limit = 3900): string[] {
+  const body = report.trim() || "(empty report)";
+  const header = `Samantha outbox: ${file}`;
+  const single = [header, "", body].join("\n");
+  if (single.length <= limit) return [single];
+
+  const partHeader = `Samantha outbox: ${file} (part 999/999)\n\n`;
+  const bodyLimit = Math.max(1, limit - partHeader.length);
+  const chunks = splitText(body, bodyLimit);
+  return chunks.map((chunk, index) => [`Samantha outbox: ${file} (part ${index + 1}/${chunks.length})`, "", chunk].join("\n"));
 }
 
 export function telegramReplyText(file: string, report: string, limit = 3900): string {
-  return truncateForTelegram([`Samantha outbox: ${file}`, "", report.trim()].join("\n"), limit);
+  return telegramReplyMessages(file, report, limit)[0] ?? "";
 }
 
 async function sendTelegramMessage(input: {
@@ -118,6 +164,7 @@ export async function sendOutboxReplies(input: {
   const now = input.now ?? new Date();
   const state = await readReplyState(input.statePath);
   const sentFiles = new Set(state?.sentFiles ?? []);
+  const failures = new Map((state?.failures ?? []).map((failure) => [failure.file, failure]));
   const files = (await readdir(input.outboxDir).catch((err) => {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
@@ -132,22 +179,26 @@ export async function sendOutboxReplies(input: {
       ok: true,
       initialized: true,
       sent: [],
+      failed: [],
       skipped: files.map((file) => ({ file, reason: "marked existing on first run" })),
     };
   }
 
   if (input.markExisting) {
     for (const file of files) sentFiles.add(file);
-    await writeReplyState(input.statePath, sentFiles);
+    for (const file of files) failures.delete(file);
+    await writeReplyState(input.statePath, sentFiles, failures);
     return {
       ok: true,
       initialized: false,
       sent: [],
+      failed: [],
       skipped: files.map((file) => ({ file, reason: "marked existing" })),
     };
   }
 
   const sent: TelegramReplySent[] = [];
+  const failed: TelegramReplyFailed[] = [];
   const skipped: TelegramReplySkipped[] = [];
 
   for (const file of files) {
@@ -165,23 +216,44 @@ export async function sendOutboxReplies(input: {
       continue;
     }
 
-    const text = telegramReplyText(basename(file), await readFile(path, "utf8"));
-    await sendTelegramMessage({
-      token: input.token,
-      chatId: input.chatId,
-      text,
-      clientTimeoutMs,
-      fetchImpl,
-    });
-    sentFiles.add(file);
-    await writeReplyState(input.statePath, sentFiles);
-    sent.push({ file, path });
+    const messages = telegramReplyMessages(basename(file), await readFile(path, "utf8"));
+    const previous = failures.get(file);
+    const startIndex = Math.min(previous?.nextMessageIndex ?? 0, messages.length);
+    let nextMessageIndex = startIndex;
+    try {
+      for (let index = startIndex; index < messages.length; index += 1) {
+        await sendTelegramMessage({
+          token: input.token,
+          chatId: input.chatId,
+          text: messages[index],
+          clientTimeoutMs,
+          fetchImpl,
+        });
+        nextMessageIndex = index + 1;
+      }
+      sentFiles.add(file);
+      failures.delete(file);
+      await writeReplyState(input.statePath, sentFiles, failures);
+      sent.push({ file, path, messages: messages.length });
+    } catch (err) {
+      const failure: TelegramReplyFailure = {
+        file,
+        attempts: (previous?.attempts ?? 0) + 1,
+        lastError: errorMessage(err),
+        nextMessageIndex,
+        updatedAt: new Date().toISOString(),
+      };
+      failures.set(file, failure);
+      await writeReplyState(input.statePath, sentFiles, failures);
+      failed.push({ file, path, error: failure.lastError, attempts: failure.attempts, nextMessageIndex });
+    }
   }
 
   return {
     ok: true,
     initialized: false,
     sent,
+    failed,
     skipped,
   };
 }

@@ -10,6 +10,9 @@ import {
   doctorReport,
   failuresReport,
   healthReport,
+  proposalAddedReport,
+  proposalsListReport,
+  proposalShowReport,
   remoteHelpReport,
   runsListReport,
   runShowReport,
@@ -19,6 +22,7 @@ import {
 } from "./lib/operator-reports";
 import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnostics";
 import { runPlan } from "./lib/plan-runner";
+import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { TaskStore } from "./lib/task-store";
 import { pollTelegramToInbox } from "./lib/telegram-adapter";
@@ -69,6 +73,10 @@ function runsPath(args: ParsedArgs): string {
 
 function tasksPath(args: ParsedArgs): string {
   return join(stateDir(args), "tasks.jsonl");
+}
+
+function proposalsPath(args: ParsedArgs): string {
+  return join(stateDir(args), "proposals.jsonl");
 }
 
 function daemonLockPath(args: ParsedArgs): string {
@@ -179,6 +187,30 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const runs = await new RunIndex(runsPath(args)).list();
     return failuresReport(runs);
   }
+  if (command.type === "proposals:add") {
+    const proposal: ProposalRecord = {
+      schemaVersion: 1,
+      id: String(command.args?.id ?? ""),
+      text: String(command.args?.text ?? ""),
+      source: "remote",
+      senderId: String(command.args?.senderId ?? ""),
+      status: "pending_review",
+      createdAt: String(command.args?.receivedAt ?? new Date().toISOString()),
+    };
+    if (!proposal.id) throw new Error("proposal id is required");
+    if (!proposal.text.trim()) throw new Error("proposal text is required");
+    await new ProposalStore(proposalsPath(args)).append(proposal);
+    return proposalAddedReport(proposal);
+  }
+  if (command.type === "proposals:list") {
+    const proposals = await new ProposalStore(proposalsPath(args)).list();
+    return proposalsListReport(proposals);
+  }
+  if (command.type === "proposals:show") {
+    const id = String(command.args?.id ?? "");
+    const proposal = await new ProposalStore(proposalsPath(args)).find(id);
+    return proposalShowReport(id, proposal);
+  }
   if (command.type === "tasks:list") {
     const tasks = await new TaskStore(tasksPath(args)).list();
     return tasksListReport(tasks);
@@ -232,6 +264,18 @@ async function main(): Promise<void> {
     const taskId = args.positionals[0];
     if (!taskId) throw new Error("usage: tasks:show <task-id>");
     printJson((await new TaskStore(tasksPath(args)).list()).find((task) => task.id === taskId) ?? null);
+    return;
+  }
+
+  if (args.command === "proposals:list") {
+    printJson(await new ProposalStore(proposalsPath(args)).list());
+    return;
+  }
+
+  if (args.command === "proposals:show") {
+    const proposalId = args.positionals[0];
+    if (!proposalId) throw new Error("usage: proposals:show <proposal-id>");
+    printJson((await new ProposalStore(proposalsPath(args)).find(proposalId)) ?? null);
     return;
   }
 
@@ -456,6 +500,8 @@ async function main(): Promise<void> {
       "  tasks:add <task.json>",
       "  tasks:list",
       "  tasks:show <task-id>",
+      "  proposals:list",
+      "  proposals:show <proposal-id>",
       "  merge:check --run-log=<path> --repo-root=<repo>",
       "  merge:apply --run-log=<path> --repo-root=<repo>",
       "  merge:push --repo-root=<repo> [--remote=origin] [--branch=main]",

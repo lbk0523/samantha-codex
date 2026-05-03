@@ -1,12 +1,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { InboxCommand } from "./inbox";
+import { buildProposalId } from "./proposal-store";
 import { sanitizeTaskId } from "./worktree";
 
 export interface RemoteCommandInput {
   senderId: string;
   text: string;
   receivedAt?: string;
+  remoteId?: string | number;
 }
 
 export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderId?: string): InboxCommand {
@@ -16,43 +18,71 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
 
   const text = input.text.trim();
   const receivedAt = input.receivedAt ?? new Date().toISOString();
+  const commandToken = sanitizeTaskId(input.remoteId === undefined ? receivedAt : `${receivedAt}-${input.remoteId}`);
 
   if (text === "/help" || text === "/start") {
-    return { id: `remote-${sanitizeTaskId(receivedAt)}-help`, type: "remote:help", args: { source: "remote" } };
+    return { id: `remote-${commandToken}-help`, type: "remote:help", args: { source: "remote" } };
   }
   if (text === "/status") {
-    return { id: `remote-${sanitizeTaskId(receivedAt)}-status`, type: "status:show", args: { source: "remote" } };
+    return { id: `remote-${commandToken}-status`, type: "status:show", args: { source: "remote" } };
   }
   if (text === "/doctor") {
-    return { id: `remote-${sanitizeTaskId(receivedAt)}-doctor`, type: "ops:doctor", args: { source: "remote" } };
+    return { id: `remote-${commandToken}-doctor`, type: "ops:doctor", args: { source: "remote" } };
   }
   if (text === "/health") {
-    return { id: `remote-${sanitizeTaskId(receivedAt)}-health`, type: "health:check", args: { source: "remote" } };
+    return { id: `remote-${commandToken}-health`, type: "health:check", args: { source: "remote" } };
   }
   if (text === "/runs") {
-    return { id: `remote-${sanitizeTaskId(receivedAt)}-runs`, type: "runs:list", args: { source: "remote" } };
+    return { id: `remote-${commandToken}-runs`, type: "runs:list", args: { source: "remote" } };
   }
   if (text.startsWith("/run ")) {
     const id = text.slice("/run ".length).trim();
     if (!id) throw new Error("missing run id");
     return {
-      id: `remote-${sanitizeTaskId(receivedAt)}-run`,
+      id: `remote-${commandToken}-run`,
       type: "runs:show",
       args: { id, source: "remote" },
     };
   }
   if (text === "/failures") {
-    return { id: `remote-${sanitizeTaskId(receivedAt)}-failures`, type: "runs:failures", args: { source: "remote" } };
+    return { id: `remote-${commandToken}-failures`, type: "runs:failures", args: { source: "remote" } };
+  }
+  if (text === "/proposals") {
+    return { id: `remote-${commandToken}-proposals`, type: "proposals:list", args: { source: "remote" } };
+  }
+  if (text.startsWith("/proposal ")) {
+    const id = text.slice("/proposal ".length).trim();
+    if (!id) throw new Error("missing proposal id");
+    return {
+      id: `remote-${commandToken}-proposal`,
+      type: "proposals:show",
+      args: { id, source: "remote" },
+    };
+  }
+  if (text.startsWith("/propose ")) {
+    const proposalText = text.slice("/propose ".length).trim();
+    if (!proposalText) throw new Error("missing proposal text");
+    return {
+      id: `remote-${commandToken}-propose`,
+      type: "proposals:add",
+      args: {
+        id: buildProposalId(receivedAt, input.remoteId),
+        text: proposalText,
+        senderId: input.senderId,
+        source: "remote",
+        receivedAt,
+      },
+    };
   }
   if (text === "/tasks") {
-    return { id: `remote-${sanitizeTaskId(receivedAt)}-tasks`, type: "tasks:list", args: { source: "remote" } };
+    return { id: `remote-${commandToken}-tasks`, type: "tasks:list", args: { source: "remote" } };
   }
   if (text === "/dashboard") {
-    return { id: `remote-${sanitizeTaskId(receivedAt)}-dashboard`, type: "dashboard:build", args: { source: "remote" } };
+    return { id: `remote-${commandToken}-dashboard`, type: "dashboard:build", args: { source: "remote" } };
   }
   if (text.startsWith("/task ")) {
     return {
-      id: `remote-${sanitizeTaskId(receivedAt)}-task`,
+      id: `remote-${commandToken}-task`,
       type: "tasks:show",
       args: { id: text.slice("/task ".length).trim(), source: "remote" },
     };

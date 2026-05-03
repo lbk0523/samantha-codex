@@ -36,6 +36,7 @@ bun run samantha dashboard:build
 
 - `state/daemon.lock`: prevents duplicate `inbox:watch` processes
 - `state/heartbeat.json`: last daemon heartbeat
+- `state/proposals.jsonl`: remote work proposals waiting for review
 - `inbox/*.json`: queued local commands
 - `outbox/*.md`: command reports
 - `archive/inbox/*.json`: processed input commands

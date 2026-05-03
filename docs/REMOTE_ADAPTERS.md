@@ -23,17 +23,28 @@ The current remote command mapper supports only:
 - `/runs`
 - `/run <run-id>`
 - `/failures`
+- `/propose <text>`
+- `/proposals`
+- `/proposal <proposal-id>`
 - `/tasks`
 - `/dashboard`
 - `/task <task-id>`
 
 Unsupported commands are ignored or rejected.
 
-All supported remote commands are read-only. The broader local CLI commands for worker dispatch, merge, push, and cleanup are intentionally not exposed remotely.
+Supported remote commands are operational reports, a safe dashboard rebuild, and proposal intake. `/propose` may write a pending proposal to `state/proposals.jsonl`; worker dispatch, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
 
 `/status` is the quick operational view. It includes daemon heartbeat, queue counts, latest run, Telegram offset, reply state, and unsent remote outbox count.
 
 `/doctor` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, and expected systemd template installation without printing secret values.
+
+Proposal commands are intake only:
+
+- `/propose <text>` writes a pending proposal to `state/proposals.jsonl`
+- `/proposals` lists recent proposals
+- `/proposal <proposal-id>` shows one proposal
+
+No proposal command dispatches workers or creates commits. A proposal must still be reviewed and converted into an explicit task before execution.
 
 ## Telegram Poll Adapter
 
@@ -93,6 +104,8 @@ Required:
 
 The adapter only reads `outbox/remote-*.md` by default. It does not execute commands, dispatch workers, merge, push, or clean worktrees.
 
+Long outbox reports are split into multiple Telegram messages instead of truncated.
+
 Sent state is stored in:
 
 ```text
@@ -104,6 +117,7 @@ Safe first-run behavior:
 - If `state/telegram-replies.json` does not exist, existing `outbox/remote-*.md` files are marked as already sent and no Telegram message is sent.
 - Use `--send-existing` only if you intentionally want to send existing historical remote outbox files.
 - Use `--mark-existing` to explicitly baseline current remote outbox files before enabling the timer.
+- Failed sends are not marked sent. Failure attempts, last errors, and split-message progress are stored in `state/telegram-replies.json`, and the next timer pass retries from the next unconfirmed message.
 
 systemd user timer templates are included:
 

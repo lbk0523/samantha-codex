@@ -120,6 +120,35 @@ describe("inbox and remote commands", () => {
       args: { id: "run-1" },
     });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/failures" }, "bk").type).toBe("runs:failures");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/proposals" }, "bk").type).toBe("proposals:list");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/proposal proposal-1" }, "bk")).toMatchObject({
+      type: "proposals:show",
+      args: { id: "proposal-1" },
+    });
+    expect(
+      commandFromRemoteInput(
+        { senderId: "bk", text: "/propose Improve status reports", receivedAt: "2026-05-03T10:00:00.000Z" },
+        "bk",
+      ),
+    ).toMatchObject({
+      type: "proposals:add",
+      args: {
+        id: "proposal-2026-05-03t10-00-00.000z",
+        text: "Improve status reports",
+        senderId: "bk",
+      },
+    });
+    expect(
+      commandFromRemoteInput(
+        { senderId: "bk", text: "/propose One more request", receivedAt: "2026-05-03T10:00:00.000Z", remoteId: 99 },
+        "bk",
+      ),
+    ).toMatchObject({
+      id: "remote-2026-05-03t10-00-00.000z-99-propose",
+      args: {
+        id: "proposal-2026-05-03t10-00-00.000z-99",
+      },
+    });
     expect(() => commandFromRemoteInput({ senderId: "other", text: "/runs" }, "bk")).toThrow("not allowed");
 
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-"));
