@@ -66,6 +66,7 @@ export function remoteHelpReport(): string {
     "- `/proposal <proposal-id>`: show one proposal",
     "- `/accept <proposal-id>`: mark one proposal accepted without executing it",
     "- `/reject <proposal-id>`: mark one proposal rejected without executing it",
+    "- `/draft-propose <text>`: save, accept, and draft a work proposal without executing it",
     "- `/draft <proposal-id>`: create a task draft from an accepted proposal",
     "- `/drafts`: show recent task drafts",
     "- `/draft <draft-id>`: show one task draft",
@@ -214,6 +215,21 @@ export function taskDraftAddedReport(draft: TaskDraftRecord): string {
     `Title: ${oneLine(draft.title)}`,
     "",
     "No worker was dispatched. Fill targetFiles and verifyCommands before promoting this draft to a task.",
+  ].join("\n");
+}
+
+export function draftProposeAddedReport(input: { proposal: ProposalRecord; draft: TaskDraftRecord }): string {
+  return [
+    "# drafts:add-from-proposal-text",
+    "",
+    `Saved proposal: ${code(input.proposal.id)}`,
+    `Proposal status: ${code(input.proposal.status)}`,
+    `Saved draft: ${code(input.draft.id)}`,
+    `Draft status: ${code(input.draft.status)}`,
+    "",
+    `Title: ${oneLine(input.draft.title)}`,
+    "",
+    "No worker was dispatched. This only creates an accepted proposal and a task draft.",
   ].join("\n");
 }
 

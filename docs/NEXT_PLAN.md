@@ -239,6 +239,7 @@ Next, dogfood the remote proposal flow end to end:
 /propose <work request>
 /accept <proposal-id>
 /draft <proposal-id>
+/draft-propose <work request>
 /drafts
 /draft <draft-id>
 ```

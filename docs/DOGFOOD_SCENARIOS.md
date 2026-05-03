@@ -472,7 +472,7 @@ bun run samantha telegram:reply
 
 Pass criteria:
 
-- allowed `/help`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/proposals`, `/proposal <id>`, `/accept <id>`, `/reject <id>`, `/draft <proposal-id>`, `/drafts`, `/draft <draft-id>`, `/tasks`, `/dashboard`, and `/task <id>` messages create inbox files
+- allowed `/help`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/draft-propose <text>`, `/proposals`, `/proposal <id>`, `/accept <id>`, `/reject <id>`, `/draft <proposal-id>`, `/drafts`, `/draft <draft-id>`, `/tasks`, `/dashboard`, and `/task <id>` messages create inbox files
 - unsupported messages are ignored
 - messages from other sender ids are ignored
 - `state/telegram-offset.json` is updated after a successful poll
@@ -480,6 +480,7 @@ Pass criteria:
 - long remote outbox replies are split into multiple Telegram messages instead of truncated
 - reports that return proposal, draft, run, or task IDs also send each ID as a separate copy-only Telegram message
 - `/propose <text>` writes only to `state/proposals.jsonl` and does not dispatch a worker
+- `/draft-propose <text>` writes only to `state/proposals.jsonl` and `state/task-drafts.jsonl` and does not dispatch a worker
 - `/accept <id>` and `/reject <id>` update proposal review state only and do not dispatch workers
 - `/draft <proposal-id>` writes only to `state/task-drafts.jsonl`; unaccepted proposals are rejected
 - no remote path executes shell, merge, push, cleanup, or worker dispatch directly
@@ -503,6 +504,7 @@ Stop dogfood and fix Samantha before continuing if any of these happen:
 - Telegram reply resends the same outbox file repeatedly
 - Telegram reply sends status values, timestamps, or file paths as copy-only ID messages
 - `/propose` dispatches a worker, creates a commit, or changes project files
+- `/draft-propose` dispatches a worker, creates a commit, writes `state/tasks.jsonl`, or changes project files
 - `/accept` or `/reject` dispatches a worker, creates a commit, or changes project files
 - `/draft` dispatches a worker, creates a commit, writes `state/tasks.jsonl`, or changes project files
 - remote command can create arbitrary shell execution

@@ -144,6 +144,19 @@ describe("inbox and remote commands", () => {
     expect(commandFromRemoteInput({ senderId: "bk", text: "/drafts" }, "bk").type).toBe("drafts:list");
     expect(
       commandFromRemoteInput(
+        { senderId: "bk", text: "/draft-propose Improve task flow", receivedAt: "2026-05-03T10:06:00.000Z" },
+        "bk",
+      ),
+    ).toMatchObject({
+      type: "drafts:add-from-proposal-text",
+      args: {
+        proposalId: "proposal-2026-05-03t10-06-00.000z",
+        text: "Improve task flow",
+        senderId: "bk",
+      },
+    });
+    expect(
+      commandFromRemoteInput(
         { senderId: "bk", text: "/draft proposal-1", receivedAt: "2026-05-03T10:06:00.000Z" },
         "bk",
       ),

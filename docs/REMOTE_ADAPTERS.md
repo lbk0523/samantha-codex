@@ -24,6 +24,7 @@ The current remote command mapper supports only:
 - `/run <run-id>`
 - `/failures`
 - `/propose <text>`
+- `/draft-propose <text>`
 - `/proposals`
 - `/proposal <proposal-id>`
 - `/accept <proposal-id>`
@@ -37,7 +38,7 @@ The current remote command mapper supports only:
 
 Unsupported commands are ignored or rejected.
 
-Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, and conservative task draft creation. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/accept` and `/reject` may update proposal review state; `/draft <proposal-id>` may write a draft to `state/task-drafts.jsonl`. Worker dispatch, task ledger promotion, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
+Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, and conservative task draft creation. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/draft-propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal-id>` may write a draft to `state/task-drafts.jsonl`. Worker dispatch, task ledger promotion, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
 
 `/status` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, draft counts, latest run, Telegram offset, reply state, and unsent remote outbox count.
 
@@ -46,6 +47,7 @@ Supported remote commands are operational reports, a safe dashboard rebuild, pro
 Proposal commands are intake/review only:
 
 - `/propose <text>` writes a pending proposal to `state/proposals.jsonl`
+- `/draft-propose <text>` writes an accepted proposal to `state/proposals.jsonl` and a draft to `state/task-drafts.jsonl`
 - `/proposals` lists recent proposals
 - `/proposal <proposal-id>` shows one proposal
 - `/accept <proposal-id>` marks one proposal accepted
@@ -56,6 +58,7 @@ No proposal command dispatches workers or creates commits. Accepted proposals mu
 Task draft commands are draft-only:
 
 - `/draft <proposal-id>` creates one draft from an accepted proposal
+- `/draft-propose <text>` creates an accepted proposal and one draft in a single command
 - `/drafts` lists recent task drafts
 - `/draft <draft-id>` shows one task draft
 

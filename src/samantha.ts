@@ -8,6 +8,7 @@ import { RunIndex } from "./lib/ledger";
 import { applyMerge, evaluateMergeGate, pushMerge } from "./lib/merge-gate";
 import {
   doctorReport,
+  draftProposeAddedReport,
   failuresReport,
   healthReport,
   proposalAddedReport,
@@ -244,6 +245,27 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const draft = taskDraftFromProposal(proposal, String(command.args?.receivedAt ?? new Date().toISOString()));
     await new TaskDraftStore(taskDraftsPath(args)).append(draft);
     return taskDraftAddedReport(draft);
+  }
+  if (command.type === "drafts:add-from-proposal-text") {
+    const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
+    const proposal: ProposalRecord = {
+      schemaVersion: 1,
+      id: String(command.args?.proposalId ?? ""),
+      text: String(command.args?.text ?? ""),
+      source: "remote",
+      senderId: String(command.args?.senderId ?? ""),
+      status: "accepted",
+      createdAt: receivedAt,
+      reviewedAt: receivedAt,
+      reviewNote: "accepted by /draft-propose",
+    };
+    if (!proposal.id) throw new Error("proposal id is required");
+    if (!proposal.text.trim()) throw new Error("proposal text is required");
+
+    const draft = taskDraftFromProposal(proposal, receivedAt);
+    await new ProposalStore(proposalsPath(args)).append(proposal);
+    await new TaskDraftStore(taskDraftsPath(args)).append(draft);
+    return draftProposeAddedReport({ proposal, draft });
   }
   if (command.type === "drafts:list") {
     const drafts = await new TaskDraftStore(taskDraftsPath(args)).list();

@@ -4,6 +4,7 @@ import type { DaemonHealthResult, DaemonHeartbeat } from "../src/lib/daemon";
 import type { RunSummary } from "../src/lib/ledger";
 import {
   doctorReport,
+  draftProposeAddedReport,
   failuresReport,
   healthReport,
   proposalAddedReport,
@@ -105,6 +106,7 @@ describe("operator reports", () => {
 
     expect(report).toContain("/status");
     expect(report).toContain("/propose <text>");
+    expect(report).toContain("/draft-propose <text>");
     expect(report).toContain("/draft <proposal-id>");
     expect(report).toContain("/run <run-id>");
     expect(report).toContain("cannot dispatch workers");
@@ -190,6 +192,9 @@ describe("operator reports", () => {
 
   test("renders task draft reports without implying execution", () => {
     expect(taskDraftAddedReport(draft)).toContain("No worker was dispatched");
+    expect(draftProposeAddedReport({ proposal: { ...proposal, status: "accepted" }, draft })).toContain(
+      "only creates an accepted proposal and a task draft",
+    );
     expect(taskDraftsListReport([draft])).toContain("Total drafts: 1");
     expect(taskDraftShowReport("draft-1", draft)).toContain("Improve status reports");
   });
