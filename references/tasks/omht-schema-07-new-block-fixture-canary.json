@@ -1,0 +1,36 @@
+{
+  "id": "omht-schema-07-new-block-fixture-canary",
+  "title": "Add schema 0.7 new block fixture canary",
+  "targetAgent": "codex-worker",
+  "targetFiles": [
+    "tests/unit/zod-plan-schema.spec.ts",
+    "03 Prompts/(C) 2026-05-03 codex-omht-schema-07-new-block-fixture-canary-report.md"
+  ],
+  "forbiddenChanges": [
+    "CLAUDE.md",
+    "AGENTS.md",
+    "DESIGN.md",
+    "README.md",
+    "00 Brief/**",
+    "01 Design/**",
+    "02 Sprints/**",
+    "04 Backlog/**",
+    "04 Refer/**",
+    "app/**",
+    "components/**",
+    "lib/**",
+    "scripts/**",
+    "supabase/**",
+    "next.config.ts",
+    "package.json",
+    "bun.lock",
+    ".github/**"
+  ],
+  "verifyCommands": [
+    "bun typecheck",
+    "bun test tests/unit/zod-plan-schema.spec.ts"
+  ],
+  "instructions": "Add one tests-only canary in tests/unit/zod-plan-schema.spec.ts proving schema_version 0.7 accepts the five W8 C4 new document block types: philosophy_banner, inbody_recap, weekly_overview, daily_session_detail, and evening_routine. Do not modify production code or schema code. Keep the change minimal by extending the existing baseValidPlan fixture or creating a small cloned valid plan in the test. Also create the required Codex completion report at 03 Prompts/(C) 2026-05-03 codex-omht-schema-07-new-block-fixture-canary-report.md. Run only the listed verify commands. Create exactly one commit with the requested subject. Do not push.",
+  "expectedCommitSubject": "test(w8): add schema 0.7 new block fixture canary",
+  "status": "pending"
+}
