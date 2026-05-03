@@ -2,6 +2,8 @@
 
 Last updated: 2026-05-03
 
+Current planning status: MVP control plane built and read-only dogfood completed. Next focus is a fresh low-risk writer dogfood, then hardening based on the result.
+
 ## Purpose
 
 Samantha-Codex is a Codex-only personal agent control plane.
@@ -51,8 +53,10 @@ Already implemented:
 Important dogfood findings:
 
 - Fresh worktrees need deterministic setup. This is why `setupCommands` exists.
-- Codex worker commits need controlled access to parent `.git` worktree metadata.
+- Codex writer commits need controlled access to parent `.git` worktree metadata.
+- Non-writer agents should not receive parent `.git` metadata write access.
 - Audit logs are mandatory before 24/7 operation; otherwise Samantha cannot explain what happened after the fact.
+- Read-only dogfood against `oh-my-health-trainer` passed without file changes and correctly produced run log, run index, dashboard data, and a merge-gate rejection for no-commit output.
 
 ## Near-Term Roadmap
 
@@ -138,7 +142,7 @@ Success criteria:
 
 ### Phase 5: Local 24/7 Loop
 
-MVP status: implemented as file-backed `inbox:process` and `inbox:watch`.
+MVP status: implemented as file-backed `inbox:process` and `inbox:watch`. Production daemon packaging is not implemented yet.
 
 Goal: run Samantha continuously without adding remote UX risk too early.
 
@@ -158,7 +162,7 @@ Success criteria:
 
 ### Phase 6: Remote Command Surface
 
-MVP status: implemented as `remote:enqueue`, which maps narrow remote command JSON into the local inbox.
+MVP status: implemented as `remote:enqueue`, which maps narrow remote command JSON into the local inbox. Telegram or any network-facing adapter is not implemented yet.
 
 Goal: let BK instruct Samantha remotely after local loop safety is proven.
 
@@ -176,7 +180,7 @@ Success criteria:
 
 ### Phase 7: Dashboard
 
-MVP status: implemented as read-only static HTML generation.
+MVP status: implemented as read-only static HTML generation from run summaries. Queue state, merge candidates, and project/repo status are still pending.
 
 Goal: make long-running operation inspectable.
 
@@ -210,7 +214,7 @@ These gates should not be weakened for convenience:
 
 ## What Not To Build Yet
 
-Do not prioritize these until the ledger, CLI, and merge gate exist:
+Do not prioritize these until writer dogfood proves the control plane can handle safe write/verify/merge-check loops:
 
 - Telegram-first 24/7 loop
 - multi-writer parallelism
@@ -221,15 +225,16 @@ Do not prioritize these until the ledger, CLI, and merge gate exist:
 
 ## Immediate Next Step
 
-Dogfood the full MVP loop on a low-risk real task.
+Run a fresh low-risk writer dogfood task.
 
 The practical next implementation should:
 
-1. add one real plan for `oh-my-health-trainer`
-2. run reviewer/spec tasks first
-3. run one writer task with `setupCommands`
-4. inspect `runs/`, `state/runs.jsonl`, and the dashboard
-5. use `merge:check` before any integration
-6. harden any failure found during the dogfood run
+1. add a new `oh-my-health-trainer` writer task that has not already been applied
+2. target a tests-only change or one generated report
+3. run reviewer/spec dry-run checks first
+4. run one writer task with `setupCommands`
+5. inspect `runs/`, `state/runs.jsonl`, and the dashboard
+6. use `merge:check` before any integration
+7. harden any failure found during the dogfood run
 
-This turns Samantha from "an MVP control plane" into a system that can survive repeated real use.
+The detailed next plan is in [NEXT_PLAN.md](NEXT_PLAN.md).
