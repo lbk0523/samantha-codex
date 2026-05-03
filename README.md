@@ -46,6 +46,8 @@ bun run dispatch-worker \
   --execute
 ```
 
+Executed runs write audit JSON files to `runs/` by default. Use `--log-dir=<path>` to choose another location, or `--no-log` to disable logging for a one-off run.
+
 Run the first external read-only canary against `oh-my-health-trainer`:
 
 ```bash

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
+import { writeWorkerRunLog } from "./lib/run-log";
 import { executeWorkerDispatch, prepareWorkerDispatch } from "./lib/worker-dispatch";
 
 interface Args {
@@ -9,6 +10,8 @@ interface Args {
   repoRoot: string;
   allocate: boolean;
   execute: boolean;
+  log: boolean;
+  logDir?: string;
   worktreesDir?: string;
 }
 
@@ -29,10 +32,11 @@ function parseArgs(argv: string[]): Args {
   const repoRoot = values.get("repo-root");
   if (typeof task !== "string" || typeof agent !== "string" || typeof repoRoot !== "string") {
     throw new Error(
-      "usage: bun run src/dispatch-worker.ts --task=<task.json> --agent=<profile.json> --repo-root=<repo> [--allocate] [--execute] [--worktrees-dir=worktrees]",
+      "usage: bun run src/dispatch-worker.ts --task=<task.json> --agent=<profile.json> --repo-root=<repo> [--allocate] [--execute] [--log-dir=runs] [--no-log] [--worktrees-dir=worktrees]",
     );
   }
 
+  const logDir = values.get("log-dir");
   const worktreesDir = values.get("worktrees-dir");
   return {
     task,
@@ -40,6 +44,8 @@ function parseArgs(argv: string[]): Args {
     repoRoot,
     allocate: values.get("allocate") === true,
     execute: values.get("execute") === true,
+    log: values.get("no-log") !== true,
+    logDir: typeof logDir === "string" ? logDir : undefined,
     worktreesDir: typeof worktreesDir === "string" ? worktreesDir : undefined,
   };
 }
@@ -62,8 +68,30 @@ const input = {
   worktreesDir: args.worktreesDir,
 };
 
-const prepared = args.execute
-  ? await executeWorkerDispatch(input)
-  : await prepareWorkerDispatch(input);
+if (args.execute) {
+  const startedAt = new Date().toISOString();
+  const execution = await executeWorkerDispatch(input);
+  const finishedAt = new Date().toISOString();
+  let output: unknown = execution;
 
-console.log(JSON.stringify(prepared, null, 2));
+  if (args.log) {
+    const logDir = resolve(args.logDir ?? resolve(import.meta.dir, "..", "runs"));
+    const runLog = await writeWorkerRunLog(logDir, {
+      task,
+      agent,
+      repoRoot: input.repoRoot,
+      allocate: input.allocate,
+      execute: args.execute,
+      worktreesDir: input.worktreesDir,
+      startedAt,
+      finishedAt,
+      execution,
+    });
+    output = { ...execution, runLog };
+  }
+
+  console.log(JSON.stringify(output, null, 2));
+} else {
+  const prepared = await prepareWorkerDispatch(input);
+  console.log(JSON.stringify(prepared, null, 2));
+}

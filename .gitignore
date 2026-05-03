@@ -1,5 +1,6 @@
 node_modules/
 state/*.jsonl
+runs/
 worktrees/
 .env
 .env.*
