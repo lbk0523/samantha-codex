@@ -41,7 +41,10 @@ import { TaskStore } from "./lib/task-store";
 import { pollTelegramToInbox } from "./lib/telegram-adapter";
 import { sendOutboxReplies } from "./lib/telegram-reply-adapter";
 import { cleanupCompletedWorktree } from "./lib/worktree-cleanup";
-import { executeWorkerDispatch, prepareWorkerDispatch } from "./lib/worker-dispatch";
+import { branchForTask, worktreePathForTask } from "./lib/worktree";
+import { executeWorkerDispatch, prepareWorkerDispatch, commitWorkerChanges } from "./lib/worker-dispatch";
+import { evaluateWorkerResult } from "./lib/worker-result";
+import { gitHead, gitTopLevel } from "./lib/git";
 
 interface ParsedArgs {
   command: string;
@@ -407,6 +410,91 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "tasks:finalize-worktree") {
+    const taskId = args.positionals[0];
+    const repoRootFlag = flag(args, "repo-root", "");
+    if (!taskId || !repoRootFlag) {
+      throw new Error("usage: tasks:finalize-worktree <task-id> --repo-root=<repo> [--worktree=<path>] [--note=<text>]");
+    }
+
+    const taskStore = new TaskStore(tasksPath(args));
+    const task = await taskStore.find(taskId);
+    if (!task) throw new Error(`task not found: ${taskId}`);
+
+    const agent = await loadAgentProfile(args, task.targetAgent);
+    const repoRoot = await gitTopLevel(resolve(repoRootFlag));
+    const worktreesDir = flag(args, "worktrees-dir", "");
+    const worktreePath = resolve(
+      flag(args, "worktree", worktreePathForTask(repoRoot, task.id, worktreesDir || undefined)),
+    );
+    const baseCommit = await gitHead(repoRoot);
+    const note = flag(args, "note", "manual finalize passed");
+    const output = `HARNESS_RESULT: ${JSON.stringify({ status: "pass", note, commit: "" })}`;
+    const startedAt = new Date().toISOString();
+    const evaluation = await evaluateWorkerResult({
+      task,
+      cwd: worktreePath,
+      baseCommit,
+      output,
+    });
+    const commit =
+      evaluation.pass && agent.writerClass === "writer"
+        ? await commitWorkerChanges({
+            task,
+            cwd: worktreePath,
+            files: evaluation.changedFiles,
+          })
+        : undefined;
+    const commitPassed = !commit || (commit.add.exitCode === 0 && commit.commit.exitCode === 0);
+    const finishedAt = new Date().toISOString();
+    const execution = {
+      preparation: {
+        taskId: task.id,
+        agentId: agent.id,
+        worktreePath,
+        allocation: {
+          taskId: task.id,
+          repoRoot,
+          worktreePath,
+          branch: branchForTask(task.id),
+          baseCommit,
+        },
+        codex: {
+          prompt: "Manual finalize of an existing worker worktree.",
+          command: ["manual", "finalize-worktree"],
+        },
+      },
+      setupResults: [],
+      command: {
+        command: ["manual", "finalize-worktree"],
+        exitCode: 0,
+        stdout: output,
+        stderr: "",
+      },
+      evaluation,
+      commit,
+      pass: evaluation.pass && commitPassed,
+    };
+    const logInput = {
+      task,
+      agent,
+      repoRoot,
+      allocate: true,
+      execute: true,
+      worktreesDir: worktreesDir || undefined,
+      startedAt,
+      finishedAt,
+      execution,
+    };
+    const runLog = await writeWorkerRunLog(resolve(flag(args, "log-dir", join(root, "runs"))), logInput);
+    const runSummary = summarizeWorkerRun({ ...logInput, runId: runLog.runId, logPath: runLog.path });
+    await new RunIndex(runsPath(args)).append(runSummary);
+    await taskStore.updateStatus(task.id, runSummary.pass ? "completed" : "failed");
+    printJson({ runLog, runSummary });
+    if (!runSummary.pass) process.exitCode = 1;
+    return;
+  }
+
   if (args.command === "proposals:list") {
     printJson(await new ProposalStore(proposalsPath(args)).list());
     return;
@@ -714,6 +802,7 @@ async function main(): Promise<void> {
       "  tasks:list",
       "  tasks:show <task-id>",
       "  tasks:dispatch <task-id> --repo-root=<repo> [--execute]",
+      "  tasks:finalize-worktree <task-id> --repo-root=<repo> [--worktree=<path>] [--note=<text>]",
       "  proposals:list",
       "  proposals:show <proposal-id>",
       "  proposals:accept <proposal-id> [--note=<text>]",

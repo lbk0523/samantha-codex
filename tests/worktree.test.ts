@@ -62,4 +62,23 @@ describe("worktree allocation", () => {
 
     await expect(git(["rev-parse", "--verify", allocation.branch], repo)).rejects.toThrow();
   });
+
+  test("reuses an existing clean task worktree for the same base", async () => {
+    const repo = await makeRepo();
+
+    const first = await allocateWorktree({
+      repoRoot: repo,
+      taskId: "Task 1",
+      worktreesDir: "worktrees",
+    });
+    const second = await allocateWorktree({
+      repoRoot: repo,
+      taskId: "Task 1",
+      worktreesDir: "worktrees",
+    });
+
+    expect(second).toEqual(first);
+
+    await releaseWorktree({ repoRoot: repo, allocation: first });
+  });
 });
