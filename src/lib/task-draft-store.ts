@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { TaskSpec } from "./contracts";
 import type { ProposalRecord } from "./proposal-store";
 import { sanitizeTaskId } from "./worktree";
 
@@ -17,6 +18,50 @@ export interface TaskDraftRecord {
   verifyCommands: string[];
   instructions: string;
   createdAt: string;
+  updatedAt?: string;
+  approvedAt?: string;
+  discardedAt?: string;
+}
+
+export interface TaskDraftCheckResult {
+  ok: boolean;
+  draftId: string;
+  violations: string[];
+}
+
+export interface TaskDraftUpdatePatch {
+  title?: string;
+  targetAgent?: string;
+  targetFiles?: string[];
+  forbiddenChanges?: string[];
+  verifyCommands?: string[];
+  instructions?: string;
+}
+
+function optionalString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${field} must be a string`);
+  return value;
+}
+
+function optionalStringArray(value: unknown, field: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`${field} must be a string array`);
+  }
+  return value;
+}
+
+export function parseTaskDraftUpdatePatch(raw: unknown): TaskDraftUpdatePatch {
+  const value = raw as Record<string, unknown>;
+  return {
+    title: optionalString(value.title, "title"),
+    targetAgent: optionalString(value.targetAgent, "targetAgent"),
+    targetFiles: optionalStringArray(value.targetFiles, "targetFiles"),
+    forbiddenChanges: optionalStringArray(value.forbiddenChanges, "forbiddenChanges"),
+    verifyCommands: optionalStringArray(value.verifyCommands, "verifyCommands"),
+    instructions: optionalString(value.instructions, "instructions"),
+  };
 }
 
 async function readJsonLines<T>(path: string): Promise<T[]> {
@@ -70,6 +115,46 @@ export function taskDraftFromProposal(proposal: ProposalRecord, createdAt: strin
   };
 }
 
+export function buildTaskIdFromDraft(draftId: string): string {
+  return `task-${sanitizeTaskId(draftId.replace(/^draft-/, ""))}`;
+}
+
+export function checkTaskDraft(draft: TaskDraftRecord | undefined, input: { knownAgentIds?: string[] } = {}): TaskDraftCheckResult {
+  if (!draft) {
+    return { ok: false, draftId: "", violations: ["draft not found"] };
+  }
+
+  const violations: string[] = [];
+  if (draft.status !== "drafted") violations.push(`draft status must be drafted: ${draft.status}`);
+  if (!draft.title.trim()) violations.push("title is required");
+  if (!draft.instructions.trim()) violations.push("instructions are required");
+  if (!draft.targetAgent.trim()) violations.push("targetAgent is required");
+  if (input.knownAgentIds && !input.knownAgentIds.includes(draft.targetAgent)) {
+    violations.push(`targetAgent is unknown: ${draft.targetAgent}`);
+  }
+  if (draft.targetFiles.length === 0) violations.push("targetFiles must not be empty");
+  if (draft.verifyCommands.length === 0) violations.push("verifyCommands must not be empty");
+
+  return {
+    ok: violations.length === 0,
+    draftId: draft.id,
+    violations,
+  };
+}
+
+export function taskSpecFromDraft(draft: TaskDraftRecord): TaskSpec {
+  return {
+    id: buildTaskIdFromDraft(draft.id),
+    title: draft.title,
+    targetAgent: draft.targetAgent,
+    targetFiles: draft.targetFiles,
+    forbiddenChanges: draft.forbiddenChanges,
+    verifyCommands: draft.verifyCommands,
+    instructions: draft.instructions,
+    status: "pending",
+  };
+}
+
 export class TaskDraftStore {
   constructor(private readonly path: string) {}
 
@@ -90,5 +175,46 @@ export class TaskDraftStore {
       throw new Error(`task draft already exists for proposal: ${draft.sourceProposalId}`);
     }
     await writeJsonLines(this.path, [...drafts, draft]);
+  }
+
+  async update(id: string, patch: TaskDraftUpdatePatch, updatedAt: string): Promise<TaskDraftRecord> {
+    const drafts = await this.list();
+    const index = drafts.findIndex((draft) => draft.id === id);
+    if (index === -1) throw new Error(`task draft not found: ${id}`);
+    if (drafts[index].status !== "drafted") {
+      throw new Error(`task draft is not editable: ${id}`);
+    }
+
+    const updated: TaskDraftRecord = {
+      ...drafts[index],
+      updatedAt,
+    };
+    if (patch.title !== undefined) updated.title = patch.title;
+    if (patch.targetAgent !== undefined) updated.targetAgent = patch.targetAgent;
+    if (patch.targetFiles !== undefined) updated.targetFiles = patch.targetFiles;
+    if (patch.forbiddenChanges !== undefined) updated.forbiddenChanges = patch.forbiddenChanges;
+    if (patch.verifyCommands !== undefined) updated.verifyCommands = patch.verifyCommands;
+    if (patch.instructions !== undefined) updated.instructions = patch.instructions;
+    const next = [...drafts];
+    next[index] = updated;
+    await writeJsonLines(this.path, next);
+    return updated;
+  }
+
+  async markApproved(id: string, approvedAt: string): Promise<TaskDraftRecord> {
+    const drafts = await this.list();
+    const index = drafts.findIndex((draft) => draft.id === id);
+    if (index === -1) throw new Error(`task draft not found: ${id}`);
+
+    const updated: TaskDraftRecord = {
+      ...drafts[index],
+      status: "approved",
+      approvedAt,
+      updatedAt: approvedAt,
+    };
+    const next = [...drafts];
+    next[index] = updated;
+    await writeJsonLines(this.path, next);
+    return updated;
   }
 }

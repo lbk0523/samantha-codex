@@ -64,6 +64,16 @@ Task draft commands are draft-only:
 
 Drafts use conservative defaults and empty `targetFiles` / `verifyCommands`. Draft creation does not add to `state/tasks.jsonl`, dispatch workers, or create commits.
 
+Task promotion is local-only:
+
+```bash
+bun run samantha drafts:check <draft-id>
+bun run samantha drafts:update <draft-id> --from=<draft-patch.json>
+bun run samantha drafts:approve <draft-id>
+```
+
+`drafts:approve` refuses drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker.
+
 ## Telegram Poll Adapter
 
 `telegram:poll` performs one Telegram `getUpdates` poll and writes allowed commands into `inbox/`.

@@ -54,6 +54,7 @@ Already implemented:
 - Telegram outbox reply adapter
 - remote proposal intake and review state under `state/proposals.jsonl`
 - accepted proposal to task draft flow under `state/task-drafts.jsonl`
+- local-only task draft check, update, and approval gate
 - systemd timer templates for Telegram polling and outbox replies
 - read-only static dashboard generation
 - OMHT read-only canary

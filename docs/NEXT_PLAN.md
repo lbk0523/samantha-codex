@@ -244,4 +244,13 @@ Next, dogfood the remote proposal flow end to end:
 /draft <draft-id>
 ```
 
-Keep the next implementation focused on the local-only draft approval gate. Do not open remote worker dispatch yet.
+Next local dogfood:
+
+```bash
+bun run samantha drafts:check <draft-id>
+bun run samantha drafts:update <draft-id> --from=<draft-patch.json>
+bun run samantha drafts:approve <draft-id>
+bun run samantha tasks:show <task-id>
+```
+
+Do not open remote worker dispatch yet.

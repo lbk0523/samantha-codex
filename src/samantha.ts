@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { TaskSpec } from "./lib/contracts";
+import type { AgentProfile, TaskSpec } from "./lib/contracts";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
 import { writeDashboard } from "./lib/dashboard";
 import { processInbox, type InboxCommand } from "./lib/inbox";
@@ -29,7 +29,13 @@ import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnos
 import { runPlan } from "./lib/plan-runner";
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
-import { TaskDraftStore, taskDraftFromProposal } from "./lib/task-draft-store";
+import {
+  checkTaskDraft,
+  parseTaskDraftUpdatePatch,
+  TaskDraftStore,
+  taskDraftFromProposal,
+  taskSpecFromDraft,
+} from "./lib/task-draft-store";
 import { TaskStore } from "./lib/task-store";
 import { pollTelegramToInbox } from "./lib/telegram-adapter";
 import { sendOutboxReplies } from "./lib/telegram-reply-adapter";
@@ -89,6 +95,10 @@ function taskDraftsPath(args: ParsedArgs): string {
   return join(stateDir(args), "task-drafts.jsonl");
 }
 
+function agentProfilesDir(args: ParsedArgs): string {
+  return resolve(flag(args, "agent-profiles-dir", join(root, "references/agent-profiles")));
+}
+
 function daemonLockPath(args: ParsedArgs): string {
   return resolve(flag(args, "lock-file", join(stateDir(args), "daemon.lock")));
 }
@@ -133,6 +143,13 @@ async function pendingInboxCount(path: string): Promise<number> {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
     throw err;
   }
+}
+
+async function knownAgentIds(args: ParsedArgs): Promise<string[]> {
+  const dir = agentProfilesDir(args);
+  const files = (await readdir(dir)).filter((file) => file.endsWith(".json")).sort();
+  const agents = await Promise.all(files.map((file) => readJson<AgentProfile>(join(dir, file))));
+  return agents.map((agent) => agent.id);
 }
 
 async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
@@ -380,6 +397,43 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "drafts:check") {
+    const draftId = args.positionals[0];
+    if (!draftId) throw new Error("usage: drafts:check <draft-id>");
+    const draft = await new TaskDraftStore(taskDraftsPath(args)).find(draftId);
+    const result = checkTaskDraft(draft, { knownAgentIds: await knownAgentIds(args) });
+    printJson(result);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
+  if (args.command === "drafts:update") {
+    const draftId = args.positionals[0];
+    const from = flag(args, "from", "");
+    if (!draftId || !from) throw new Error("usage: drafts:update <draft-id> --from=<draft-patch.json>");
+    const patch = parseTaskDraftUpdatePatch(await readJson<unknown>(resolve(from)));
+    printJson(await new TaskDraftStore(taskDraftsPath(args)).update(draftId, patch, new Date().toISOString()));
+    return;
+  }
+
+  if (args.command === "drafts:approve") {
+    const draftId = args.positionals[0];
+    if (!draftId) throw new Error("usage: drafts:approve <draft-id>");
+    const draftStore = new TaskDraftStore(taskDraftsPath(args));
+    const draft = await draftStore.find(draftId);
+    const check = checkTaskDraft(draft, { knownAgentIds: await knownAgentIds(args) });
+    if (!check.ok || !draft) {
+      printJson(check);
+      process.exitCode = 1;
+      return;
+    }
+    const task = taskSpecFromDraft(draft);
+    await new TaskStore(tasksPath(args)).append(task);
+    const approved = await draftStore.markApproved(draft.id, new Date().toISOString());
+    printJson({ approved: approved.id, task });
+    return;
+  }
+
   if (args.command === "merge:check") {
     printJson(
       await evaluateMergeGate({
@@ -608,6 +662,9 @@ async function main(): Promise<void> {
       "  proposals:draft-task <proposal-id>",
       "  drafts:list",
       "  drafts:show <draft-id>",
+      "  drafts:check <draft-id>",
+      "  drafts:update <draft-id> --from=<draft-patch.json>",
+      "  drafts:approve <draft-id>",
       "  merge:check --run-log=<path> --repo-root=<repo>",
       "  merge:apply --run-log=<path> --repo-root=<repo>",
       "  merge:push --repo-root=<repo> [--remote=origin] [--branch=main]",

@@ -3,7 +3,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ProposalRecord } from "../src/lib/proposal-store";
-import { buildTaskDraftId, TaskDraftStore, taskDraftFromProposal, type TaskDraftRecord } from "../src/lib/task-draft-store";
+import {
+  buildTaskDraftId,
+  checkTaskDraft,
+  parseTaskDraftUpdatePatch,
+  TaskDraftStore,
+  taskDraftFromProposal,
+  taskSpecFromDraft,
+  type TaskDraftRecord,
+} from "../src/lib/task-draft-store";
 
 let tmpRoots: string[] = [];
 
@@ -55,6 +63,43 @@ describe("TaskDraftStore", () => {
     );
   });
 
+  test("checks whether drafts can be promoted to tasks", () => {
+    expect(checkTaskDraft(draft, { knownAgentIds: ["codex-worker"] })).toMatchObject({
+      ok: false,
+      violations: ["targetFiles must not be empty", "verifyCommands must not be empty"],
+    });
+
+    const ready = {
+      ...draft,
+      targetFiles: ["src/lib/task-draft-store.ts"],
+      verifyCommands: ["bun test tests/task-draft-store.test.ts"],
+    };
+    expect(checkTaskDraft(ready, { knownAgentIds: ["codex-worker"] })).toEqual({
+      ok: true,
+      draftId: draft.id,
+      violations: [],
+    });
+    expect(checkTaskDraft({ ...ready, targetAgent: "missing-agent" }, { knownAgentIds: ["codex-worker"] }).violations).toContain(
+      "targetAgent is unknown: missing-agent",
+    );
+  });
+
+  test("converts ready drafts into pending task specs", () => {
+    const task = taskSpecFromDraft({
+      ...draft,
+      targetFiles: ["src/lib/task-draft-store.ts"],
+      verifyCommands: ["bun test tests/task-draft-store.test.ts"],
+    });
+
+    expect(task).toMatchObject({
+      id: "task-2026-05-04t10-00-00.000z-10",
+      status: "pending",
+      targetAgent: "codex-worker",
+      targetFiles: ["src/lib/task-draft-store.ts"],
+      verifyCommands: ["bun test tests/task-draft-store.test.ts"],
+    });
+  });
+
   test("appends, lists, and finds task drafts", async () => {
     const root = await makeRoot();
     const store = new TaskDraftStore(join(root, "state", "task-drafts.jsonl"));
@@ -73,6 +118,49 @@ describe("TaskDraftStore", () => {
 
     await expect(store.append({ ...draft, id: "draft-other" })).rejects.toThrow(
       "task draft already exists for proposal",
+    );
+  });
+
+  test("updates editable draft fields and marks drafts approved", async () => {
+    const root = await makeRoot();
+    const store = new TaskDraftStore(join(root, "state", "task-drafts.jsonl"));
+
+    await store.append(draft);
+    const updated = await store.update(
+      draft.id,
+      {
+        targetFiles: ["src/lib/task-draft-store.ts"],
+        verifyCommands: ["bun test tests/task-draft-store.test.ts"],
+      },
+      "2026-05-04T10:03:00.000Z",
+    );
+    const approved = await store.markApproved(draft.id, "2026-05-04T10:04:00.000Z");
+
+    expect(updated.targetFiles).toEqual(["src/lib/task-draft-store.ts"]);
+    expect(approved.status).toBe("approved");
+    expect(approved.approvedAt).toBe("2026-05-04T10:04:00.000Z");
+    await expect(store.update(draft.id, { title: "Nope" }, "2026-05-04T10:05:00.000Z")).rejects.toThrow(
+      "task draft is not editable",
+    );
+  });
+
+  test("parses only allowed draft update fields", () => {
+    const patch = parseTaskDraftUpdatePatch({
+      title: "Updated title",
+      targetFiles: ["src/lib/task-draft-store.ts"],
+      status: "approved",
+    });
+
+    expect(patch).toEqual({
+      title: "Updated title",
+      targetAgent: undefined,
+      targetFiles: ["src/lib/task-draft-store.ts"],
+      forbiddenChanges: undefined,
+      verifyCommands: undefined,
+      instructions: undefined,
+    });
+    expect(() => parseTaskDraftUpdatePatch({ targetFiles: "src/lib/task-draft-store.ts" })).toThrow(
+      "targetFiles must be a string array",
     );
   });
 });
