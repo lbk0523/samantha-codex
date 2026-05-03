@@ -99,7 +99,6 @@ bun run dispatch-worker \
   --task=references/tasks/omht-schema-07-unknown-block-negative-canary.json \
   --agent=references/agent-profiles/codex-worker.json \
   --repo-root=/home/lbk0523/projects/oh-my-health-trainer \
-  --worktrees-dir=samantha/worktrees \
   --allocate \
   --execute
 ```
@@ -195,15 +194,16 @@ Only after writer dogfood and integration gate are stable:
 
 - add a systemd user service template
 - add `inbox:watch` restart guidance
-- add lockfile to prevent duplicate watchers
-- add health check command
-- add structured daemon heartbeat under `state/`
+- keep lockfile protection for duplicate watchers
+- keep `health:check`
+- keep structured daemon heartbeat under `state/`
 
 Success criteria:
 
 - process restart does not lose queued inbox commands
 - duplicate daemon start is blocked or harmless
 - dashboard can show last heartbeat
+- bad inbox commands produce outbox failure reports and are archived
 
 ## Stage G: Remote Adapter
 
@@ -270,4 +270,4 @@ git merge --ff-only 61824293b56fdf8ed84258c70de419b6f4353171
 
 ## Recommended Next Action
 
-Next, dogfood `worktree:cleanup` against the integrated OMHT writer run, then move to daemon hardening.
+Next, dogfood hardened `inbox:watch` locally, then add either systemd user-service packaging or the first narrow remote adapter.

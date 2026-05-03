@@ -42,6 +42,7 @@ async function makePassedRun(options: { merge: boolean }): Promise<{
   const allocation = await allocateWorktree({
     repoRoot: root,
     taskId: "cleanup-fixture",
+    worktreesDir: "worktrees",
   });
   await writeFile(join(allocation.worktreePath, "allowed.txt"), "changed\n", "utf8");
   await git(["add", "allowed.txt"], allocation.worktreePath);

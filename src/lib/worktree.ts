@@ -1,5 +1,5 @@
 import { mkdir, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import type { WorktreeAllocation } from "./contracts";
 import { git, gitHead, gitTopLevel } from "./git";
 
@@ -32,8 +32,16 @@ export function branchForTask(taskId: string): string {
   return `samantha/${sanitizeTaskId(taskId)}`;
 }
 
-export function worktreePathForTask(repoRoot: string, taskId: string, worktreesDir = "worktrees"): string {
-  return resolve(repoRoot, worktreesDir, sanitizeTaskId(taskId));
+export function defaultWorktreesRoot(repoRoot: string): string {
+  return resolve(repoRoot, "..", ".samantha-worktrees", basename(repoRoot));
+}
+
+export function worktreesRoot(repoRoot: string, worktreesDir?: string): string {
+  return worktreesDir ? resolve(repoRoot, worktreesDir) : defaultWorktreesRoot(repoRoot);
+}
+
+export function worktreePathForTask(repoRoot: string, taskId: string, worktreesDir?: string): string {
+  return resolve(worktreesRoot(repoRoot, worktreesDir), sanitizeTaskId(taskId));
 }
 
 export async function allocateWorktree(options: AllocateWorktreeOptions): Promise<WorktreeAllocation> {
@@ -43,7 +51,7 @@ export async function allocateWorktree(options: AllocateWorktreeOptions): Promis
   const worktreePath = worktreePathForTask(repoRoot, taskId, options.worktreesDir);
   const baseRef = options.baseRef ?? "HEAD";
 
-  await mkdir(join(repoRoot, options.worktreesDir ?? "worktrees"), { recursive: true });
+  await mkdir(worktreesRoot(repoRoot, options.worktreesDir), { recursive: true });
   const baseCommit = await git(["rev-parse", baseRef], repoRoot);
   await git(["worktree", "add", "-b", branch, worktreePath, baseCommit], repoRoot);
 

@@ -11,6 +11,22 @@ export interface InboxProcessResult {
   commandPath: string;
   outboxPath: string;
   archivePath: string;
+  ok: boolean;
+  error?: string;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function failureReport(file: string, err: unknown): string {
+  return [
+    `# inbox command failed: ${file}`,
+    "",
+    "```text",
+    errorMessage(err),
+    "```",
+  ].join("\n");
 }
 
 export async function processInbox(input: {
@@ -30,15 +46,25 @@ export async function processInbox(input: {
 
   for (const file of files) {
     const commandPath = join(input.inboxDir, file);
-    const command = JSON.parse(await readFile(commandPath, "utf8")) as InboxCommand;
-    const report = await input.handle(command);
     const name = basename(file, ".json");
     const outboxPath = join(input.outboxDir, `${name}.md`);
     const archivePath = join(input.archiveDir, file);
+    let report: string;
+    let ok = true;
+    let error: string | undefined;
+
+    try {
+      const command = JSON.parse(await readFile(commandPath, "utf8")) as InboxCommand;
+      report = await input.handle(command);
+    } catch (err) {
+      ok = false;
+      error = errorMessage(err);
+      report = failureReport(file, err);
+    }
 
     await writeFile(outboxPath, report.endsWith("\n") ? report : `${report}\n`, "utf8");
     await rename(commandPath, archivePath);
-    results.push({ commandPath, outboxPath, archivePath });
+    results.push({ commandPath, outboxPath, archivePath, ok, error });
   }
 
   return results;

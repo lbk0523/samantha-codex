@@ -85,6 +85,7 @@ The current operator surface includes:
 - completed worker worktree cleanup
 - multi-task plan execution
 - local inbox processing
+- daemon lock, heartbeat, and health check
 - remote command enqueueing into the inbox
 - read-only static dashboard generation
 
@@ -102,3 +103,5 @@ Samantha accepts a worker run only when all of these pass:
 Worker agents do not commit or push. Integration is split across `merge:check`, `merge:apply`, and `merge:push`.
 
 Completed worktrees are removed through `worktree:cleanup`, which requires a passing run log, a clean target repo, a clean worker worktree, and a target branch that already contains the worker commit.
+
+Worker worktrees default to an external `.samantha-worktrees/<repo>` directory beside the target repo parent. Keeping worktrees outside the target repo prevents broad test commands from accidentally discovering duplicated files inside active worker worktrees.

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
+import type { DaemonHeartbeat } from "../src/lib/daemon";
 import { renderDashboard } from "../src/lib/dashboard";
 import { processInbox } from "../src/lib/inbox";
 import type { RunSummary } from "../src/lib/ledger";
@@ -76,8 +77,30 @@ describe("inbox and remote commands", () => {
     });
 
     expect(result).toHaveLength(1);
+    expect(result[0]?.ok).toBe(true);
     expect(await readFile(join(outbox, "001.md"), "utf8")).toBe("handled runs:list\n");
     expect(await readFile(join(archive, "001.json"), "utf8")).toContain("runs:list");
+  });
+
+  test("archives failed inbox commands with an outbox report", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-inbox-fail-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    await mkdir(inbox, { recursive: true });
+    await writeFile(join(inbox, "bad.json"), "{", "utf8");
+
+    const result = await processInbox({
+      inboxDir: inbox,
+      outboxDir: outbox,
+      archiveDir: archive,
+      handle: async () => "unreachable",
+    });
+
+    expect(result[0]?.ok).toBe(false);
+    expect(await readFile(join(outbox, "bad.md"), "utf8")).toContain("inbox command failed");
+    expect(await readFile(join(archive, "bad.json"), "utf8")).toBe("{");
   });
 
   test("normalizes allowed remote commands into inbox commands", async () => {
@@ -121,9 +144,23 @@ describe("dashboard", () => {
       },
     ];
 
-    const html = renderDashboard(runs);
+    const heartbeat: DaemonHeartbeat = {
+      schemaVersion: 1,
+      pid: 123,
+      command: "inbox:watch",
+      status: "running",
+      lockPath: "/state/daemon.lock",
+      inboxDir: "/repo/inbox",
+      outboxDir: "/repo/outbox",
+      archiveDir: "/repo/archive",
+      processedTotal: 2,
+      updatedAt: "2026-05-03T10:02:00.000Z",
+    };
+    const html = renderDashboard(runs, { heartbeat, pendingInboxCount: 4 });
 
     expect(html).toContain("Samantha Dashboard");
+    expect(html).toContain("Heartbeat");
+    expect(html).toContain("Pending inbox commands");
     expect(html).toContain("&lt;task&gt;");
     expect(html).toContain("abc123");
   });

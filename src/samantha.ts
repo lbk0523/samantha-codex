@@ -1,6 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { TaskSpec } from "./lib/contracts";
+import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
 import { writeDashboard } from "./lib/dashboard";
 import { processInbox, type InboxCommand } from "./lib/inbox";
 import { RunIndex } from "./lib/ledger";
@@ -56,12 +57,39 @@ function tasksPath(args: ParsedArgs): string {
   return join(stateDir(args), "tasks.jsonl");
 }
 
+function daemonLockPath(args: ParsedArgs): string {
+  return resolve(flag(args, "lock-file", join(stateDir(args), "daemon.lock")));
+}
+
+function heartbeatPath(args: ParsedArgs): string {
+  return resolve(flag(args, "heartbeat-file", join(stateDir(args), "heartbeat.json")));
+}
+
 async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T;
 }
 
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
+}
+
+async function pendingInboxCount(path: string): Promise<number> {
+  try {
+    return (await readdir(path)).filter((file) => file.endsWith(".json")).length;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw err;
+  }
+}
+
+async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
+  const runs = await new RunIndex(runsPath(args)).list();
+  const inboxDir = resolve(flag(args, "inbox-dir", join(root, "inbox")));
+  await writeDashboard(out, runs, {
+    heartbeat: await readDaemonHeartbeat(heartbeatPath(args)),
+    pendingInboxCount: await pendingInboxCount(inboxDir),
+  });
+  return runs.length;
 }
 
 async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Promise<string> {
@@ -79,9 +107,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     return `# tasks:show ${id}\n\n\`\`\`json\n${JSON.stringify(task ?? null, null, 2)}\n\`\`\``;
   }
   if (command.type === "dashboard:build") {
-    const runs = await new RunIndex(runsPath(args)).list();
     const out = resolve(flag(args, "out", join(root, "dashboard/index.html")));
-    await writeDashboard(out, runs);
+    await buildDashboard(args, out);
     return `# dashboard:build\n\nWrote ${out}`;
   }
 
@@ -171,6 +198,17 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "health:check") {
+    const result = await checkDaemonHealth({
+      heartbeatPath: heartbeatPath(args),
+      lockPath: daemonLockPath(args),
+      maxAgeMs: Number(flag(args, "max-age-ms", "15000")),
+    });
+    printJson(result);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
   if (args.command === "plan:run") {
     const planPath = args.positionals[0];
     if (!planPath) throw new Error("usage: plan:run <plan.json> [--execute]");
@@ -190,20 +228,57 @@ async function main(): Promise<void> {
     const outboxDir = resolve(flag(args, "outbox-dir", join(root, "outbox")));
     const archiveDir = resolve(flag(args, "archive-dir", join(root, "archive/inbox")));
     const intervalMs = Number(flag(args, "interval-ms", "5000"));
+    const isWatch = args.command === "inbox:watch";
+    const lock = isWatch
+      ? await acquireDaemonLock({
+          lockPath: daemonLockPath(args),
+          command: "inbox:watch",
+        })
+      : undefined;
+    let stopping = false;
+    let processedTotal = 0;
+    const stop = () => {
+      stopping = true;
+    };
 
-    do {
-      const processed = await processInbox({
-        inboxDir,
-        outboxDir,
-        archiveDir,
-        handle: (command) => handleInboxCommand(command, args),
-      });
-      if (args.command === "inbox:process") {
-        printJson({ processed });
-        return;
-      }
-      await Bun.sleep(Number.isFinite(intervalMs) ? intervalMs : 5000);
-    } while (true);
+    if (isWatch) {
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    }
+
+    try {
+      do {
+        const processed = await processInbox({
+          inboxDir,
+          outboxDir,
+          archiveDir,
+          handle: (command) => handleInboxCommand(command, args),
+        });
+        processedTotal += processed.length;
+        if (isWatch && lock) {
+          await writeDaemonHeartbeat(heartbeatPath(args), {
+            schemaVersion: 1,
+            pid: process.pid,
+            command: "inbox:watch",
+            status: stopping ? "stopping" : "running",
+            lockPath: lock.path,
+            inboxDir,
+            outboxDir,
+            archiveDir,
+            processedTotal,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        if (args.command === "inbox:process") {
+          printJson({ processed });
+          return;
+        }
+        await Bun.sleep(Number.isFinite(intervalMs) ? intervalMs : 5000);
+      } while (!stopping);
+    } finally {
+      await lock?.release();
+    }
+    return;
   }
 
   if (args.command === "remote:enqueue") {
@@ -220,10 +295,9 @@ async function main(): Promise<void> {
   }
 
   if (args.command === "dashboard:build") {
-    const runs = await new RunIndex(runsPath(args)).list();
     const out = resolve(flag(args, "out", join(root, "dashboard/index.html")));
-    await writeDashboard(out, runs);
-    printJson({ out, runs: runs.length });
+    const runs = await buildDashboard(args, out);
+    printJson({ out, runs });
     return;
   }
 
@@ -241,6 +315,7 @@ async function main(): Promise<void> {
       "  merge:apply --run-log=<path> --repo-root=<repo>",
       "  merge:push --repo-root=<repo> [--remote=origin] [--branch=main]",
       "  worktree:cleanup --run-log=<path> --repo-root=<repo> [--keep-branch]",
+      "  health:check [--max-age-ms=15000]",
       "  plan:run <plan.json> [--execute]",
       "  inbox:process",
       "  inbox:watch",

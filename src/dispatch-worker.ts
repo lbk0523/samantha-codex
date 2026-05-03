@@ -34,7 +34,7 @@ function parseArgs(argv: string[]): Args {
   const repoRoot = values.get("repo-root");
   if (typeof task !== "string" || typeof agent !== "string" || typeof repoRoot !== "string") {
     throw new Error(
-      "usage: bun run src/dispatch-worker.ts --task=<task.json> --agent=<profile.json> --repo-root=<repo> [--allocate] [--execute] [--log-dir=runs] [--state-dir=state] [--no-log] [--worktrees-dir=worktrees]",
+      "usage: bun run src/dispatch-worker.ts --task=<task.json> --agent=<profile.json> --repo-root=<repo> [--allocate] [--execute] [--log-dir=runs] [--state-dir=state] [--no-log] [--worktrees-dir=<dir>]",
     );
   }
 

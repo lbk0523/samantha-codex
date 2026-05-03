@@ -146,7 +146,7 @@ Success criteria:
 
 ### Phase 5: Local 24/7 Loop
 
-MVP status: implemented as file-backed `inbox:process` and `inbox:watch`. Production daemon packaging is not implemented yet.
+MVP status: implemented as file-backed `inbox:process` and hardened `inbox:watch`. Production systemd packaging is not implemented yet.
 
 Goal: run Samantha continuously without adding remote UX risk too early.
 
@@ -154,7 +154,12 @@ Build:
 
 - local inbox directory, for example `inbox/*.json`
 - local outbox directory, for example `outbox/*.md`
-- polling loop or systemd user service
+- polling loop
+- daemon lockfile
+- heartbeat file under `state/heartbeat.json`
+- `health:check`
+- failure outbox reports for bad inbox commands
+- future systemd user service
 - graceful shutdown
 - duplicate command protection
 
@@ -163,6 +168,8 @@ Success criteria:
 - BK can drop a command into inbox
 - Samantha processes it and writes a report to outbox
 - process restarts do not lose task state
+- duplicate `inbox:watch` starts are blocked
+- dashboard can display daemon heartbeat and pending inbox count
 
 ### Phase 6: Remote Command Surface
 

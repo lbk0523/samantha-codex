@@ -55,9 +55,9 @@ describe("prepareWorkerDispatch", () => {
     });
 
     expect(prepared.taskId).toBe(task.id);
-    expect(prepared.worktreePath).toBe("/repo/worktrees/worker-dispatch-fixture");
+    expect(prepared.worktreePath).toBe("/.samantha-worktrees/repo/worker-dispatch-fixture");
     expect(prepared.allocation).toBeUndefined();
-    expect(prepared.codex.command).toContain("/repo/worktrees/worker-dispatch-fixture");
+    expect(prepared.codex.command).toContain("/.samantha-worktrees/repo/worker-dispatch-fixture");
   });
 
   test("fails before worktree allocation when safety policy blocks dispatch", async () => {
@@ -90,6 +90,7 @@ describe("prepareWorkerDispatch", () => {
         agent,
         repoRoot: root,
         allocate: true,
+        worktreesDir: "worktrees",
       });
       const reviewer = await prepareWorkerDispatch({
         task: {
@@ -109,6 +110,7 @@ describe("prepareWorkerDispatch", () => {
         },
         repoRoot: root,
         allocate: true,
+        worktreesDir: "worktrees",
       });
 
       expect(writer.codex.command).not.toContain("--add-dir");

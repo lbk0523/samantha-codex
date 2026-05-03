@@ -69,6 +69,7 @@ Available command groups:
 - `merge:apply` fast-forwards an approved candidate and runs post-merge verification
 - `merge:push` pushes an accepted clean branch separately from merge application
 - `worktree:cleanup` removes completed worker worktrees after integration
+- `health:check` reports daemon heartbeat and lock health
 - `plan:run` runs a multi-task plan with non-writer batching and writer serialization
 - `inbox:*` processes local file-backed commands
 - `remote:enqueue` maps a narrow remote command JSON into the local inbox
@@ -81,10 +82,11 @@ bun run dispatch-worker \
   --task=references/tasks/omht-readonly-status-canary.json \
   --agent=references/agent-profiles/codex-reviewer.json \
   --repo-root=/home/lbk0523/projects/oh-my-health-trainer \
-  --worktrees-dir=samantha/worktrees \
   --allocate \
   --execute
 ```
+
+By default, worker worktrees are placed outside the target repo under `.samantha-worktrees` beside the repo parent directory. This prevents target-repo test commands from discovering worker worktree files.
 
 ## Design Notes
 

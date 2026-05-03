@@ -2,7 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { allocateWorktree, branchForTask, releaseWorktree, sanitizeTaskId } from "../src/lib/worktree";
+import {
+  allocateWorktree,
+  branchForTask,
+  defaultWorktreesRoot,
+  releaseWorktree,
+  sanitizeTaskId,
+  worktreePathForTask,
+} from "../src/lib/worktree";
 import { git } from "../src/lib/git";
 
 let tmpRoots: string[] = [];
@@ -30,12 +37,20 @@ describe("worktree allocation", () => {
     expect(branchForTask("Feature A / Step 1")).toBe("samantha/feature-a-step-1");
   });
 
+  test("defaults task worktrees outside the target repo", async () => {
+    const repo = await makeRepo();
+
+    expect(defaultWorktreesRoot(repo)).toContain(".samantha-worktrees");
+    expect(worktreePathForTask(repo, "Task 1").startsWith(repo)).toBe(false);
+  });
+
   test("allocates a task worktree and releases it", async () => {
     const repo = await makeRepo();
 
     const allocation = await allocateWorktree({
       repoRoot: repo,
       taskId: "Task 1",
+      worktreesDir: "worktrees",
     });
 
     expect(allocation.branch).toBe("samantha/task-1");

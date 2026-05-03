@@ -194,7 +194,6 @@ bun run dispatch-worker \
   --task=references/tasks/omht-readonly-status-canary.json \
   --agent=references/agent-profiles/codex-reviewer.json \
   --repo-root=/home/lbk0523/projects/oh-my-health-trainer \
-  --worktrees-dir=samantha/worktrees \
   --allocate \
   --execute
 ```
@@ -223,13 +222,14 @@ git worktree list
 Expected:
 
 - main worktree clean
-- one Samantha worker worktree may remain for inspection
+- one external Samantha worker worktree may remain for inspection
 
-Cleanup after inspection:
+Read-only cleanup after inspection remains manual because no commit exists for the completed-worktree cleanup gate:
 
 ```bash
 cd /home/lbk0523/projects/oh-my-health-trainer
-git worktree remove samantha/worktrees/omht-readonly-status-canary
+git worktree list
+git worktree remove <readonly-worktree-path>
 git branch -D samantha/omht-readonly-status-canary
 ```
 
@@ -318,7 +318,6 @@ bun run dispatch-worker \
   --task=references/tasks/omht-schema-07-unknown-block-negative-canary.json \
   --agent=references/agent-profiles/codex-worker.json \
   --repo-root=/home/lbk0523/projects/oh-my-health-trainer \
-  --worktrees-dir=samantha/worktrees \
   --allocate \
   --execute
 ```
@@ -422,6 +421,33 @@ Pass criteria:
 
 Only run this scenario after the writer commit is merged into target main.
 
+## Scenario 15: Daemon Health
+
+Goal: confirm `inbox:watch` can run as a single local daemon with heartbeat visibility.
+
+Commands:
+
+```bash
+cd /home/lbk0523/projects/samantha-codex
+bun run samantha inbox:watch --interval-ms=1000
+```
+
+In another shell:
+
+```bash
+cd /home/lbk0523/projects/samantha-codex
+bun run samantha health:check
+bun run samantha dashboard:build
+```
+
+Pass criteria:
+
+- a second `inbox:watch` is blocked by the daemon lock
+- `health:check` reports `ok: true`
+- `state/heartbeat.json` updates while the daemon is running
+- dashboard shows heartbeat and pending inbox count
+- stopping the daemon releases `state/daemon.lock`
+
 ## Stop Conditions
 
 Stop dogfood and fix Samantha before continuing if any of these happen:
@@ -451,7 +477,7 @@ After Scenarios 0-8, Samantha should demonstrate:
 - read-only dashboard generation
 - conservative merge gating
 
-After Scenarios 9-14, Samantha should additionally demonstrate:
+After Scenarios 9-15, Samantha should additionally demonstrate:
 
 - real Codex writer execution
 - Samantha-owned commit creation
@@ -459,5 +485,6 @@ After Scenarios 9-14, Samantha should additionally demonstrate:
 - explicit merge application with post-merge verification
 - separate clean-worktree push gating
 - completed worktree cleanup
+- daemon lock, heartbeat, health check, and dashboard daemon status
 
-At that point the next engineering step is daemon hardening.
+At that point the next engineering step is systemd user-service packaging or a narrow remote adapter.
