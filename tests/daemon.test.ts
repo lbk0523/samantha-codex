@@ -139,7 +139,7 @@ describe("daemon lock and health", () => {
   test("ships a systemd user service template for inbox:watch", async () => {
     const service = await readFile(resolve("ops/systemd/samantha-inbox-watch.service"), "utf8");
 
-    expect(service).toContain("ExecStart=%h/.bun/bin/bun run samantha inbox:watch");
+    expect(service).toContain("ExecStart=%h/.bun/bin/bun run samantha inbox:watch --interval-ms=1000");
     expect(service).toContain("Restart=on-failure");
     expect(service).toContain("WantedBy=default.target");
   });
@@ -151,7 +151,8 @@ describe("daemon lock and health", () => {
     expect(service).toContain("EnvironmentFile=-%h/projects/samantha-codex/.env");
     expect(service).toContain("ExecStart=%h/.bun/bin/bun run samantha telegram:poll --timeout-seconds=25");
     expect(service).toContain("TimeoutStartSec=45");
-    expect(timer).toContain("OnUnitActiveSec=30s");
+    expect(timer).toContain("OnUnitInactiveSec=3s");
+    expect(timer).toContain("AccuracySec=1s");
     expect(timer).toContain("WantedBy=timers.target");
   });
 
@@ -162,7 +163,8 @@ describe("daemon lock and health", () => {
     expect(service).toContain("EnvironmentFile=-%h/projects/samantha-codex/.env");
     expect(service).toContain("ExecStart=%h/.bun/bin/bun run samantha telegram:reply");
     expect(service).toContain("TimeoutStartSec=45");
-    expect(timer).toContain("OnUnitActiveSec=30s");
+    expect(timer).toContain("OnUnitInactiveSec=3s");
+    expect(timer).toContain("AccuracySec=1s");
     expect(timer).toContain("WantedBy=timers.target");
   });
 });

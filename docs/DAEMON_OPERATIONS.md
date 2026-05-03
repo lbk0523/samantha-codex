@@ -115,6 +115,14 @@ journalctl --user -u samantha-telegram-poll.service -n 100 --no-pager
 journalctl --user -u samantha-telegram-reply.service -n 100 --no-pager
 ```
 
+The service templates are tuned for interactive latency:
+
+- `inbox:watch` polls local inbox every 1 second.
+- `samantha-telegram-poll.timer` restarts polling 3 seconds after the prior poll exits.
+- `samantha-telegram-reply.timer` scans outbox 3 seconds after the prior reply pass exits.
+
+Normal reply latency should usually be a few seconds. It can be longer when Telegram network calls are slow or when the machine is sleeping.
+
 ## Safety Notes
 
 - Do not run multiple watchers manually; the lock should block duplicates, but one service instance is the intended shape.

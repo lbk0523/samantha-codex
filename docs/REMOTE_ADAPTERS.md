@@ -115,6 +115,12 @@ systemctl --user enable --now samantha-telegram-reply.timer
 
 The timer reads `%h/projects/samantha-codex/.env`. If the older Claude-side Samantha environment file exists elsewhere, either copy only the two Telegram values into this repo's ignored `.env` or adjust the copied service's `EnvironmentFile=` path locally.
 
+The timer templates favor interactive replies:
+
+- poll restarts 3 seconds after the prior `telegram:poll` exits
+- reply restarts 3 seconds after the prior `telegram:reply` exits
+- local inbox processing runs every 1 second in the service template
+
 ## Safety
 
 - Sender allowlist is mandatory.

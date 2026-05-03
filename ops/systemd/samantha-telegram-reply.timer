@@ -3,9 +3,9 @@ Description=Run Samantha Codex Telegram outbox reply adapter
 Documentation=https://github.com/lbk0523/samantha-codex
 
 [Timer]
-OnBootSec=45s
-OnUnitActiveSec=30s
-AccuracySec=5s
+OnBootSec=15s
+OnUnitInactiveSec=3s
+AccuracySec=1s
 Unit=samantha-telegram-reply.service
 
 [Install]
