@@ -6,11 +6,28 @@ export interface PreparedCodexDispatch {
 }
 
 export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): string {
+  const writeBoundary =
+    agent.writerClass === "writer"
+      ? "Do not create worktrees. Do not dispatch subagents. Do not push. Do not modify files outside targetFiles."
+      : "This is a non-writer task. Do not edit, create, delete, format, commit, push, or move files.";
+  const targetFiles =
+    task.targetFiles.length > 0
+      ? task.targetFiles.map((file) => `- ${file}`)
+      : ["- (none; read-only task)"];
+  const forbiddenChanges =
+    task.forbiddenChanges.length > 0
+      ? task.forbiddenChanges.map((glob) => `- ${glob}`)
+      : ["- (none declared)"];
+  const verifyCommands =
+    task.verifyCommands.length > 0
+      ? task.verifyCommands.map((cmd) => `- ${cmd}`)
+      : ["- (none)"];
+
   return [
     `You are ${agent.id}, a Codex-only Samantha worker agent.`,
     "",
     "Samantha owns orchestration, worktree allocation, merge, push, and safety gates.",
-    "Do not create worktrees. Do not dispatch subagents. Do not push. Do not modify files outside targetFiles.",
+    writeBoundary,
     "",
     `Task: ${task.id}`,
     `Title: ${task.title}`,
@@ -19,13 +36,13 @@ export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): str
     task.instructions,
     "",
     "Target files:",
-    ...task.targetFiles.map((file) => `- ${file}`),
+    ...targetFiles,
     "",
     "Forbidden changes:",
-    ...task.forbiddenChanges.map((glob) => `- ${glob}`),
+    ...forbiddenChanges,
     "",
     "Verify commands:",
-    ...task.verifyCommands.map((cmd) => `- ${cmd}`),
+    ...verifyCommands,
     "",
     task.expectedCommitSubject
       ? `Commit subject: ${task.expectedCommitSubject}`

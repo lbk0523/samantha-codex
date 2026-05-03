@@ -46,6 +46,18 @@ bun run dispatch-worker \
   --execute
 ```
 
+Run the first external read-only canary against `oh-my-health-trainer`:
+
+```bash
+bun run dispatch-worker \
+  --task=references/tasks/omht-readonly-status-canary.json \
+  --agent=references/agent-profiles/codex-reviewer.json \
+  --repo-root=/home/lbk0523/projects/oh-my-health-trainer \
+  --worktrees-dir=samantha/worktrees \
+  --allocate \
+  --execute
+```
+
 ## Design Notes
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

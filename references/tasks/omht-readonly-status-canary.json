@@ -1,0 +1,10 @@
+{
+  "id": "omht-readonly-status-canary",
+  "title": "Read-only omht status canary",
+  "targetAgent": "codex-reviewer",
+  "targetFiles": [],
+  "forbiddenChanges": ["**/*"],
+  "verifyCommands": ["git status --short"],
+  "instructions": "Read AGENTS.md, the latest relevant W8 reports, and recent git history. Do not edit, create, delete, commit, push, or format any files. Report whether oh-my-health-trainer is a suitable Samantha-Codex test bed and name the smallest safe write-task candidate for the next run. Keep the worktree clean.",
+  "status": "pending"
+}

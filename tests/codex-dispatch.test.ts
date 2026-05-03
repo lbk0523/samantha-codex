@@ -41,6 +41,29 @@ describe("codex dispatch preparation", () => {
     expect(prompt).toContain("HARNESS_RESULT");
   });
 
+  test("builds a strict read-only prompt for non-writer agents", () => {
+    const prompt = buildCodexWorkerPrompt(
+      {
+        ...task,
+        targetAgent: "codex-reviewer",
+        targetFiles: [],
+        forbiddenChanges: ["**/*"],
+      },
+      {
+        ...agent,
+        id: "codex-reviewer",
+        role: "reviewer",
+        writerClass: "non-writer",
+        worktreePolicy: "none",
+        mergePolicy: "none",
+      },
+    );
+
+    expect(prompt).toContain("This is a non-writer task");
+    expect(prompt).toContain("- (none; read-only task)");
+    expect(prompt).toContain("- **/*");
+  });
+
   test("builds a non-interactive codex exec command rooted at the worktree", () => {
     const prepared = prepareCodexDispatch(task, agent, "/tmp/samantha-worktree");
 
