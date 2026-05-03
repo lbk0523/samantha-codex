@@ -62,7 +62,7 @@ export async function prepareWorkerDispatch(
     worktreePath,
     allocation,
     codex: prepareCodexDispatch(input.task, input.agent, worktreePath, {
-      gitMetadataDir: allocation ? join(input.repoRoot, ".git") : undefined,
+      gitMetadataDir: allocation && input.agent.writerClass === "writer" ? join(input.repoRoot, ".git") : undefined,
     }),
   };
 }

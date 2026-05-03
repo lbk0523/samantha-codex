@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
+import { git } from "../src/lib/git";
 import { prepareWorkerDispatch, runCommand, runSetupCommands } from "../src/lib/worker-dispatch";
 
 const agent: AgentProfile = {
@@ -29,6 +33,17 @@ const task: TaskSpec = {
   instructions: "Prepare the worker dispatch command.",
   status: "pending",
 };
+
+async function makeRepo(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "samantha-codex-dispatch-"));
+  await git(["init"], root);
+  await git(["config", "user.email", "samantha@example.local"], root);
+  await git(["config", "user.name", "Samantha Test"], root);
+  await writeFile(join(root, "README.md"), "fixture\n", "utf8");
+  await git(["add", "README.md"], root);
+  await git(["commit", "-m", "chore: initial fixture"], root);
+  return root;
+}
 
 describe("prepareWorkerDispatch", () => {
   test("validates policy and prepares a dry-run command", async () => {
@@ -65,6 +80,42 @@ describe("prepareWorkerDispatch", () => {
     });
 
     expect(prepared.codex.command).not.toContain("--add-dir");
+  });
+
+  test("adds git metadata write access only for allocated writers", async () => {
+    const root = await makeRepo();
+    try {
+      const writer = await prepareWorkerDispatch({
+        task,
+        agent,
+        repoRoot: root,
+        allocate: true,
+      });
+      const reviewer = await prepareWorkerDispatch({
+        task: {
+          ...task,
+          id: "worker-dispatch-reviewer-fixture",
+          targetAgent: "codex-reviewer",
+          targetFiles: [],
+          forbiddenChanges: ["**/*"],
+        },
+        agent: {
+          ...agent,
+          id: "codex-reviewer",
+          role: "reviewer",
+          writerClass: "non-writer",
+          worktreePolicy: "none",
+          mergePolicy: "none",
+        },
+        repoRoot: root,
+        allocate: true,
+      });
+
+      expect(writer.codex.command).toContain("--add-dir");
+      expect(reviewer.codex.command).not.toContain("--add-dir");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("captures command stdout, stderr, and exit code", async () => {
