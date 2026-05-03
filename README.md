@@ -90,4 +90,4 @@ By default, worker worktrees are placed outside the target repo under `.samantha
 
 ## Design Notes
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md), [docs/DOGFOOD_SCENARIOS.md](docs/DOGFOOD_SCENARIOS.md), and [docs/NEXT_PLAN.md](docs/NEXT_PLAN.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md), [docs/DOGFOOD_SCENARIOS.md](docs/DOGFOOD_SCENARIOS.md), [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md), and [docs/NEXT_PLAN.md](docs/NEXT_PLAN.md).

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   acquireDaemonLock,
@@ -134,5 +134,13 @@ describe("daemon lock and health", () => {
 
     expect(health.ok).toBe(false);
     expect(health.violations.some((violation) => violation.startsWith("heartbeat is stale"))).toBe(true);
+  });
+
+  test("ships a systemd user service template for inbox:watch", async () => {
+    const service = await readFile(resolve("ops/systemd/samantha-inbox-watch.service"), "utf8");
+
+    expect(service).toContain("ExecStart=/usr/bin/env bun run samantha inbox:watch");
+    expect(service).toContain("Restart=on-failure");
+    expect(service).toContain("WantedBy=default.target");
   });
 });

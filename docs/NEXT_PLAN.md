@@ -192,8 +192,8 @@ Current behavior:
 
 Only after writer dogfood and integration gate are stable:
 
-- add a systemd user service template
-- add `inbox:watch` restart guidance
+- keep the systemd user service template
+- keep `inbox:watch` restart guidance
 - keep lockfile protection for duplicate watchers
 - keep `health:check`
 - keep structured daemon heartbeat under `state/`
@@ -270,4 +270,4 @@ git merge --ff-only 61824293b56fdf8ed84258c70de419b6f4353171
 
 ## Recommended Next Action
 
-Next, dogfood hardened `inbox:watch` locally, then add either systemd user-service packaging or the first narrow remote adapter.
+Next, add the first narrow remote adapter after one longer `inbox:watch` soak.

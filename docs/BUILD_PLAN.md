@@ -146,7 +146,7 @@ Success criteria:
 
 ### Phase 5: Local 24/7 Loop
 
-MVP status: implemented as file-backed `inbox:process` and hardened `inbox:watch`. Production systemd packaging is not implemented yet.
+MVP status: implemented as file-backed `inbox:process`, hardened `inbox:watch`, and a systemd user-service template.
 
 Goal: run Samantha continuously without adding remote UX risk too early.
 
@@ -159,7 +159,7 @@ Build:
 - heartbeat file under `state/heartbeat.json`
 - `health:check`
 - failure outbox reports for bad inbox commands
-- future systemd user service
+- systemd user service template
 - graceful shutdown
 - duplicate command protection
 
@@ -170,6 +170,7 @@ Success criteria:
 - process restarts do not lose task state
 - duplicate `inbox:watch` starts are blocked
 - dashboard can display daemon heartbeat and pending inbox count
+- systemd setup is documented in `docs/DAEMON_OPERATIONS.md`
 
 ### Phase 6: Remote Command Surface
 

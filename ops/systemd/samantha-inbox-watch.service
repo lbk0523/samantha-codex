@@ -1,0 +1,15 @@
+[Unit]
+Description=Samantha Codex inbox watcher
+Documentation=https://github.com/lbk0523/samantha-codex
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/samantha-codex
+ExecStart=/usr/bin/env bun run samantha inbox:watch
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target
