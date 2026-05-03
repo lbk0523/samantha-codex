@@ -50,6 +50,7 @@ export async function pollTelegramToInbox(input: {
   offset?: number;
   limit?: number;
   timeoutSeconds?: number;
+  clientTimeoutMs?: number;
   fetchImpl?: typeof fetch;
 }): Promise<TelegramPollResult> {
   if (!input.token) throw new Error("telegram bot token is required");
@@ -61,8 +62,25 @@ export async function pollTelegramToInbox(input: {
   params.set("limit", String(input.limit ?? 10));
   if (input.offset !== undefined) params.set("offset", String(input.offset));
 
-  const response = await fetchImpl(`https://api.telegram.org/bot${input.token}/getUpdates?${params.toString()}`);
-  const body = (await response.json()) as TelegramGetUpdatesResponse;
+  const clientTimeoutMs = input.clientTimeoutMs ?? Math.max(((input.timeoutSeconds ?? 0) + 10) * 1000, 10_000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), clientTimeoutMs);
+  let body: TelegramGetUpdatesResponse;
+  let response: Response;
+  try {
+    response = await fetchImpl(`https://api.telegram.org/bot${input.token}/getUpdates?${params.toString()}`, {
+      signal: controller.signal,
+    });
+    body = (await response.json()) as TelegramGetUpdatesResponse;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`telegram getUpdates timed out after ${clientTimeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
   if (!body.ok) {
     throw new Error(`telegram getUpdates failed: ${body.description ?? response.statusText}`);
   }

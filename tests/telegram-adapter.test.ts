@@ -120,4 +120,25 @@ describe("pollTelegramToInbox", () => {
       }),
     ).rejects.toThrow("allowed sender id");
   });
+
+  test("times out stalled Telegram polling requests", async () => {
+    const fetchImpl = ((_url: string, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const err = new Error("aborted");
+          err.name = "AbortError";
+          reject(err);
+        });
+      })) as unknown as typeof fetch;
+
+    await expect(
+      pollTelegramToInbox({
+        token: "token",
+        inboxDir: "/tmp/inbox",
+        allowedSenderId: "12345",
+        clientTimeoutMs: 1,
+        fetchImpl,
+      }),
+    ).rejects.toThrow("telegram getUpdates timed out");
+  });
 });

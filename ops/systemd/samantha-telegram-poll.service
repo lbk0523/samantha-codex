@@ -9,3 +9,4 @@ Type=oneshot
 WorkingDirectory=%h/projects/samantha-codex
 EnvironmentFile=-%h/projects/samantha-codex/.env
 ExecStart=%h/.bun/bin/bun run samantha telegram:poll --timeout-seconds=25
+TimeoutStartSec=45
