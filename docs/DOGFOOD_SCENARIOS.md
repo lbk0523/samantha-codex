@@ -399,6 +399,29 @@ Pass criteria:
 
 Only run this scenario after BK approves pushing the integrated main branch.
 
+## Scenario 14: Completed Worktree Cleanup
+
+Goal: remove a completed worker worktree only after its commit is integrated.
+
+Command:
+
+```bash
+cd /home/lbk0523/projects/samantha-codex
+bun run samantha worktree:cleanup \
+  --run-log=<writer-run-log-path> \
+  --repo-root=/home/lbk0523/projects/oh-my-health-trainer
+```
+
+Pass criteria:
+
+- `mayCleanup` is `true`
+- `cleaned` is `true`
+- `git worktree list` no longer shows the worker worktree
+- completed `samantha/<task-id>` branch is deleted
+- target repo main remains clean
+
+Only run this scenario after the writer commit is merged into target main.
+
 ## Stop Conditions
 
 Stop dogfood and fix Samantha before continuing if any of these happen:
@@ -409,6 +432,7 @@ Stop dogfood and fix Samantha before continuing if any of these happen:
 - `merge:check` allows a no-commit read-only run
 - `merge:apply` applies a blocked run
 - `merge:push` pushes from a dirty worktree or wrong branch
+- `worktree:cleanup` removes an unmerged or dirty worker worktree
 - remote command can create arbitrary shell execution
 - writer task modifies files outside `targetFiles`
 - target repo main worktree becomes dirty unexpectedly
@@ -427,12 +451,13 @@ After Scenarios 0-8, Samantha should demonstrate:
 - read-only dashboard generation
 - conservative merge gating
 
-After Scenarios 9-13, Samantha should additionally demonstrate:
+After Scenarios 9-14, Samantha should additionally demonstrate:
 
 - real Codex writer execution
 - Samantha-owned commit creation
 - positive merge candidate detection without automatic merge
 - explicit merge application with post-merge verification
 - separate clean-worktree push gating
+- completed worktree cleanup
 
-At that point the next engineering step is completed-worktree cleanup and daemon hardening.
+At that point the next engineering step is daemon hardening.

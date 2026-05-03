@@ -82,6 +82,7 @@ The current operator surface includes:
 - merge candidate checks
 - explicit fast-forward merge application
 - separate clean-branch push gating
+- completed worker worktree cleanup
 - multi-task plan execution
 - local inbox processing
 - remote command enqueueing into the inbox
@@ -99,3 +100,5 @@ Samantha accepts a worker run only when all of these pass:
 6. Samantha creates the writer commit after gates pass
 
 Worker agents do not commit or push. Integration is split across `merge:check`, `merge:apply`, and `merge:push`.
+
+Completed worktrees are removed through `worktree:cleanup`, which requires a passing run log, a clean target repo, a clean worker worktree, and a target branch that already contains the worker commit.

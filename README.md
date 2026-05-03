@@ -68,6 +68,7 @@ Available command groups:
 - `merge:check` evaluates a passed run log as a safe merge candidate
 - `merge:apply` fast-forwards an approved candidate and runs post-merge verification
 - `merge:push` pushes an accepted clean branch separately from merge application
+- `worktree:cleanup` removes completed worker worktrees after integration
 - `plan:run` runs a multi-task plan with non-writer batching and writer serialization
 - `inbox:*` processes local file-backed commands
 - `remote:enqueue` maps a narrow remote command JSON into the local inbox

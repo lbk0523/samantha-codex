@@ -8,6 +8,7 @@ import { applyMerge, evaluateMergeGate, pushMerge } from "./lib/merge-gate";
 import { runPlan } from "./lib/plan-runner";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { TaskStore } from "./lib/task-store";
+import { cleanupCompletedWorktree } from "./lib/worktree-cleanup";
 
 interface ParsedArgs {
   command: string;
@@ -158,6 +159,18 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "worktree:cleanup") {
+    printJson(
+      await cleanupCompletedWorktree({
+        runLogPath: resolve(flag(args, "run-log", "")),
+        repoRoot: resolve(flag(args, "repo-root", ".")),
+        targetBranch: flag(args, "target-branch", "main"),
+        deleteBranch: args.flags.get("keep-branch") !== true,
+      }),
+    );
+    return;
+  }
+
   if (args.command === "plan:run") {
     const planPath = args.positionals[0];
     if (!planPath) throw new Error("usage: plan:run <plan.json> [--execute]");
@@ -227,6 +240,7 @@ async function main(): Promise<void> {
       "  merge:check --run-log=<path> --repo-root=<repo>",
       "  merge:apply --run-log=<path> --repo-root=<repo>",
       "  merge:push --repo-root=<repo> [--remote=origin] [--branch=main]",
+      "  worktree:cleanup --run-log=<path> --repo-root=<repo> [--keep-branch]",
       "  plan:run <plan.json> [--execute]",
       "  inbox:process",
       "  inbox:watch",

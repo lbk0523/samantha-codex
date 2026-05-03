@@ -270,4 +270,4 @@ git merge --ff-only 61824293b56fdf8ed84258c70de419b6f4353171
 
 ## Recommended Next Action
 
-Next, dogfood `merge:apply` against the approved OMHT writer run, then decide separately whether to run `merge:push`.
+Next, dogfood `worktree:cleanup` against the integrated OMHT writer run, then move to daemon hardening.

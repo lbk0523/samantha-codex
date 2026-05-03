@@ -122,6 +122,7 @@ Success criteria:
 - no worker can merge or push independently
 - `merge:apply` runs task verify commands after the fast-forward merge
 - `merge:push` refuses dirty worktrees and branch mismatches
+- `worktree:cleanup` removes completed worker worktrees only after integration is present on target main
 
 ### Phase 4: Plan Runner
 
@@ -229,13 +230,13 @@ Do not prioritize these until writer dogfood proves the control plane can handle
 
 ## Immediate Next Step
 
-Dogfood the explicit merge application commands now that they exist.
+Dogfood completed-worktree cleanup now that merge application and push gates exist.
 
 The practical next implementation should:
 
-1. run `merge:apply --run-log=<path>` only after BK approves integrating the writer branch
-2. confirm post-merge verify commands pass on the target main worktree
-3. run `merge:push --repo-root=<repo> --remote=origin --branch=main` only after the merge result is accepted
-4. keep cleanup of completed Samantha worktrees as a separate follow-up
+1. run `worktree:cleanup --run-log=<path>` for the completed OMHT writer run
+2. confirm the worker worktree is removed
+3. confirm the completed worker branch is deleted
+4. keep daemon hardening as the next follow-up
 
 The detailed next plan is in [NEXT_PLAN.md](NEXT_PLAN.md).
