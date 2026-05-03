@@ -174,7 +174,7 @@ Success criteria:
 
 ### Phase 6: Remote Command Surface
 
-MVP status: implemented as `remote:enqueue`, which maps narrow remote command JSON into the local inbox. Telegram or any network-facing adapter is not implemented yet.
+MVP status: implemented as `remote:enqueue` plus `telegram:poll`, both mapping narrow remote input into the local inbox.
 
 Goal: let BK instruct Samantha remotely after local loop safety is proven.
 
@@ -189,6 +189,7 @@ Success criteria:
 - remote input only creates orchestrator commands
 - remote interface cannot bypass safety gates
 - every remote command maps to a ledger entry and audit log
+- sender allowlist is mandatory for Telegram
 
 ### Phase 7: Dashboard
 

@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { TaskSpec } from "./lib/contracts";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
@@ -9,6 +9,7 @@ import { applyMerge, evaluateMergeGate, pushMerge } from "./lib/merge-gate";
 import { runPlan } from "./lib/plan-runner";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { TaskStore } from "./lib/task-store";
+import { pollTelegramToInbox } from "./lib/telegram-adapter";
 import { cleanupCompletedWorktree } from "./lib/worktree-cleanup";
 
 interface ParsedArgs {
@@ -65,8 +66,21 @@ function heartbeatPath(args: ParsedArgs): string {
   return resolve(flag(args, "heartbeat-file", join(stateDir(args), "heartbeat.json")));
 }
 
+function telegramOffsetPath(args: ParsedArgs): string {
+  return resolve(flag(args, "telegram-offset-file", join(stateDir(args), "telegram-offset.json")));
+}
+
 async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T;
+}
+
+async function readOptionalJson<T>(path: string): Promise<T | undefined> {
+  try {
+    return await readJson<T>(path);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
 }
 
 function printJson(value: unknown): void {
@@ -294,6 +308,29 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "telegram:poll") {
+    const token = flag(args, "bot-token", process.env.TELEGRAM_BOT_TOKEN ?? "");
+    const allowedSenderId = flag(args, "allowed-sender-id", process.env.TELEGRAM_ALLOWED_SENDER_ID ?? "");
+    const offsetPath = telegramOffsetPath(args);
+    const storedOffset = await readOptionalJson<{ nextOffset?: number }>(offsetPath);
+    const explicitOffset = args.flags.get("offset");
+    const offset = typeof explicitOffset === "string" ? Number(explicitOffset) : storedOffset?.nextOffset;
+    const result = await pollTelegramToInbox({
+      token,
+      allowedSenderId,
+      inboxDir: resolve(flag(args, "inbox-dir", join(root, "inbox"))),
+      offset,
+      limit: Number(flag(args, "limit", "10")),
+      timeoutSeconds: Number(flag(args, "timeout-seconds", "0")),
+    });
+    if (result.nextOffset !== undefined) {
+      await mkdir(stateDir(args), { recursive: true });
+      await writeFile(offsetPath, `${JSON.stringify({ nextOffset: result.nextOffset }, null, 2)}\n`, "utf8");
+    }
+    printJson(result);
+    return;
+  }
+
   if (args.command === "dashboard:build") {
     const out = resolve(flag(args, "out", join(root, "dashboard/index.html")));
     const runs = await buildDashboard(args, out);
@@ -320,6 +357,7 @@ async function main(): Promise<void> {
       "  inbox:process",
       "  inbox:watch",
       "  remote:enqueue <remote-command.json>",
+      "  telegram:poll --allowed-sender-id=<id> [--bot-token=<token>]",
       "  dashboard:build",
     ].join("\n"),
   );

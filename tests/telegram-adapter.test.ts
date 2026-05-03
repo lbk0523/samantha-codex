@@ -1,0 +1,93 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { pollTelegramToInbox } from "../src/lib/telegram-adapter";
+
+let tmpRoots: string[] = [];
+
+async function makeRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "samantha-codex-telegram-"));
+  tmpRoots.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
+  tmpRoots = [];
+});
+
+describe("pollTelegramToInbox", () => {
+  test("maps allowed Telegram text updates into inbox commands", async () => {
+    const root = await makeRoot();
+    const fetchImpl = (async (url: string) => {
+      expect(url).toContain("offset=7");
+      return {
+        statusText: "OK",
+        json: async () => ({
+          ok: true,
+          result: [
+            {
+              update_id: 10,
+              message: {
+                date: 1770000000,
+                text: "/runs",
+                from: { id: 12345 },
+              },
+            },
+          ],
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const result = await pollTelegramToInbox({
+      token: "token",
+      inboxDir: join(root, "inbox"),
+      allowedSenderId: "12345",
+      offset: 7,
+      fetchImpl,
+    });
+
+    expect(result.nextOffset).toBe(11);
+    expect(result.enqueued).toHaveLength(1);
+    expect(result.enqueued[0]?.command.type).toBe("runs:list");
+    expect(await readFile(result.enqueued[0]?.path ?? "", "utf8")).toContain("runs:list");
+  });
+
+  test("ignores disallowed or unsupported Telegram updates", async () => {
+    const root = await makeRoot();
+    const fetchImpl = (async () => ({
+      statusText: "OK",
+      json: async () => ({
+        ok: true,
+        result: [
+          { update_id: 20, message: { text: "/runs", from: { id: 999 } } },
+          { update_id: 21, message: { text: "/unknown", from: { id: 12345 } } },
+          { update_id: 22, message: { from: { id: 12345 } } },
+        ],
+      }),
+    })) as unknown as typeof fetch;
+
+    const result = await pollTelegramToInbox({
+      token: "token",
+      inboxDir: join(root, "inbox"),
+      allowedSenderId: "12345",
+      fetchImpl,
+    });
+
+    expect(result.enqueued).toEqual([]);
+    expect(result.nextOffset).toBe(23);
+    expect(result.ignored.map((item) => item.updateId)).toEqual([20, 21, 22]);
+  });
+
+  test("requires an explicit allowed sender id", async () => {
+    await expect(
+      pollTelegramToInbox({
+        token: "token",
+        inboxDir: "/tmp/inbox",
+        allowedSenderId: "",
+        fetchImpl: (async () => ({ json: async () => ({ ok: true, result: [] }) })) as unknown as typeof fetch,
+      }),
+    ).rejects.toThrow("allowed sender id");
+  });
+});

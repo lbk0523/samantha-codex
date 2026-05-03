@@ -73,6 +73,7 @@ Available command groups:
 - `plan:run` runs a multi-task plan with non-writer batching and writer serialization
 - `inbox:*` processes local file-backed commands
 - `remote:enqueue` maps a narrow remote command JSON into the local inbox
+- `telegram:poll` maps allowlisted Telegram updates into the local inbox
 - `dashboard:build` writes a read-only static dashboard from run summaries
 
 Run the first external read-only canary against `oh-my-health-trainer`:
@@ -90,4 +91,4 @@ By default, worker worktrees are placed outside the target repo under `.samantha
 
 ## Design Notes
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md), [docs/DOGFOOD_SCENARIOS.md](docs/DOGFOOD_SCENARIOS.md), [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md), and [docs/NEXT_PLAN.md](docs/NEXT_PLAN.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md), [docs/DOGFOOD_SCENARIOS.md](docs/DOGFOOD_SCENARIOS.md), [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md), [docs/REMOTE_ADAPTERS.md](docs/REMOTE_ADAPTERS.md), and [docs/NEXT_PLAN.md](docs/NEXT_PLAN.md).

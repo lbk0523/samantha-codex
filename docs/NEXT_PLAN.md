@@ -209,7 +209,7 @@ Success criteria:
 
 Only after file-backed daemon is stable:
 
-- add one Telegram adapter or another narrow remote adapter
+- keep the Telegram polling adapter
 - remote adapter writes to inbox only
 - adapter cannot run shell commands
 - sender allowlist is mandatory
@@ -270,4 +270,4 @@ git merge --ff-only 61824293b56fdf8ed84258c70de419b6f4353171
 
 ## Recommended Next Action
 
-Next, add the first narrow remote adapter after one longer `inbox:watch` soak.
+Next, dogfood `telegram:poll` with a real bot token after one longer `inbox:watch` soak.

@@ -448,6 +448,27 @@ Pass criteria:
 - dashboard shows heartbeat and pending inbox count
 - stopping the daemon releases `state/daemon.lock`
 
+## Scenario 16: Telegram Poll Adapter
+
+Goal: confirm Telegram input can only create allowlisted inbox commands.
+
+Command:
+
+```bash
+cd /home/lbk0523/projects/samantha-codex
+TELEGRAM_BOT_TOKEN=<token> \
+TELEGRAM_ALLOWED_SENDER_ID=<telegram-user-id> \
+bun run samantha telegram:poll --timeout-seconds=0
+```
+
+Pass criteria:
+
+- allowed `/runs`, `/tasks`, `/dashboard`, and `/task <id>` messages create inbox files
+- unsupported messages are ignored
+- messages from other sender ids are ignored
+- no remote path executes shell, merge, push, cleanup, or worker dispatch directly
+- `inbox:watch` processes the created inbox commands later
+
 ## Stop Conditions
 
 Stop dogfood and fix Samantha before continuing if any of these happen:
@@ -459,6 +480,7 @@ Stop dogfood and fix Samantha before continuing if any of these happen:
 - `merge:apply` applies a blocked run
 - `merge:push` pushes from a dirty worktree or wrong branch
 - `worktree:cleanup` removes an unmerged or dirty worker worktree
+- Telegram input bypasses the inbox or sender allowlist
 - remote command can create arbitrary shell execution
 - writer task modifies files outside `targetFiles`
 - target repo main worktree becomes dirty unexpectedly
@@ -477,7 +499,7 @@ After Scenarios 0-8, Samantha should demonstrate:
 - read-only dashboard generation
 - conservative merge gating
 
-After Scenarios 9-15, Samantha should additionally demonstrate:
+After Scenarios 9-16, Samantha should additionally demonstrate:
 
 - real Codex writer execution
 - Samantha-owned commit creation
@@ -486,5 +508,6 @@ After Scenarios 9-15, Samantha should additionally demonstrate:
 - separate clean-worktree push gating
 - completed worktree cleanup
 - daemon lock, heartbeat, health check, and dashboard daemon status
+- narrow Telegram polling into inbox
 
-At that point the next engineering step is systemd user-service packaging or a narrow remote adapter.
+At that point the next engineering step is a longer 24/7 soak and real-world Telegram dogfood.

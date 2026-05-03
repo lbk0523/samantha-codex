@@ -43,7 +43,19 @@ export async function enqueueRemoteCommand(input: {
   allowedSenderId?: string;
 }): Promise<{ path: string; command: InboxCommand }> {
   const remote = JSON.parse(await readFile(input.inputPath, "utf8")) as RemoteCommandInput;
-  const command = commandFromRemoteInput(remote, input.allowedSenderId);
+  return enqueueRemoteCommandFromInput({
+    remote,
+    inboxDir: input.inboxDir,
+    allowedSenderId: input.allowedSenderId,
+  });
+}
+
+export async function enqueueRemoteCommandFromInput(input: {
+  remote: RemoteCommandInput;
+  inboxDir: string;
+  allowedSenderId?: string;
+}): Promise<{ path: string; command: InboxCommand }> {
+  const command = commandFromRemoteInput(input.remote, input.allowedSenderId);
   const file = `${sanitizeTaskId(command.id ?? `${Date.now()}`)}.json`;
   const path = join(input.inboxDir, file);
 

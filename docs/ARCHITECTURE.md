@@ -87,6 +87,7 @@ The current operator surface includes:
 - local inbox processing
 - daemon lock, heartbeat, and health check
 - remote command enqueueing into the inbox
+- Telegram polling into the inbox
 - read-only static dashboard generation
 
 ## Worker Result Gate
@@ -105,3 +106,5 @@ Worker agents do not commit or push. Integration is split across `merge:check`, 
 Completed worktrees are removed through `worktree:cleanup`, which requires a passing run log, a clean target repo, a clean worker worktree, and a target branch that already contains the worker commit.
 
 Worker worktrees default to an external `.samantha-worktrees/<repo>` directory beside the target repo parent. Keeping worktrees outside the target repo prevents broad test commands from accidentally discovering duplicated files inside active worker worktrees.
+
+Remote adapters are input-only. The Telegram adapter polls updates, requires an allowed sender id, maps only the narrow supported command set, and writes inbox files. It does not execute commands directly.
