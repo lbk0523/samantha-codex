@@ -6,6 +6,16 @@ import { writeDashboard } from "./lib/dashboard";
 import { processInbox, type InboxCommand } from "./lib/inbox";
 import { RunIndex } from "./lib/ledger";
 import { applyMerge, evaluateMergeGate, pushMerge } from "./lib/merge-gate";
+import {
+  failuresReport,
+  healthReport,
+  remoteHelpReport,
+  runsListReport,
+  runShowReport,
+  statusReport,
+  tasksListReport,
+  taskShowReport,
+} from "./lib/operator-reports";
 import { runPlan } from "./lib/plan-runner";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { TaskStore } from "./lib/task-store";
@@ -107,18 +117,48 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
 }
 
 async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Promise<string> {
+  if (command.type === "remote:help") {
+    return remoteHelpReport();
+  }
+  if (command.type === "status:show") {
+    const runs = await new RunIndex(runsPath(args)).list();
+    const inboxDir = resolve(flag(args, "inbox-dir", join(root, "inbox")));
+    return statusReport({
+      runs,
+      heartbeat: await readDaemonHeartbeat(heartbeatPath(args)),
+      pendingInboxCount: await pendingInboxCount(inboxDir),
+    });
+  }
+  if (command.type === "health:check") {
+    return healthReport(
+      await checkDaemonHealth({
+        heartbeatPath: heartbeatPath(args),
+        lockPath: daemonLockPath(args),
+        maxAgeMs: Number(command.args?.maxAgeMs ?? flag(args, "max-age-ms", "15000")),
+      }),
+    );
+  }
   if (command.type === "runs:list") {
     const runs = await new RunIndex(runsPath(args)).list();
-    return `# runs:list\n\n\`\`\`json\n${JSON.stringify(runs, null, 2)}\n\`\`\``;
+    return runsListReport(runs);
+  }
+  if (command.type === "runs:show") {
+    const id = String(command.args?.id ?? "");
+    const run = await new RunIndex(runsPath(args)).find(id);
+    return runShowReport(id, run);
+  }
+  if (command.type === "runs:failures") {
+    const runs = await new RunIndex(runsPath(args)).list();
+    return failuresReport(runs);
   }
   if (command.type === "tasks:list") {
     const tasks = await new TaskStore(tasksPath(args)).list();
-    return `# tasks:list\n\n\`\`\`json\n${JSON.stringify(tasks, null, 2)}\n\`\`\``;
+    return tasksListReport(tasks);
   }
   if (command.type === "tasks:show") {
     const id = String(command.args?.id ?? "");
     const task = (await new TaskStore(tasksPath(args)).list()).find((item) => item.id === id);
-    return `# tasks:show ${id}\n\n\`\`\`json\n${JSON.stringify(task ?? null, null, 2)}\n\`\`\``;
+    return taskShowReport(id, task);
   }
   if (command.type === "dashboard:build") {
     const out = resolve(flag(args, "out", join(root, "dashboard/index.html")));

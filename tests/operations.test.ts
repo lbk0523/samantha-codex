@@ -111,6 +111,14 @@ describe("inbox and remote commands", () => {
 
     expect(command.type).toBe("tasks:show");
     expect(command.args?.id).toBe("fixture");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/help" }, "bk").type).toBe("remote:help");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/status" }, "bk").type).toBe("status:show");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/health" }, "bk").type).toBe("health:check");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/run run-1" }, "bk")).toMatchObject({
+      type: "runs:show",
+      args: { id: "run-1" },
+    });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/failures" }, "bk").type).toBe("runs:failures");
     expect(() => commandFromRemoteInput({ senderId: "other", text: "/runs" }, "bk")).toThrow("not allowed");
 
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-"));

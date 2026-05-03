@@ -463,7 +463,7 @@ bun run samantha telegram:poll --timeout-seconds=0
 
 Pass criteria:
 
-- allowed `/runs`, `/tasks`, `/dashboard`, and `/task <id>` messages create inbox files
+- allowed `/help`, `/status`, `/health`, `/runs`, `/run <id>`, `/failures`, `/tasks`, `/dashboard`, and `/task <id>` messages create inbox files
 - unsupported messages are ignored
 - messages from other sender ids are ignored
 - `state/telegram-offset.json` is updated after a successful poll

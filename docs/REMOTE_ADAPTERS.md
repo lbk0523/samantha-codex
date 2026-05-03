@@ -16,12 +16,19 @@ remote input -> allowlist -> command mapping -> inbox/*.json -> inbox:watch
 
 The current remote command mapper supports only:
 
+- `/help`
+- `/status`
+- `/health`
 - `/runs`
+- `/run <run-id>`
+- `/failures`
 - `/tasks`
 - `/dashboard`
 - `/task <task-id>`
 
 Unsupported commands are ignored or rejected.
+
+All supported remote commands are read-only. The broader local CLI commands for worker dispatch, merge, push, and cleanup are intentionally not exposed remotely.
 
 ## Telegram Poll Adapter
 

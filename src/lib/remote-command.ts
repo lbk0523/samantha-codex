@@ -17,8 +17,29 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   const text = input.text.trim();
   const receivedAt = input.receivedAt ?? new Date().toISOString();
 
+  if (text === "/help" || text === "/start") {
+    return { id: `remote-${sanitizeTaskId(receivedAt)}-help`, type: "remote:help", args: { source: "remote" } };
+  }
+  if (text === "/status") {
+    return { id: `remote-${sanitizeTaskId(receivedAt)}-status`, type: "status:show", args: { source: "remote" } };
+  }
+  if (text === "/health") {
+    return { id: `remote-${sanitizeTaskId(receivedAt)}-health`, type: "health:check", args: { source: "remote" } };
+  }
   if (text === "/runs") {
     return { id: `remote-${sanitizeTaskId(receivedAt)}-runs`, type: "runs:list", args: { source: "remote" } };
+  }
+  if (text.startsWith("/run ")) {
+    const id = text.slice("/run ".length).trim();
+    if (!id) throw new Error("missing run id");
+    return {
+      id: `remote-${sanitizeTaskId(receivedAt)}-run`,
+      type: "runs:show",
+      args: { id, source: "remote" },
+    };
+  }
+  if (text === "/failures") {
+    return { id: `remote-${sanitizeTaskId(receivedAt)}-failures`, type: "runs:failures", args: { source: "remote" } };
   }
   if (text === "/tasks") {
     return { id: `remote-${sanitizeTaskId(receivedAt)}-tasks`, type: "tasks:list", args: { source: "remote" } };
