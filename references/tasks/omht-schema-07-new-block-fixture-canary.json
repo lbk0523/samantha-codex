@@ -26,6 +26,9 @@
     "bun.lock",
     ".github/**"
   ],
+  "setupCommands": [
+    "bun install"
+  ],
   "verifyCommands": [
     "bun typecheck",
     "bun test tests/unit/zod-plan-schema.spec.ts"

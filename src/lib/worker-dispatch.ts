@@ -31,8 +31,9 @@ export interface CommandRunResult {
 
 export interface WorkerDispatchExecution {
   preparation: WorkerDispatchPreparation;
-  command: CommandRunResult;
-  evaluation: WorkerResultEvaluation;
+  setupResults: CommandRunResult[];
+  command?: CommandRunResult;
+  evaluation?: WorkerResultEvaluation;
   pass: boolean;
 }
 
@@ -66,8 +67,12 @@ export async function prepareWorkerDispatch(
   };
 }
 
-export async function runCommand(command: string[]): Promise<CommandRunResult> {
+export async function runCommand(
+  command: string[],
+  options: { cwd?: string } = {},
+): Promise<CommandRunResult> {
   const child = Bun.spawn(command, {
+    cwd: options.cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -81,9 +86,30 @@ export async function runCommand(command: string[]): Promise<CommandRunResult> {
   return { command, exitCode, stdout, stderr };
 }
 
+export async function runSetupCommands(commands: string[], cwd: string): Promise<CommandRunResult[]> {
+  const results: CommandRunResult[] = [];
+
+  for (const command of commands) {
+    const result = await runCommand(["bash", "-lc", command], { cwd });
+    results.push(result);
+    if (result.exitCode !== 0) break;
+  }
+
+  return results;
+}
+
 export async function executeWorkerDispatch(input: PrepareWorkerDispatchInput): Promise<WorkerDispatchExecution> {
   const preparation = await prepareWorkerDispatch(input);
   const baseCommit = preparation.allocation?.baseCommit ?? (await gitHead(preparation.worktreePath));
+  const setupResults = await runSetupCommands(input.task.setupCommands ?? [], preparation.worktreePath);
+  if (setupResults.some((result) => result.exitCode !== 0)) {
+    return {
+      preparation,
+      setupResults,
+      pass: false,
+    };
+  }
+
   const command = await runCommand(preparation.codex.command);
   const output = [command.stdout, command.stderr].filter(Boolean).join("\n");
   const evaluation = await evaluateWorkerResult({
@@ -95,6 +121,7 @@ export async function executeWorkerDispatch(input: PrepareWorkerDispatchInput): 
 
   return {
     preparation,
+    setupResults,
     command,
     evaluation,
     pass: command.exitCode === 0 && evaluation.pass,

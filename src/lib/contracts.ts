@@ -33,6 +33,7 @@ export interface TaskSpec {
   targetAgent: string;
   targetFiles: string[];
   forbiddenChanges: string[];
+  setupCommands?: string[];
   verifyCommands: string[];
   instructions: string;
   expectedCommitSubject?: string;

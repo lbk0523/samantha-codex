@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
-import { prepareWorkerDispatch, runCommand } from "../src/lib/worker-dispatch";
+import { prepareWorkerDispatch, runCommand, runSetupCommands } from "../src/lib/worker-dispatch";
 
 const agent: AgentProfile = {
   id: "codex-worker",
@@ -73,5 +73,21 @@ describe("prepareWorkerDispatch", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe("out");
     expect(result.stderr.trim()).toBe("err");
+  });
+
+  test("runs setup commands in order inside the worktree", async () => {
+    const results = await runSetupCommands(["pwd", "echo ready"], "/tmp");
+
+    expect(results).toHaveLength(2);
+    expect(results[0]?.exitCode).toBe(0);
+    expect(results[0]?.stdout.trim()).toBe("/tmp");
+    expect(results[1]?.stdout.trim()).toBe("ready");
+  });
+
+  test("stops setup commands after the first failure", async () => {
+    const results = await runSetupCommands(["exit 7", "echo skipped"], "/tmp");
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.exitCode).toBe(7);
   });
 });

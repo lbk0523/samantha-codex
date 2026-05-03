@@ -22,6 +22,10 @@ export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): str
     task.verifyCommands.length > 0
       ? task.verifyCommands.map((cmd) => `- ${cmd}`)
       : ["- (none)"];
+  const setupCommands =
+    task.setupCommands && task.setupCommands.length > 0
+      ? task.setupCommands.map((cmd) => `- ${cmd}`)
+      : ["- (none)"];
 
   return [
     `You are ${agent.id}, a Codex-only Samantha worker agent.`,
@@ -40,6 +44,9 @@ export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): str
     "",
     "Forbidden changes:",
     ...forbiddenChanges,
+    "",
+    "Setup commands already run by Samantha before Codex starts:",
+    ...setupCommands,
     "",
     "Verify commands:",
     ...verifyCommands,

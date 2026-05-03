@@ -38,7 +38,15 @@ describe("codex dispatch preparation", () => {
     expect(prompt).toContain("Samantha owns orchestration");
     expect(prompt).toContain("Do not create worktrees");
     expect(prompt).toContain("src/lib/codex-dispatch.ts");
+    expect(prompt).toContain("Setup commands already run by Samantha");
     expect(prompt).toContain("HARNESS_RESULT");
+  });
+
+  test("includes task setup commands as already-run context", () => {
+    const prompt = buildCodexWorkerPrompt({ ...task, setupCommands: ["bun install"] }, agent);
+
+    expect(prompt).toContain("Setup commands already run by Samantha before Codex starts:");
+    expect(prompt).toContain("- bun install");
   });
 
   test("builds a strict read-only prompt for non-writer agents", () => {

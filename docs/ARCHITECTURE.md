@@ -70,7 +70,7 @@ It currently:
 4. prepares the task worktree path, or allocates it with `--allocate`
 5. prints the exact `codex exec` command Samantha would run
 
-With `--execute`, it also runs the prepared `codex exec` command and evaluates the captured output.
+With `--execute`, it also runs task `setupCommands` inside the worktree, then runs the prepared `codex exec` command and evaluates the captured output. Setup failures block the worker before Codex starts. Any tracked file changes produced by setup still go through the normal scope gate.
 
 ## Worker Result Gate
 
