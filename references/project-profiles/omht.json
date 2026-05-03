@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "omht",
+  "repoRoot": "/home/lbk0523/projects/oh-my-health-trainer",
+  "setupCommands": ["bun install"],
+  "verifyCommands": ["bun typecheck"],
+  "forbiddenChanges": [
+    ".env",
+    ".env.*",
+    "node_modules/**",
+    "bun.lock"
+  ]
+}

@@ -2,7 +2,7 @@ export type AgentRole = "writer" | "reviewer" | "evaluator" | "spec";
 export type WriterClass = "writer" | "non-writer";
 export type WorktreePolicy = "per-task" | "none";
 export type MergePolicy = "samantha-controlled" | "none";
-export type TaskStatus = "pending" | "in_progress" | "completed" | "failed" | "blocked";
+export type TaskStatus = "pending" | "in_progress" | "completed" | "failed" | "blocked" | "archived";
 export type HarnessStatus = "pass" | "rework" | "blocked";
 
 export interface SkillBundleRef {
@@ -38,6 +38,8 @@ export interface TaskSpec {
   instructions: string;
   expectedCommitSubject?: string;
   status: TaskStatus;
+  archivedAt?: string;
+  archiveReason?: string;
 }
 
 export interface SafetyPolicy {

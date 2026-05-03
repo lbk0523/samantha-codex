@@ -37,7 +37,8 @@ function runLine(run: RunSummary): string {
 }
 
 function taskLine(task: TaskSpec): string {
-  return `- ${code(task.id)} status=${code(task.status)} agent=${code(task.targetAgent)}`;
+  const archive = task.status === "archived" && task.archiveReason ? ` reason=${code(task.archiveReason)}` : "";
+  return `- ${code(task.id)} status=${code(task.status)} agent=${code(task.targetAgent)}${archive}`;
 }
 
 function proposalLine(proposal: ProposalRecord): string {
@@ -141,7 +142,8 @@ export function runShowReport(runId: string, run: RunSummary | undefined): strin
 }
 
 export function nextActionReport(input: { runs: RunSummary[]; tasks: TaskSpec[] }): string {
-  const pending = input.tasks.find((task) => task.status === "pending");
+  const activeTasks = input.tasks.filter((task) => task.status !== "archived");
+  const pending = activeTasks.find((task) => task.status === "pending");
   if (pending) {
     return [
       "# next-action",
@@ -157,6 +159,16 @@ export function nextActionReport(input: { runs: RunSummary[]; tasks: TaskSpec[] 
 
   const latest = input.runs.at(-1);
   if (latest) {
+    if (latest.pass && latest.commit) {
+      return [
+        "# next-action",
+        "",
+        `Latest run: ${code(latest.runId)}`,
+        "",
+        "Suggested local next action:",
+        code(`bun run samantha merge:check --run-log=${latest.logPath} --repo-root=${latest.repoRoot}`),
+      ].join("\n");
+    }
     return ["# next-action", "", `Latest run: ${code(latest.runId)}`, "", ...nextActionLinesForRun(latest)].join("\n");
   }
 
@@ -193,10 +205,14 @@ export function taskShowReport(taskId: string, task: TaskSpec | undefined): stri
     `Title: ${oneLine(task.title)}`,
     `Status: ${code(task.status)}`,
     `Agent: ${code(task.targetAgent)}`,
+    task.archivedAt ? `Archived: ${code(task.archivedAt)}` : "",
+    task.archiveReason ? `Archive reason: ${oneLine(task.archiveReason)}` : "",
     `Target files: ${task.targetFiles.map(code).join(", ") || "none"}`,
     `Setup commands: ${(task.setupCommands ?? []).map(code).join(", ") || "none"}`,
     `Verify commands: ${task.verifyCommands.map(code).join(", ") || "none"}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function proposalAddedReport(proposal: ProposalRecord): string {

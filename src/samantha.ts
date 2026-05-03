@@ -28,6 +28,7 @@ import {
 } from "./lib/operator-reports";
 import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnostics";
 import { runPlan } from "./lib/plan-runner";
+import { applyProjectDefaults, loadProjectProfile } from "./lib/project-profile";
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { writeWorkerRunLog } from "./lib/run-log";
@@ -103,6 +104,10 @@ function taskDraftsPath(args: ParsedArgs): string {
 
 function agentProfilesDir(args: ParsedArgs): string {
   return resolve(flag(args, "agent-profiles-dir", join(root, "references/agent-profiles")));
+}
+
+function projectProfilesDir(args: ParsedArgs): string {
+  return resolve(flag(args, "project-profiles-dir", join(root, "references/project-profiles")));
 }
 
 function daemonLockPath(args: ParsedArgs): string {
@@ -310,7 +315,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     return taskDraftShowReport(id, draft);
   }
   if (command.type === "tasks:list") {
-    const tasks = await new TaskStore(tasksPath(args)).list();
+    const tasks = await new TaskStore(tasksPath(args)).listActive();
     return tasksListReport(tasks);
   }
   if (command.type === "tasks:show") {
@@ -360,7 +365,8 @@ async function main(): Promise<void> {
   }
 
   if (args.command === "tasks:list") {
-    printJson(await new TaskStore(tasksPath(args)).list());
+    const taskStore = new TaskStore(tasksPath(args));
+    printJson(args.flags.get("include-archived") === true ? await taskStore.list() : await taskStore.listActive());
     return;
   }
 
@@ -427,6 +433,17 @@ async function main(): Promise<void> {
       throw new Error(`task must be failed or blocked to retry: ${task.status}`);
     }
     printJson(await taskStore.updateStatus(task.id, "pending"));
+    return;
+  }
+
+  if (args.command === "tasks:archive") {
+    const taskId = args.positionals[0];
+    const reason = flag(args, "reason", "");
+    if (!taskId || !reason.trim()) throw new Error("usage: tasks:archive <task-id> --reason=<text>");
+    printJson(await new TaskStore(tasksPath(args)).archive(taskId, {
+      archivedAt: new Date().toISOString(),
+      reason,
+    }));
     return;
   }
 
@@ -577,8 +594,32 @@ async function main(): Promise<void> {
     const draftId = args.positionals[0];
     const from = flag(args, "from", "");
     if (!draftId || !from) throw new Error("usage: drafts:update <draft-id> --from=<draft-patch.json>");
+    const projectId = flag(args, "project", "");
     const patch = parseTaskDraftUpdatePatch(await readJson<unknown>(resolve(from)));
-    printJson(await new TaskDraftStore(taskDraftsPath(args)).update(draftId, patch, new Date().toISOString()));
+    const nextPatch = projectId
+      ? applyProjectDefaults(patch, await loadProjectProfile(projectProfilesDir(args), projectId))
+      : patch;
+    printJson(await new TaskDraftStore(taskDraftsPath(args)).update(draftId, nextPatch, new Date().toISOString()));
+    return;
+  }
+
+  if (args.command === "drafts:prepare") {
+    const draftId = args.positionals[0];
+    const projectId = flag(args, "project", "");
+    if (!draftId || !projectId) throw new Error("usage: drafts:prepare <draft-id> --project=<id> [--from=<draft-patch.json>]");
+    const from = flag(args, "from", "");
+    const patch = parseTaskDraftUpdatePatch(from ? await readJson<unknown>(resolve(from)) : {});
+    const project = await loadProjectProfile(projectProfilesDir(args), projectId);
+    const updated = await new TaskDraftStore(taskDraftsPath(args)).update(
+      draftId,
+      applyProjectDefaults(patch, project),
+      new Date().toISOString(),
+    );
+    printJson({
+      project,
+      draft: updated,
+      check: checkTaskDraft(updated, { knownAgentIds: await knownAgentIds(args) }),
+    });
     return;
   }
 
@@ -830,7 +871,9 @@ async function main(): Promise<void> {
       "  runs:show <run-id>",
       "  tasks:add <task.json>",
       "  tasks:list",
+      "  tasks:list --include-archived",
       "  tasks:show <task-id>",
+      "  tasks:archive <task-id> --reason=<text>",
       "  tasks:dispatch <task-id> --repo-root=<repo> [--execute]",
       "  tasks:finalize-worktree <task-id> --repo-root=<repo> [--worktree=<path>] [--note=<text>]",
       "  tasks:retry <task-id>",
@@ -844,6 +887,7 @@ async function main(): Promise<void> {
       "  drafts:show <draft-id>",
       "  drafts:check <draft-id>",
       "  drafts:update <draft-id> --from=<draft-patch.json>",
+      "  drafts:prepare <draft-id> --project=<id> [--from=<draft-patch.json>]",
       "  drafts:approve <draft-id>",
       "  merge:check --run-log=<path> --repo-root=<repo>",
       "  merge:apply --run-log=<path> --repo-root=<repo>",

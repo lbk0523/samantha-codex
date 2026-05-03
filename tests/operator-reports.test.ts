@@ -20,6 +20,7 @@ import {
   taskDraftShowReport,
   taskDraftsListReport,
   tasksListReport,
+  taskShowReport,
 } from "../src/lib/operator-reports";
 import type { OpsSnapshot } from "../src/lib/ops-diagnostics";
 import type { ProposalRecord } from "../src/lib/proposal-store";
@@ -185,10 +186,14 @@ describe("operator reports", () => {
 
     expect(report).toContain("Total tasks: 1");
     expect(report).toContain("task-pass");
+    expect(taskShowReport("task-pass", { ...task, status: "archived", archiveReason: "stale", archivedAt: "2026-05-04T10:00:00.000Z" })).toContain(
+      "Archive reason: stale",
+    );
   });
 
   test("renders next action reports", () => {
     expect(nextActionReport({ runs: [passRun], tasks: [task] })).toContain("tasks:dispatch task-pass");
+    expect(nextActionReport({ runs: [passRun], tasks: [{ ...task, status: "archived" }] })).toContain("merge:check");
     expect(nextActionReport({ runs: [passRun], tasks: [] })).toContain("merge:check");
     expect(nextActionReport({ runs: [failRun], tasks: [] })).toContain("tasks:retry task-fail");
   });

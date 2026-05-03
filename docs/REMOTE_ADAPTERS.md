@@ -70,6 +70,7 @@ Task promotion is local-only:
 ```bash
 bun run samantha drafts:check <draft-id>
 bun run samantha drafts:update <draft-id> --from=<draft-patch.json>
+bun run samantha drafts:prepare <draft-id> --project=<id> [--from=<draft-patch.json>]
 bun run samantha drafts:approve <draft-id>
 ```
 
@@ -83,6 +84,8 @@ Draft patches may include `setupCommands`. Use this for fresh worktree dependenc
   "verifyCommands": ["bun typecheck"]
 }
 ```
+
+Project profiles can provide these defaults. The first bundled profile is `omht`, which supplies the local OMHT repo root, `bun install`, and a conservative default typecheck command. Use `drafts:prepare` when converting a rough draft into an executable task draft for a known project.
 
 Worker dispatch is local-only:
 
@@ -101,6 +104,14 @@ bun run samantha tasks:finalize-worktree <task-id> --repo-root=<repo> --worktree
 ```
 
 Use `tasks:retry` only after understanding the failed run. Use `tasks:finalize-worktree` only after fixing/verifying the existing worker worktree locally.
+
+Stale or obsolete tasks should be archived locally:
+
+```bash
+bun run samantha tasks:archive <task-id> --reason=<text>
+```
+
+Archived tasks remain in `state/tasks.jsonl`, but `/tasks`, `tasks:list`, and `/next-action` exclude them by default. Use `tasks:list --include-archived` for audit/debugging.
 
 `/next-action` is read-only. It reports the safest next local command, such as dispatching a pending task, checking/applying a merge candidate, retrying a failed task, finalizing a blocked worktree, or cleaning up after merge/push.
 

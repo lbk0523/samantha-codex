@@ -57,6 +57,8 @@ Already implemented:
 - local-only task draft check, update, and approval gate
 - local-only pending task dispatch into existing worker run logs and run index
 - task draft `setupCommands` promotion into worker setup
+- project profiles for repo-level setup and verify defaults
+- task archival so stale tasks do not pollute `/next-action`
 - existing clean worktree reuse for same-task dispatch retries
 - local `tasks:retry` and `tasks:finalize-worktree` recovery commands
 - read-only `/next-action` Telegram command

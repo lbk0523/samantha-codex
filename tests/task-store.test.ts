@@ -50,4 +50,22 @@ describe("TaskStore", () => {
     expect(await store.find(task.id)).toEqual(updated);
     await expect(store.updateStatus("missing-task", "failed")).rejects.toThrow("task not found");
   });
+
+  test("archives tasks and excludes them from active lists", async () => {
+    const store = new TaskStore(path);
+
+    await store.append(task);
+    const archived = await store.archive(task.id, {
+      archivedAt: "2026-05-04T10:00:00.000Z",
+      reason: "stale fixture",
+    });
+
+    expect(archived).toMatchObject({
+      status: "archived",
+      archivedAt: "2026-05-04T10:00:00.000Z",
+      archiveReason: "stale fixture",
+    });
+    expect(await store.listActive()).toEqual([]);
+    expect(await store.list()).toEqual([archived]);
+  });
 });
