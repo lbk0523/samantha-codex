@@ -33,7 +33,7 @@ export async function evaluateMergeGate(input: MergeGateInput): Promise<MergeGat
   const log = await readWorkerRunLog(input.runLogPath);
   const targetBranch = input.targetBranch ?? "main";
   const execution = log.result;
-  const commit = execution.evaluation?.harness?.commit ?? "";
+  const commit = execution.commit?.commitHash ?? execution.evaluation?.harness?.commit ?? "";
   const violations: string[] = [];
 
   if (!execution.pass) {

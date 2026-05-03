@@ -289,8 +289,8 @@ For the next writer dogfood, create a new task with these constraints:
 - broad `forbiddenChanges`
 - `setupCommands` includes required dependency setup, for example `bun install`
 - verify commands are focused and deterministic
-- worker must create exactly one commit
-- worker must not push
+- worker must not commit or push
+- Samantha must create exactly one commit after scope and verify gates pass
 - Samantha must run `merge:check` before any integration
 
 Recommended first writer dogfood candidates:
@@ -305,6 +305,53 @@ Pass criteria:
 - run index and full audit log are created
 - `merge:check` returns `mayMerge: true`
 - human reviews the diff before running any actual merge command
+
+## Scenario 10: Real Writer Codex Canary Against OMHT
+
+Goal: prove Samantha can run a real writer task while keeping Git integration under Samantha control.
+
+Command:
+
+```bash
+cd /home/lbk0523/projects/samantha-codex
+bun run dispatch-worker \
+  --task=references/tasks/omht-schema-07-unknown-block-negative-canary.json \
+  --agent=references/agent-profiles/codex-worker.json \
+  --repo-root=/home/lbk0523/projects/oh-my-health-trainer \
+  --worktrees-dir=samantha/worktrees \
+  --allocate \
+  --execute
+```
+
+Pass criteria:
+
+- `runSummary.outcome` is `pass`
+- `runSummary.commit` is non-empty
+- worker output leaves `HARNESS_RESULT.commit` empty
+- `execution.commit.commitHash` is non-empty
+- changed files are within `targetFiles`
+- verify commands pass in Samantha evaluation
+- target repo main remains clean
+
+## Scenario 11: Merge Gate Positive Check
+
+Goal: confirm a passing Samantha-owned writer commit becomes a manual merge candidate.
+
+Command:
+
+```bash
+cd /home/lbk0523/projects/samantha-codex
+bun run samantha merge:check \
+  --run-log=<writer-run-log-path> \
+  --repo-root=/home/lbk0523/projects/oh-my-health-trainer
+```
+
+Pass criteria:
+
+- `mayMerge` is `true`
+- `commit` matches `runSummary.commit`
+- `command` is `git merge --ff-only <commit>`
+- no merge is executed during this scenario
 
 ## Stop Conditions
 
@@ -332,4 +379,10 @@ After Scenarios 0-8, Samantha should demonstrate:
 - read-only dashboard generation
 - conservative merge gating
 
-At that point the next engineering step is a fresh low-risk writer dogfood task.
+After Scenarios 9-11, Samantha should additionally demonstrate:
+
+- real Codex writer execution
+- Samantha-owned commit creation
+- positive merge candidate detection without automatic merge
+
+At that point the next engineering step is an explicit `merge:apply` gate followed by a separate `merge:push` gate.

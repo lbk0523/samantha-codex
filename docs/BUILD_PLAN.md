@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-03
 
-Current planning status: MVP control plane built and read-only dogfood completed. Next focus is a fresh low-risk writer dogfood, then hardening based on the result.
+Current planning status: MVP control plane built, read-only dogfood completed, and the first low-risk writer dogfood passed with a Samantha-owned commit. Next focus is explicit merge apply/push gates.
 
 ## Purpose
 
@@ -53,10 +53,11 @@ Already implemented:
 Important dogfood findings:
 
 - Fresh worktrees need deterministic setup. This is why `setupCommands` exists.
-- Codex writer commits need controlled access to parent `.git` worktree metadata.
-- Non-writer agents should not receive parent `.git` metadata write access.
+- Codex workers should not receive parent `.git` metadata write access.
+- Samantha should create commits itself after worker output passes scope and verify gates.
 - Audit logs are mandatory before 24/7 operation; otherwise Samantha cannot explain what happened after the fact.
 - Read-only dogfood against `oh-my-health-trainer` passed without file changes and correctly produced run log, run index, dashboard data, and a merge-gate rejection for no-commit output.
+- Writer dogfood against `oh-my-health-trainer` passed with a tests-only schema canary, a full audit log, a compact run summary, and a manual fast-forward merge candidate.
 
 ## Near-Term Roadmap
 
@@ -211,6 +212,7 @@ These gates should not be weakened for convenience:
 - external skills cannot override Samantha policy
 - every accepted worker run needs `HARNESS_RESULT`
 - every accepted worker run needs passing verify commands
+- writer commits are created by Samantha, not by worker agents
 
 ## What Not To Build Yet
 
@@ -225,16 +227,14 @@ Do not prioritize these until writer dogfood proves the control plane can handle
 
 ## Immediate Next Step
 
-Run a fresh low-risk writer dogfood task.
+Add explicit merge application commands now that a fresh writer dogfood task has passed.
 
 The practical next implementation should:
 
-1. add a new `oh-my-health-trainer` writer task that has not already been applied
-2. target a tests-only change or one generated report
-3. run reviewer/spec dry-run checks first
-4. run one writer task with `setupCommands`
-5. inspect `runs/`, `state/runs.jsonl`, and the dashboard
-6. use `merge:check` before any integration
-7. harden any failure found during the dogfood run
+1. add `merge:apply --run-log=<path>`
+2. require the existing `merge:check` result to pass before merge
+3. run post-merge verify commands from the task
+4. keep `merge:push` as a separate command
+5. preserve a manual BK decision point before integration
 
 The detailed next plan is in [NEXT_PLAN.md](NEXT_PLAN.md).

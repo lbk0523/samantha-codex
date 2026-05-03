@@ -37,8 +37,10 @@ describe("codex dispatch preparation", () => {
 
     expect(prompt).toContain("Samantha owns orchestration");
     expect(prompt).toContain("Do not create worktrees");
+    expect(prompt).toContain("Do not commit or push");
     expect(prompt).toContain("src/lib/codex-dispatch.ts");
     expect(prompt).toContain("Setup commands already run by Samantha");
+    expect(prompt).toContain("Samantha commit subject after gates pass");
     expect(prompt).toContain("HARNESS_RESULT");
   });
 

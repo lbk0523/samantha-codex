@@ -1,5 +1,4 @@
 import type { AgentProfile, TaskSpec, WorktreeAllocation } from "./contracts";
-import { join } from "node:path";
 import { prepareCodexDispatch, type PreparedCodexDispatch } from "./codex-dispatch";
 import { gitHead } from "./git";
 import { validateDispatch } from "./policy";
@@ -34,7 +33,16 @@ export interface WorkerDispatchExecution {
   setupResults: CommandRunResult[];
   command?: CommandRunResult;
   evaluation?: WorkerResultEvaluation;
+  commit?: WorkerCommitResult;
   pass: boolean;
+}
+
+export interface WorkerCommitResult {
+  subject: string;
+  files: string[];
+  add: CommandRunResult;
+  commit: CommandRunResult;
+  commitHash: string;
 }
 
 export async function prepareWorkerDispatch(
@@ -61,9 +69,7 @@ export async function prepareWorkerDispatch(
     agentId: input.agent.id,
     worktreePath,
     allocation,
-    codex: prepareCodexDispatch(input.task, input.agent, worktreePath, {
-      gitMetadataDir: allocation && input.agent.writerClass === "writer" ? join(input.repoRoot, ".git") : undefined,
-    }),
+    codex: prepareCodexDispatch(input.task, input.agent, worktreePath),
   };
 }
 
@@ -98,6 +104,44 @@ export async function runSetupCommands(commands: string[], cwd: string): Promise
   return results;
 }
 
+function commitSubjectForTask(task: TaskSpec): string {
+  return task.expectedCommitSubject ?? `samantha: ${task.title}`;
+}
+
+export async function commitWorkerChanges(input: {
+  task: TaskSpec;
+  cwd: string;
+  files: string[];
+}): Promise<WorkerCommitResult> {
+  const files = [...input.files].sort();
+  const subject = commitSubjectForTask(input.task);
+  const add = files.length > 0
+    ? await runCommand(["git", "add", "--", ...files], { cwd: input.cwd })
+    : {
+        command: ["git", "add", "--"],
+        exitCode: 1,
+        stdout: "",
+        stderr: "no changed files to commit",
+      };
+  const commit = add.exitCode === 0
+    ? await runCommand(["git", "commit", "-m", subject], { cwd: input.cwd })
+    : {
+        command: ["git", "commit", "-m", subject],
+        exitCode: 1,
+        stdout: "",
+        stderr: "skipped because git add failed",
+      };
+  const commitHash = commit.exitCode === 0 ? await gitHead(input.cwd) : "";
+
+  return {
+    subject,
+    files,
+    add,
+    commit,
+    commitHash,
+  };
+}
+
 export async function executeWorkerDispatch(input: PrepareWorkerDispatchInput): Promise<WorkerDispatchExecution> {
   const preparation = await prepareWorkerDispatch(input);
   const baseCommit = preparation.allocation?.baseCommit ?? (await gitHead(preparation.worktreePath));
@@ -118,12 +162,22 @@ export async function executeWorkerDispatch(input: PrepareWorkerDispatchInput): 
     baseCommit,
     output,
   });
+  const commit =
+    evaluation.pass && preparation.allocation && input.agent.writerClass === "writer"
+      ? await commitWorkerChanges({
+          task: input.task,
+          cwd: preparation.worktreePath,
+          files: evaluation.changedFiles,
+        })
+      : undefined;
+  const commitPassed = !commit || (commit.add.exitCode === 0 && commit.commit.exitCode === 0);
 
   return {
     preparation,
     setupResults,
     command,
     evaluation,
-    pass: command.exitCode === 0 && evaluation.pass,
+    commit,
+    pass: command.exitCode === 0 && evaluation.pass && commitPassed,
   };
 }

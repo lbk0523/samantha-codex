@@ -9,6 +9,7 @@ export type RunOutcome =
   | "missing_harness_result"
   | "scope_failed"
   | "verify_failed"
+  | "commit_failed"
   | "rework"
   | "blocked"
   | "failed";
@@ -81,6 +82,18 @@ function firstFailedVerify(input: WorkerRunLogInput): string | undefined {
   return `verify command failed (${failed.exitCode}): ${failed.command}`;
 }
 
+function failedCommit(input: WorkerRunLogInput): string | undefined {
+  const commit = input.execution.commit;
+  if (!commit) return undefined;
+  if (commit.add.exitCode !== 0) {
+    return `git add failed (${commit.add.exitCode}): ${commit.add.stderr.trim()}`;
+  }
+  if (commit.commit.exitCode !== 0) {
+    return `git commit failed (${commit.commit.exitCode}): ${commit.commit.stderr.trim()}`;
+  }
+  return undefined;
+}
+
 export function summarizeWorkerRun(input: WorkerRunLogInput & { runId: string; logPath: string }): RunSummary {
   const execution = input.execution;
   const evaluation = execution.evaluation;
@@ -105,6 +118,8 @@ export function summarizeWorkerRun(input: WorkerRunLogInput & { runId: string; l
     failureReason = `${evaluation.scopeViolations.length} scope violation(s)`;
   } else if ((failureReason = firstFailedVerify(input))) {
     outcome = "verify_failed";
+  } else if ((failureReason = failedCommit(input))) {
+    outcome = "commit_failed";
   } else if (evaluation?.harness?.status === "rework") {
     outcome = "rework";
     failureReason = evaluation.harness.note;
@@ -126,7 +141,7 @@ export function summarizeWorkerRun(input: WorkerRunLogInput & { runId: string; l
     finishedAt: input.finishedAt,
     outcome,
     pass: execution.pass,
-    commit: evaluation?.harness?.commit ?? "",
+    commit: execution.commit?.commitHash ?? evaluation?.harness?.commit ?? "",
     failureReason,
   };
 }

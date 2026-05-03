@@ -67,10 +67,17 @@ async function makeRepo(): Promise<{ root: string; baseCommit: string; workerCom
       command: { command: ["codex", "exec"], exitCode: 0, stdout: "", stderr: "" },
       evaluation: {
         pass: true,
-        harness: { status: "pass", note: "ok", commit: workerCommit },
+        harness: { status: "pass", note: "ok", commit: "" },
         changedFiles: ["allowed.txt"],
         scopeViolations: [],
         verifyResults: [],
+      },
+      commit: {
+        subject: "feat: worker change",
+        files: ["allowed.txt"],
+        add: { command: ["git", "add", "--", "allowed.txt"], exitCode: 0, stdout: "", stderr: "" },
+        commit: { command: ["git", "commit", "-m", "feat: worker change"], exitCode: 0, stdout: "", stderr: "" },
+        commitHash: workerCommit,
       },
       pass: true,
     },

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import { git } from "../src/lib/git";
-import { prepareWorkerDispatch, runCommand, runSetupCommands } from "../src/lib/worker-dispatch";
+import { commitWorkerChanges, prepareWorkerDispatch, runCommand, runSetupCommands } from "../src/lib/worker-dispatch";
 
 const agent: AgentProfile = {
   id: "codex-worker",
@@ -82,7 +82,7 @@ describe("prepareWorkerDispatch", () => {
     expect(prepared.codex.command).not.toContain("--add-dir");
   });
 
-  test("adds git metadata write access only for allocated writers", async () => {
+  test("does not grant git metadata write access to worker agents", async () => {
     const root = await makeRepo();
     try {
       const writer = await prepareWorkerDispatch({
@@ -111,7 +111,7 @@ describe("prepareWorkerDispatch", () => {
         allocate: true,
       });
 
-      expect(writer.codex.command).toContain("--add-dir");
+      expect(writer.codex.command).not.toContain("--add-dir");
       expect(reviewer.codex.command).not.toContain("--add-dir");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -140,5 +140,25 @@ describe("prepareWorkerDispatch", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0]?.exitCode).toBe(7);
+  });
+
+  test("creates a Samantha-owned commit from evaluated worker files", async () => {
+    const root = await makeRepo();
+    try {
+      await writeFile(join(root, "README.md"), "changed\n", "utf8");
+
+      const result = await commitWorkerChanges({
+        task: { ...task, expectedCommitSubject: "test: commit worker files" },
+        cwd: root,
+        files: ["README.md"],
+      });
+
+      expect(result.add.exitCode).toBe(0);
+      expect(result.commit.exitCode).toBe(0);
+      expect(result.commitHash).toHaveLength(40);
+      expect(await git(["log", "-1", "--pretty=%s"], root)).toBe("test: commit worker files");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

@@ -8,7 +8,7 @@ export interface PreparedCodexDispatch {
 export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): string {
   const writeBoundary =
     agent.writerClass === "writer"
-      ? "Do not create worktrees. Do not dispatch subagents. Do not push. Do not modify files outside targetFiles."
+      ? "Do not create worktrees. Do not dispatch subagents. Do not commit or push. Samantha creates the commit after safety gates pass. Do not modify files outside targetFiles."
       : "This is a non-writer task. Do not edit, create, delete, format, commit, push, or move files.";
   const targetFiles =
     task.targetFiles.length > 0
@@ -52,11 +52,12 @@ export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): str
     ...verifyCommands,
     "",
     task.expectedCommitSubject
-      ? `Commit subject: ${task.expectedCommitSubject}`
-      : "Commit subject: use a concise subject that matches the task.",
+      ? `Samantha commit subject after gates pass: ${task.expectedCommitSubject}`
+      : "Samantha will choose a concise commit subject after gates pass.",
     "",
     "Before final response, run the verify commands if you changed files.",
     "Final response must include:",
+    "Use an empty commit value; Samantha records the commit after gates pass.",
     'HARNESS_RESULT: {"status":"pass|rework|blocked","note":"short","commit":"<hash-or-empty>"}',
   ].join("\n");
 }
@@ -65,7 +66,6 @@ export function buildCodexExecCommand(input: {
   agent: AgentProfile;
   worktreePath: string;
   prompt: string;
-  gitMetadataDir?: string;
 }): string[] {
   const command = [
     "codex",
@@ -75,10 +75,6 @@ export function buildCodexExecCommand(input: {
     "--sandbox",
     "workspace-write",
   ];
-
-  if (input.gitMetadataDir) {
-    command.push("--add-dir", input.gitMetadataDir);
-  }
 
   command.push("--json");
 
@@ -97,7 +93,6 @@ export function prepareCodexDispatch(
   task: TaskSpec,
   agent: AgentProfile,
   worktreePath: string,
-  options: { gitMetadataDir?: string } = {},
 ): PreparedCodexDispatch {
   const prompt = buildCodexWorkerPrompt(task, agent);
   return {
@@ -106,7 +101,6 @@ export function prepareCodexDispatch(
       agent,
       worktreePath,
       prompt,
-      gitMetadataDir: options.gitMetadataDir,
     }),
   };
 }

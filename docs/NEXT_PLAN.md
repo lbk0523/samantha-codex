@@ -24,7 +24,7 @@ The next plan should not jump directly to Telegram or autonomous merging. The ne
 - The old `omht-schema-07-new-block-fixture-canary` task must not be rerun because it was already applied.
 - Read-only reviewer dogfood suggested a good next write candidate: schema `0.7` should reject unknown `document_blocks[].type`.
 - Non-writer agents no longer receive parent `.git` metadata write access.
-- Writer agents still need parent `.git` metadata access to create commits from allocated worktrees.
+- Writer agents do not receive parent `.git` metadata access. They edit and verify files only; Samantha creates commits after scope and verify gates pass.
 
 ## Objective
 
@@ -62,8 +62,8 @@ Instructions:
 - add one tests-only negative canary
 - prove `LLMOutputSchema` rejects an unknown `document_blocks[].type` under `schema_version: "0.7"`
 - do not modify production code or schema code
-- create exactly one commit
-- do not push
+- do not commit or push
+- Samantha creates the commit with the expected subject after gates pass
 
 Setup commands:
 
@@ -108,7 +108,7 @@ Success criteria:
 
 - `pass` is `true`
 - `runSummary.outcome` is `pass`
-- `runSummary.commit` is non-empty
+- `runSummary.commit` is non-empty after Samantha-owned commit creation
 - changed files are exactly within target files
 - verify commands pass in Samantha evaluation
 - full run log exists under `runs/`
@@ -119,7 +119,7 @@ Critical stop conditions:
 - production code changes
 - files outside `targetFiles`
 - verify commands fail but run summary says pass
-- worker pushes
+- worker commits or pushes
 - target repo main becomes dirty
 
 ## Stage C: Merge Gate Review
@@ -239,6 +239,29 @@ The next cycle is complete when:
 - no automatic merge or push happens without BK approval
 - any hardening fix is committed and pushed
 
+## Execution Notes
+
+This cycle revealed that Codex CLI sandboxing still blocks worker writes to parent worktree Git metadata, even when explicit Git metadata paths are supplied through `--add-dir`.
+
+The safer design is now:
+
+- worker agents edit files and run verification only
+- worker agents do not commit or push
+- Samantha creates the task commit after `HARNESS_RESULT`, scope checks, and verify commands pass
+- merge gate reads Samantha-owned commit metadata from the run log
+
+The fresh writer dogfood passed with commit:
+
+```text
+61824293b56fdf8ed84258c70de419b6f4353171
+```
+
+The merge candidate remained manual:
+
+```bash
+git merge --ff-only 61824293b56fdf8ed84258c70de419b6f4353171
+```
+
 ## Recommended Next Action
 
-Implement Stage A first: add the writer task JSON for `omht-schema-07-unknown-block-negative-canary`, dry-run it, then ask BK only if the task contract itself looks risky. If it is clean, proceed to Stage B execution.
+Next, add explicit `merge:apply` and `merge:push` commands as separate gated operations. Do not combine merge and push.
