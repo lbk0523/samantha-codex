@@ -353,6 +353,52 @@ Pass criteria:
 - `command` is `git merge --ff-only <commit>`
 - no merge is executed during this scenario
 
+## Scenario 12: Merge Apply Gate
+
+Goal: apply an approved passing writer run without combining merge and push.
+
+Command:
+
+```bash
+cd /home/lbk0523/projects/samantha-codex
+bun run samantha merge:apply \
+  --run-log=<writer-run-log-path> \
+  --repo-root=/home/lbk0523/projects/oh-my-health-trainer
+```
+
+Pass criteria:
+
+- `gate.mayMerge` is `true`
+- `applied` is `true`
+- `verified` is `true`
+- `headAfter` matches `gate.commit`
+- task verify commands run after the fast-forward merge
+- no push is executed
+
+Only run this scenario after BK approves integrating the writer commit.
+
+## Scenario 13: Merge Push Gate
+
+Goal: push an already accepted main branch separately from merge application.
+
+Command:
+
+```bash
+cd /home/lbk0523/projects/samantha-codex
+bun run samantha merge:push \
+  --repo-root=/home/lbk0523/projects/oh-my-health-trainer \
+  --remote=origin \
+  --branch=main
+```
+
+Pass criteria:
+
+- target repo is on `main`
+- target repo is clean
+- push command exits `0`
+
+Only run this scenario after BK approves pushing the integrated main branch.
+
 ## Stop Conditions
 
 Stop dogfood and fix Samantha before continuing if any of these happen:
@@ -361,6 +407,8 @@ Stop dogfood and fix Samantha before continuing if any of these happen:
 - run summary says pass but full log shows failed verify
 - dashboard omits a failed run
 - `merge:check` allows a no-commit read-only run
+- `merge:apply` applies a blocked run
+- `merge:push` pushes from a dirty worktree or wrong branch
 - remote command can create arbitrary shell execution
 - writer task modifies files outside `targetFiles`
 - target repo main worktree becomes dirty unexpectedly
@@ -379,10 +427,12 @@ After Scenarios 0-8, Samantha should demonstrate:
 - read-only dashboard generation
 - conservative merge gating
 
-After Scenarios 9-11, Samantha should additionally demonstrate:
+After Scenarios 9-13, Samantha should additionally demonstrate:
 
 - real Codex writer execution
 - Samantha-owned commit creation
 - positive merge candidate detection without automatic merge
+- explicit merge application with post-merge verification
+- separate clean-worktree push gating
 
-At that point the next engineering step is an explicit `merge:apply` gate followed by a separate `merge:push` gate.
+At that point the next engineering step is completed-worktree cleanup and daemon hardening.

@@ -162,9 +162,9 @@ Success criteria:
 
 ## Stage E: Integration Gate Design
 
-After one writer dogfood passes and BK approves the integration model, design a separate integration gate.
+After one writer dogfood passes and BK approves the integration model, use separate integration gates.
 
-Initial commands should be explicit:
+Implemented commands:
 
 ```text
 merge:check
@@ -182,6 +182,12 @@ Policy:
 - push remains separate from merge
 
 Do not combine merge and push in one command yet.
+
+Current behavior:
+
+- `merge:check` returns the fast-forward candidate without changing the target repo.
+- `merge:apply` reuses `merge:check`, executes `git merge --ff-only <commit>`, then runs the task `verifyCommands` on the target main worktree.
+- `merge:push` checks branch and clean worktree state, then runs `git push <remote> <branch>`.
 
 ## Stage F: Daemon Packaging
 
@@ -264,4 +270,4 @@ git merge --ff-only 61824293b56fdf8ed84258c70de419b6f4353171
 
 ## Recommended Next Action
 
-Next, add explicit `merge:apply` and `merge:push` commands as separate gated operations. Do not combine merge and push.
+Next, dogfood `merge:apply` against the approved OMHT writer run, then decide separately whether to run `merge:push`.

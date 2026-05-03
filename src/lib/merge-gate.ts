@@ -16,6 +16,46 @@ export interface MergeGateResult {
   violations: string[];
 }
 
+export interface MergeCommandResult {
+  command: string[];
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface MergeVerifyResult {
+  command: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface MergeApplyResult {
+  gate: MergeGateResult;
+  applied: boolean;
+  verified: boolean;
+  merge?: MergeCommandResult;
+  verifyResults: MergeVerifyResult[];
+  headBefore?: string;
+  headAfter?: string;
+  violations: string[];
+}
+
+export interface MergePushInput {
+  repoRoot: string;
+  remote?: string;
+  branch?: string;
+}
+
+export interface MergePushResult {
+  mayPush: boolean;
+  remote: string;
+  branch: string;
+  command?: string[];
+  push?: MergeCommandResult;
+  violations: string[];
+}
+
 async function gitSucceeds(args: string[], cwd: string): Promise<boolean> {
   try {
     await git(args, cwd);
@@ -23,6 +63,32 @@ async function gitSucceeds(args: string[], cwd: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function runCommand(command: string[], cwd: string): Promise<MergeCommandResult> {
+  const child = Bun.spawn(command, {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+
+  return { command, exitCode, stdout, stderr };
+}
+
+async function runVerifyCommand(command: string, cwd: string): Promise<MergeVerifyResult> {
+  const result = await runCommand(["bash", "-lc", command], cwd);
+  return {
+    command,
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 }
 
 export async function readWorkerRunLog(path: string): Promise<WorkerRunLog> {
@@ -76,6 +142,94 @@ export async function evaluateMergeGate(input: MergeGateInput): Promise<MergeGat
     targetBranch,
     commit,
     command: violations.length === 0 ? ["git", "merge", "--ff-only", commit] : undefined,
+    violations,
+  };
+}
+
+export async function applyMerge(input: MergeGateInput): Promise<MergeApplyResult> {
+  const [gate, log] = await Promise.all([evaluateMergeGate(input), readWorkerRunLog(input.runLogPath)]);
+  const violations = [...gate.violations];
+
+  if (!gate.mayMerge || !gate.command) {
+    return {
+      gate,
+      applied: false,
+      verified: false,
+      verifyResults: [],
+      violations,
+    };
+  }
+
+  const headBefore = await gitHead(input.repoRoot);
+  const merge = await runCommand(gate.command, input.repoRoot);
+  const headAfter = await gitHead(input.repoRoot);
+  if (merge.exitCode !== 0) {
+    return {
+      gate,
+      applied: false,
+      verified: false,
+      merge,
+      verifyResults: [],
+      headBefore,
+      headAfter,
+      violations: [...violations, `merge command failed (${merge.exitCode})`],
+    };
+  }
+
+  const verifyResults = await Promise.all(log.task.verifyCommands.map((command) => runVerifyCommand(command, input.repoRoot)));
+  const failedVerify = verifyResults.find((result) => result.exitCode !== 0);
+  if (failedVerify) {
+    violations.push(`post-merge verify command failed (${failedVerify.exitCode}): ${failedVerify.command}`);
+  }
+
+  return {
+    gate,
+    applied: true,
+    verified: !failedVerify,
+    merge,
+    verifyResults,
+    headBefore,
+    headAfter,
+    violations,
+  };
+}
+
+export async function pushMerge(input: MergePushInput): Promise<MergePushResult> {
+  const remote = input.remote ?? "origin";
+  const branch = input.branch ?? "main";
+  const violations: string[] = [];
+
+  const currentBranch = await git(["branch", "--show-current"], input.repoRoot);
+  if (currentBranch !== branch) {
+    violations.push(`target repo is on ${currentBranch || "(detached)"}, expected ${branch}`);
+  }
+
+  const status = await gitRaw(["status", "--porcelain"], input.repoRoot);
+  if (status.trim().length > 0) {
+    violations.push("target repo has uncommitted changes");
+  }
+
+  const command = ["git", "push", remote, branch];
+  if (violations.length > 0) {
+    return {
+      mayPush: false,
+      remote,
+      branch,
+      violations,
+    };
+  }
+
+  const push = await runCommand(command, input.repoRoot);
+  if (push.exitCode !== 0) {
+    violations.push(`push command failed (${push.exitCode})`);
+  }
+
+  return {
+    mayPush: violations.length === 0,
+    remote,
+    branch,
+    command,
+    push,
     violations,
   };
 }

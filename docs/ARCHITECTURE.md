@@ -80,6 +80,8 @@ The current operator surface includes:
 
 - run and task ledger inspection
 - merge candidate checks
+- explicit fast-forward merge application
+- separate clean-branch push gating
 - multi-task plan execution
 - local inbox processing
 - remote command enqueueing into the inbox
@@ -94,3 +96,6 @@ Samantha accepts a worker run only when all of these pass:
 3. changed files since the task base commit do not match `forbiddenChanges`
 4. changed files stay inside `targetFiles`
 5. every `verifyCommand` exits with code `0`
+6. Samantha creates the writer commit after gates pass
+
+Worker agents do not commit or push. Integration is split across `merge:check`, `merge:apply`, and `merge:push`.

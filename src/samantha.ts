@@ -4,7 +4,7 @@ import type { TaskSpec } from "./lib/contracts";
 import { writeDashboard } from "./lib/dashboard";
 import { processInbox, type InboxCommand } from "./lib/inbox";
 import { RunIndex } from "./lib/ledger";
-import { evaluateMergeGate } from "./lib/merge-gate";
+import { applyMerge, evaluateMergeGate, pushMerge } from "./lib/merge-gate";
 import { runPlan } from "./lib/plan-runner";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { TaskStore } from "./lib/task-store";
@@ -136,6 +136,28 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "merge:apply") {
+    printJson(
+      await applyMerge({
+        runLogPath: resolve(flag(args, "run-log", "")),
+        repoRoot: resolve(flag(args, "repo-root", ".")),
+        targetBranch: flag(args, "target-branch", "main"),
+      }),
+    );
+    return;
+  }
+
+  if (args.command === "merge:push") {
+    printJson(
+      await pushMerge({
+        repoRoot: resolve(flag(args, "repo-root", ".")),
+        remote: flag(args, "remote", "origin"),
+        branch: flag(args, "branch", "main"),
+      }),
+    );
+    return;
+  }
+
   if (args.command === "plan:run") {
     const planPath = args.positionals[0];
     if (!planPath) throw new Error("usage: plan:run <plan.json> [--execute]");
@@ -203,6 +225,8 @@ async function main(): Promise<void> {
       "  tasks:list",
       "  tasks:show <task-id>",
       "  merge:check --run-log=<path> --repo-root=<repo>",
+      "  merge:apply --run-log=<path> --repo-root=<repo>",
+      "  merge:push --repo-root=<repo> [--remote=origin] [--branch=main]",
       "  plan:run <plan.json> [--execute]",
       "  inbox:process",
       "  inbox:watch",

@@ -101,7 +101,7 @@ Success criteria:
 
 ### Phase 3: Merge Gate
 
-MVP status: implemented as `merge:check`. Actual merge execution remains intentionally separate.
+MVP status: implemented as `merge:check`, `merge:apply`, and separate `merge:push`.
 
 Goal: move from "worker produced a pass result" to "Samantha can safely prepare integration."
 
@@ -111,15 +111,17 @@ Build:
 - clean-main-worktree check
 - base commit check
 - target branch check
-- fast-forward merge where possible
+- fast-forward merge apply
 - cherry-pick fallback only with explicit policy
 - post-merge verify commands
-- push stays separate until the gate is proven
+- push stays separate from merge
 
 Success criteria:
 
 - Samantha can say "safe to merge", "blocked", or "needs human decision" with concrete reasons
 - no worker can merge or push independently
+- `merge:apply` runs task verify commands after the fast-forward merge
+- `merge:push` refuses dirty worktrees and branch mismatches
 
 ### Phase 4: Plan Runner
 
@@ -227,14 +229,13 @@ Do not prioritize these until writer dogfood proves the control plane can handle
 
 ## Immediate Next Step
 
-Add explicit merge application commands now that a fresh writer dogfood task has passed.
+Dogfood the explicit merge application commands now that they exist.
 
 The practical next implementation should:
 
-1. add `merge:apply --run-log=<path>`
-2. require the existing `merge:check` result to pass before merge
-3. run post-merge verify commands from the task
-4. keep `merge:push` as a separate command
-5. preserve a manual BK decision point before integration
+1. run `merge:apply --run-log=<path>` only after BK approves integrating the writer branch
+2. confirm post-merge verify commands pass on the target main worktree
+3. run `merge:push --repo-root=<repo> --remote=origin --branch=main` only after the merge result is accepted
+4. keep cleanup of completed Samantha worktrees as a separate follow-up
 
 The detailed next plan is in [NEXT_PLAN.md](NEXT_PLAN.md).
