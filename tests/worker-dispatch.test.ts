@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
-import { prepareWorkerDispatch } from "../src/lib/worker-dispatch";
+import { prepareWorkerDispatch, runCommand } from "../src/lib/worker-dispatch";
 
 const agent: AgentProfile = {
   id: "codex-worker",
@@ -54,5 +54,13 @@ describe("prepareWorkerDispatch", () => {
         allocate: false,
       }),
     ).rejects.toThrow("writer tasks must declare forbiddenChanges");
+  });
+
+  test("captures command stdout, stderr, and exit code", async () => {
+    const result = await runCommand(["bash", "-lc", "echo out && echo err >&2"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe("out");
+    expect(result.stderr.trim()).toBe("err");
   });
 });

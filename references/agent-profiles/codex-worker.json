@@ -2,7 +2,6 @@
   "id": "codex-worker",
   "role": "writer",
   "model": "gpt-5.5",
-  "codexProfile": "default",
   "writerClass": "writer",
   "worktreePolicy": "per-task",
   "mergePolicy": "samantha-controlled",

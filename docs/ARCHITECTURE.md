@@ -70,7 +70,7 @@ It currently:
 4. prepares the task worktree path, or allocates it with `--allocate`
 5. prints the exact `codex exec` command Samantha would run
 
-It does not yet execute Codex. That keeps the first milestone focused on deterministic preparation and worktree isolation.
+With `--execute`, it also runs the prepared `codex exec` command and evaluates the captured output.
 
 ## Worker Result Gate
 

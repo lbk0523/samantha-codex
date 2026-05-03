@@ -6,7 +6,6 @@ const agent: AgentProfile = {
   id: "codex-worker",
   role: "writer",
   model: "gpt-5.5",
-  codexProfile: "default",
   writerClass: "writer",
   worktreePolicy: "per-task",
   mergePolicy: "samantha-controlled",
@@ -45,17 +44,15 @@ describe("codex dispatch preparation", () => {
   test("builds a non-interactive codex exec command rooted at the worktree", () => {
     const prepared = prepareCodexDispatch(task, agent, "/tmp/samantha-worktree");
 
-    expect(prepared.command.slice(0, 8)).toEqual([
+    expect(prepared.command.slice(0, 7)).toEqual([
       "codex",
       "exec",
       "--cd",
       "/tmp/samantha-worktree",
       "--sandbox",
       "workspace-write",
-      "--ask-for-approval",
-      "never",
+      "--json",
     ]);
-    expect(prepared.command).toContain("--json");
     expect(prepared.command).toContain("--model");
     expect(prepared.command).toContain("gpt-5.5");
   });

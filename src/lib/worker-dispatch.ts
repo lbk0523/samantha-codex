@@ -1,6 +1,8 @@
 import type { AgentProfile, TaskSpec, WorktreeAllocation } from "./contracts";
 import { prepareCodexDispatch, type PreparedCodexDispatch } from "./codex-dispatch";
+import { gitHead } from "./git";
 import { validateDispatch } from "./policy";
+import { evaluateWorkerResult, type WorkerResultEvaluation } from "./worker-result";
 import { allocateWorktree, worktreePathForTask } from "./worktree";
 
 export interface PrepareWorkerDispatchInput {
@@ -17,6 +19,20 @@ export interface WorkerDispatchPreparation {
   worktreePath: string;
   allocation?: WorktreeAllocation;
   codex: PreparedCodexDispatch;
+}
+
+export interface CommandRunResult {
+  command: string[];
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface WorkerDispatchExecution {
+  preparation: WorkerDispatchPreparation;
+  command: CommandRunResult;
+  evaluation: WorkerResultEvaluation;
+  pass: boolean;
 }
 
 export async function prepareWorkerDispatch(
@@ -44,5 +60,40 @@ export async function prepareWorkerDispatch(
     worktreePath,
     allocation,
     codex: prepareCodexDispatch(input.task, input.agent, worktreePath),
+  };
+}
+
+export async function runCommand(command: string[]): Promise<CommandRunResult> {
+  const child = Bun.spawn(command, {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+
+  return { command, exitCode, stdout, stderr };
+}
+
+export async function executeWorkerDispatch(input: PrepareWorkerDispatchInput): Promise<WorkerDispatchExecution> {
+  const preparation = await prepareWorkerDispatch(input);
+  const baseCommit = preparation.allocation?.baseCommit ?? (await gitHead(preparation.worktreePath));
+  const command = await runCommand(preparation.codex.command);
+  const output = [command.stdout, command.stderr].filter(Boolean).join("\n");
+  const evaluation = await evaluateWorkerResult({
+    task: input.task,
+    cwd: preparation.worktreePath,
+    baseCommit,
+    output,
+  });
+
+  return {
+    preparation,
+    command,
+    evaluation,
+    pass: command.exitCode === 0 && evaluation.pass,
   };
 }

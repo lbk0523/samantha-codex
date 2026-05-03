@@ -14,7 +14,8 @@ function isHarnessStatus(value: unknown): value is HarnessStatus {
 }
 
 export function parseHarnessResult(output: string): HarnessResult {
-  const match = output.match(RESULT_RE);
+  const searchable = [output, extractCodexJsonlText(output)].filter(Boolean).join("\n");
+  const match = searchable.match(RESULT_RE);
   if (!match?.[1]) {
     throw new HarnessResultParseError("missing HARNESS_RESULT line");
   }
@@ -42,4 +43,25 @@ export function parseHarnessResult(output: string): HarnessResult {
     note: typeof result.note === "string" ? result.note : "",
     commit: typeof result.commit === "string" ? result.commit : "",
   };
+}
+
+function extractCodexJsonlText(output: string): string {
+  const texts: string[] = [];
+  for (const line of output.split("\n")) {
+    if (!line.trim().startsWith("{")) continue;
+    try {
+      const event = JSON.parse(line) as {
+        item?: {
+          type?: unknown;
+          text?: unknown;
+        };
+      };
+      if (event.item?.type === "agent_message" && typeof event.item.text === "string") {
+        texts.push(event.item.text);
+      }
+    } catch {
+      // Non-JSON diagnostic lines may be mixed into stdout/stderr.
+    }
+  }
+  return texts.join("\n");
 }

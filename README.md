@@ -18,7 +18,7 @@ This repository starts with the control-plane contract, not a full multi-agent r
 
 ```bash
 bun typecheck
-bun test
+bun run test
 bun run src/index.ts validate-fixture
 bun run dispatch-worker --task=references/tasks/fixture-single-writer.json --agent=references/agent-profiles/codex-worker.json --repo-root=.
 ```
@@ -35,6 +35,16 @@ bun run dispatch-worker \
 ```
 
 After the repository has an initial commit, add `--allocate` to create a task worktree.
+
+Add `--execute` to run the prepared `codex exec` command and evaluate the worker output:
+
+```bash
+bun run dispatch-worker \
+  --task=references/tasks/fixture-single-writer.json \
+  --agent=references/agent-profiles/codex-worker.json \
+  --repo-root=. \
+  --execute
+```
 
 ## Design Notes
 

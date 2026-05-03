@@ -1,13 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
-import { prepareWorkerDispatch } from "./lib/worker-dispatch";
+import { executeWorkerDispatch, prepareWorkerDispatch } from "./lib/worker-dispatch";
 
 interface Args {
   task: string;
   agent: string;
   repoRoot: string;
   allocate: boolean;
+  execute: boolean;
   worktreesDir?: string;
 }
 
@@ -28,7 +29,7 @@ function parseArgs(argv: string[]): Args {
   const repoRoot = values.get("repo-root");
   if (typeof task !== "string" || typeof agent !== "string" || typeof repoRoot !== "string") {
     throw new Error(
-      "usage: bun run src/dispatch-worker.ts --task=<task.json> --agent=<profile.json> --repo-root=<repo> [--allocate] [--worktrees-dir=worktrees]",
+      "usage: bun run src/dispatch-worker.ts --task=<task.json> --agent=<profile.json> --repo-root=<repo> [--allocate] [--execute] [--worktrees-dir=worktrees]",
     );
   }
 
@@ -38,6 +39,7 @@ function parseArgs(argv: string[]): Args {
     agent,
     repoRoot,
     allocate: values.get("allocate") === true,
+    execute: values.get("execute") === true,
     worktreesDir: typeof worktreesDir === "string" ? worktreesDir : undefined,
   };
 }
@@ -52,12 +54,16 @@ const [task, agent] = await Promise.all([
   readJson<AgentProfile>(resolve(args.agent)),
 ]);
 
-const prepared = await prepareWorkerDispatch({
+const input = {
   task,
   agent,
   repoRoot: resolve(args.repoRoot),
   allocate: args.allocate,
   worktreesDir: args.worktreesDir,
-});
+};
+
+const prepared = args.execute
+  ? await executeWorkerDispatch(input)
+  : await prepareWorkerDispatch(input);
 
 console.log(JSON.stringify(prepared, null, 2));

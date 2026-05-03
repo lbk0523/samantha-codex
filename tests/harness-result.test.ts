@@ -19,4 +19,23 @@ describe("parseHarnessResult", () => {
       parseHarnessResult('HARNESS_RESULT: {"status":"done","note":"ok","commit":"abc123"}'),
     ).toThrow("status must be pass, rework, or blocked");
   });
+
+  test("parses HARNESS_RESULT from Codex JSONL agent messages", () => {
+    const output = [
+      '{"type":"thread.started","thread_id":"thread"}',
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+        type: "agent_message",
+          text: 'Done\nHARNESS_RESULT: {"status":"pass","note":"jsonl","commit":""}',
+        },
+      }),
+    ].join("\n");
+
+    expect(parseHarnessResult(output)).toEqual({
+      status: "pass",
+      note: "jsonl",
+      commit: "",
+    });
+  });
 });

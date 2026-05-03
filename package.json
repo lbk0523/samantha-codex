@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "bunx tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test --path-ignore-patterns='worktrees/**' tests",
     "dispatch-worker": "bun run src/dispatch-worker.ts",
     "validate-fixture": "bun run src/index.ts validate-fixture"
   },

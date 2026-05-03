@@ -49,8 +49,6 @@ export function buildCodexExecCommand(input: {
     input.worktreePath,
     "--sandbox",
     "workspace-write",
-    "--ask-for-approval",
-    "never",
     "--json",
   ];
 
