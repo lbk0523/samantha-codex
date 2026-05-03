@@ -23,6 +23,9 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   if (text === "/status") {
     return { id: `remote-${sanitizeTaskId(receivedAt)}-status`, type: "status:show", args: { source: "remote" } };
   }
+  if (text === "/doctor") {
+    return { id: `remote-${sanitizeTaskId(receivedAt)}-doctor`, type: "ops:doctor", args: { source: "remote" } };
+  }
   if (text === "/health") {
     return { id: `remote-${sanitizeTaskId(receivedAt)}-health`, type: "health:check", args: { source: "remote" } };
   }

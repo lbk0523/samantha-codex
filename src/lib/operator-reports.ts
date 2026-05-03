@@ -1,6 +1,7 @@
 import type { TaskSpec } from "./contracts";
 import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
+import type { OpsSnapshot } from "./ops-diagnostics";
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -45,6 +46,7 @@ export function remoteHelpReport(): string {
     "",
     "- `/help`: show this help",
     "- `/status`: show daemon and latest run summary",
+    "- `/doctor`: show local operation diagnostics",
     "- `/health`: show daemon health check",
     "- `/runs`: show recent run summaries",
     "- `/run <run-id>`: show one run summary",
@@ -123,6 +125,7 @@ export function statusReport(input: {
   runs: RunSummary[];
   heartbeat?: DaemonHeartbeat;
   pendingInboxCount: number;
+  ops?: OpsSnapshot;
 }): string {
   const latest = input.runs.at(-1);
   const failureCount = input.runs.filter((run) => !run.pass).length;
@@ -134,11 +137,28 @@ export function statusReport(input: {
     "# status",
     "",
     `Daemon heartbeat: ${code(heartbeat)}`,
+    input.ops ? `Operation health: ${input.ops.ok ? "ok" : "needs attention"}` : "",
+    input.ops ? `Doctor failures: ${input.ops.failures.length}` : "",
+    input.ops ? `Doctor warnings: ${input.ops.warnings.length}` : "",
     `Pending inbox commands: ${input.pendingInboxCount}`,
+    input.ops ? `Remote outbox reports: ${input.ops.queues.remoteOutboxCount}` : "",
+    input.ops ? `Unsent remote outbox reports: ${input.ops.queues.unsentRemoteOutboxCount}` : "",
+    input.ops
+      ? input.ops.telegram.offset?.nextOffset !== undefined
+        ? `Telegram next offset: ${input.ops.telegram.offset.nextOffset}`
+        : "Telegram next offset: missing"
+      : "",
+    input.ops
+      ? input.ops.telegram.replyState
+        ? `Telegram replies: sent=${input.ops.telegram.replyState.sentFiles.length} updated=${code(input.ops.telegram.replyState.updatedAt)}`
+        : "Telegram replies: missing"
+      : "",
     `Total runs: ${input.runs.length}`,
     `Non-passing runs: ${failureCount}`,
     latest ? `Latest run: ${oneLine(runLine(latest).slice(2))}` : "Latest run: none",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function healthReport(health: DaemonHealthResult): string {
@@ -156,4 +176,52 @@ export function healthReport(health: DaemonHealthResult): string {
     ...(health.violations.length ? health.violations.map((violation) => `- ${oneLine(violation)}`) : ["- none"]),
   ];
   return lines.filter((line) => line !== "").join("\n");
+}
+
+export function doctorReport(snapshot: OpsSnapshot): string {
+  const systemdLines = snapshot.systemd.files.map(
+    (file) => `- ${file.file}: ${file.installed ? "installed" : "missing"}`,
+  );
+  return [
+    "# ops:doctor",
+    "",
+    `Overall: ${snapshot.ok ? "ok" : "needs attention"}`,
+    `Checked at: ${code(snapshot.checkedAt)}`,
+    "",
+    "Environment:",
+    `- .env file: ${snapshot.env.envFileExists ? "present" : "missing"} (${code(snapshot.env.envFilePath)})`,
+    `- TELEGRAM_BOT_TOKEN: ${snapshot.env.hasBotToken ? "present" : "missing"}`,
+    `- poll chat id: ${snapshot.env.hasPollChatId ? "present" : "missing"}`,
+    `- reply chat id: ${snapshot.env.hasReplyChatId ? "present" : "missing"}`,
+    "",
+    "Daemon:",
+    `- health: ${snapshot.health.ok ? "ok" : "failed"}`,
+    snapshot.health.ageMs !== undefined ? `- heartbeat age: ${snapshot.health.ageMs}ms` : "- heartbeat age: unknown",
+    snapshot.health.heartbeat
+      ? `- heartbeat: ${code(`${snapshot.health.heartbeat.status} pid=${snapshot.health.heartbeat.pid} updated=${snapshot.health.heartbeat.updatedAt}`)}`
+      : "- heartbeat: missing",
+    "",
+    "Queues:",
+    `- pending inbox: ${snapshot.queues.pendingInboxCount}`,
+    `- outbox reports: ${snapshot.queues.outboxCount}`,
+    `- remote outbox reports: ${snapshot.queues.remoteOutboxCount}`,
+    `- unsent remote outbox reports: ${snapshot.queues.unsentRemoteOutboxCount}`,
+    "",
+    "Telegram state:",
+    snapshot.telegram.offset?.nextOffset !== undefined
+      ? `- next offset: ${snapshot.telegram.offset.nextOffset}`
+      : "- next offset: missing",
+    snapshot.telegram.replyState
+      ? `- replies: sent=${snapshot.telegram.replyState.sentFiles.length} updated=${code(snapshot.telegram.replyState.updatedAt)}`
+      : "- replies: missing",
+    "",
+    "systemd templates:",
+    ...systemdLines,
+    "",
+    "Failures:",
+    ...(snapshot.failures.length ? snapshot.failures.map((failure) => `- ${oneLine(failure)}`) : ["- none"]),
+    "",
+    "Warnings:",
+    ...(snapshot.warnings.length ? snapshot.warnings.map((warning) => `- ${oneLine(warning)}`) : ["- none"]),
+  ].join("\n");
 }

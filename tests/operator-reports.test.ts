@@ -3,6 +3,7 @@ import type { TaskSpec } from "../src/lib/contracts";
 import type { DaemonHealthResult, DaemonHeartbeat } from "../src/lib/daemon";
 import type { RunSummary } from "../src/lib/ledger";
 import {
+  doctorReport,
   failuresReport,
   healthReport,
   remoteHelpReport,
@@ -11,6 +12,7 @@ import {
   statusReport,
   tasksListReport,
 } from "../src/lib/operator-reports";
+import type { OpsSnapshot } from "../src/lib/ops-diagnostics";
 
 const passRun: RunSummary = {
   schemaVersion: 1,
@@ -84,9 +86,37 @@ describe("operator reports", () => {
   });
 
   test("renders daemon status and health reports", () => {
-    const status = statusReport({ runs: [passRun, failRun], heartbeat, pendingInboxCount: 2 });
+    const ops: OpsSnapshot = {
+      ok: true,
+      checkedAt: "2026-05-03T10:03:00.000Z",
+      env: {
+        envFilePath: "/repo/.env",
+        envFileExists: true,
+        hasBotToken: true,
+        hasPollChatId: true,
+        hasReplyChatId: true,
+      },
+      health: { ok: true, heartbeat, ageMs: 1000, violations: [] },
+      queues: {
+        pendingInboxCount: 2,
+        outboxCount: 5,
+        remoteOutboxCount: 4,
+        unsentRemoteOutboxCount: 1,
+      },
+      telegram: {
+        offset: { nextOffset: 42 },
+        replyState: { schemaVersion: 1, sentFiles: ["remote-a.md"], updatedAt: "2026-05-03T10:02:00.000Z" },
+      },
+      systemd: { directory: "/systemd", files: [{ file: "samantha-inbox-watch.service", installed: true }] },
+      warnings: [],
+      failures: [],
+    };
+    const status = statusReport({ runs: [passRun, failRun], heartbeat, pendingInboxCount: 2, ops });
     expect(status).toContain("Pending inbox commands: 2");
+    expect(status).toContain("Operation health: ok");
     expect(status).toContain("Non-passing runs: 1");
+    expect(status).toContain("Telegram next offset: 42");
+    expect(status).toContain("Unsent remote outbox reports: 1");
 
     const health: DaemonHealthResult = {
       ok: false,
@@ -96,6 +126,8 @@ describe("operator reports", () => {
     };
     expect(healthReport(health)).toContain("OK: no");
     expect(healthReport(health)).toContain("heartbeat is stale");
+    expect(doctorReport(ops)).toContain("Overall: ok");
+    expect(doctorReport(ops)).toContain("TELEGRAM_BOT_TOKEN: present");
   });
 
   test("renders task summaries", () => {

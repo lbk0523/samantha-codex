@@ -7,6 +7,7 @@ import { processInbox, type InboxCommand } from "./lib/inbox";
 import { RunIndex } from "./lib/ledger";
 import { applyMerge, evaluateMergeGate, pushMerge } from "./lib/merge-gate";
 import {
+  doctorReport,
   failuresReport,
   healthReport,
   remoteHelpReport,
@@ -16,6 +17,7 @@ import {
   tasksListReport,
   taskShowReport,
 } from "./lib/operator-reports";
+import { collectOpsSnapshot } from "./lib/ops-diagnostics";
 import { runPlan } from "./lib/plan-runner";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { TaskStore } from "./lib/task-store";
@@ -85,6 +87,10 @@ function telegramRepliesPath(args: ParsedArgs): string {
   return resolve(flag(args, "telegram-replies-file", join(stateDir(args), "telegram-replies.json")));
 }
 
+function envFilePath(args: ParsedArgs): string {
+  return resolve(flag(args, "env-file", join(root, ".env")));
+}
+
 async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T;
 }
@@ -121,18 +127,35 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
   return runs.length;
 }
 
+async function collectOps(args: ParsedArgs) {
+  return collectOpsSnapshot({
+    envFilePath: envFilePath(args),
+    inboxDir: resolve(flag(args, "inbox-dir", join(root, "inbox"))),
+    outboxDir: resolve(flag(args, "outbox-dir", join(root, "outbox"))),
+    heartbeatPath: heartbeatPath(args),
+    lockPath: daemonLockPath(args),
+    telegramOffsetPath: telegramOffsetPath(args),
+    telegramRepliesPath: telegramRepliesPath(args),
+    maxAgeMs: Number(flag(args, "max-age-ms", "15000")),
+  });
+}
+
 async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Promise<string> {
   if (command.type === "remote:help") {
     return remoteHelpReport();
   }
   if (command.type === "status:show") {
     const runs = await new RunIndex(runsPath(args)).list();
-    const inboxDir = resolve(flag(args, "inbox-dir", join(root, "inbox")));
+    const ops = await collectOps(args);
     return statusReport({
       runs,
-      heartbeat: await readDaemonHeartbeat(heartbeatPath(args)),
-      pendingInboxCount: await pendingInboxCount(inboxDir),
+      heartbeat: ops.health.heartbeat,
+      pendingInboxCount: ops.queues.pendingInboxCount,
+      ops,
     });
+  }
+  if (command.type === "ops:doctor") {
+    return doctorReport(await collectOps(args));
   }
   if (command.type === "health:check") {
     return healthReport(
@@ -265,6 +288,17 @@ async function main(): Promise<void> {
     });
     printJson(result);
     if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
+  if (args.command === "doctor" || args.command === "ops:doctor") {
+    const snapshot = await collectOps(args);
+    if (args.flags.get("json") === true) {
+      printJson(snapshot);
+    } else {
+      console.log(doctorReport(snapshot));
+    }
+    if (!snapshot.ok) process.exitCode = 1;
     return;
   }
 
@@ -427,6 +461,7 @@ async function main(): Promise<void> {
       "  merge:push --repo-root=<repo> [--remote=origin] [--branch=main]",
       "  worktree:cleanup --run-log=<path> --repo-root=<repo> [--keep-branch]",
       "  health:check [--max-age-ms=15000]",
+      "  doctor [--json]",
       "  plan:run <plan.json> [--execute]",
       "  inbox:process",
       "  inbox:watch",

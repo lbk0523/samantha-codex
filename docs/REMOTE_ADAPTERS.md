@@ -18,6 +18,7 @@ The current remote command mapper supports only:
 
 - `/help`
 - `/status`
+- `/doctor`
 - `/health`
 - `/runs`
 - `/run <run-id>`
@@ -29,6 +30,10 @@ The current remote command mapper supports only:
 Unsupported commands are ignored or rejected.
 
 All supported remote commands are read-only. The broader local CLI commands for worker dispatch, merge, push, and cleanup are intentionally not exposed remotely.
+
+`/status` is the quick operational view. It includes daemon heartbeat, queue counts, latest run, Telegram offset, reply state, and unsent remote outbox count.
+
+`/doctor` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, and expected systemd template installation without printing secret values.
 
 ## Telegram Poll Adapter
 

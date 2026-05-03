@@ -20,6 +20,12 @@ Check health:
 bun run samantha health:check
 ```
 
+Run full local diagnostics:
+
+```bash
+bun run samantha doctor
+```
+
 Build dashboard with daemon status:
 
 ```bash
@@ -113,6 +119,7 @@ systemctl --user status samantha-telegram-poll.timer
 systemctl --user status samantha-telegram-reply.timer
 journalctl --user -u samantha-telegram-poll.service -n 100 --no-pager
 journalctl --user -u samantha-telegram-reply.service -n 100 --no-pager
+bun run samantha doctor
 ```
 
 The service templates are tuned for interactive latency:

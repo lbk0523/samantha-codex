@@ -113,6 +113,7 @@ describe("inbox and remote commands", () => {
     expect(command.args?.id).toBe("fixture");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/help" }, "bk").type).toBe("remote:help");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/status" }, "bk").type).toBe("status:show");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/doctor" }, "bk").type).toBe("ops:doctor");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/health" }, "bk").type).toBe("health:check");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/run run-1" }, "bk")).toMatchObject({
       type: "runs:show",

@@ -48,6 +48,7 @@ Already implemented:
 - multi-task plan runner
 - file-backed local inbox/outbox processing
 - daemon lock, heartbeat, health check, and systemd service template
+- local `doctor` diagnostics and remote `/doctor`
 - narrow remote command enqueueing
 - Telegram polling adapter with legacy `TELEGRAM_CHAT_ID` support
 - Telegram outbox reply adapter
