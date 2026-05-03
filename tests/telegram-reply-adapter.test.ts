@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { sendOutboxReplies, telegramReplyMessages } from "../src/lib/telegram-reply-adapter";
+import { copyableIdsFromReport, sendOutboxReplies, telegramReplyMessages } from "../src/lib/telegram-reply-adapter";
 
 let tmpRoots: string[] = [];
 
@@ -108,12 +108,91 @@ describe("sendOutboxReplies", () => {
     expect(result.sent[0]?.file).toBe("remote-existing.md");
   });
 
+  test("sends copyable id messages as separate Telegram sends", async () => {
+    const root = await makeRoot();
+    const outbox = join(root, "outbox");
+    const statePath = join(root, "state", "telegram-replies.json");
+    await mkdir(outbox, { recursive: true });
+    await writeFile(
+      join(outbox, "remote-propose.md"),
+      [
+        "# proposals:add",
+        "",
+        "Saved proposal: `proposal-2026-05-04t10-00-00.000z-10`",
+        "Status: `pending_review`",
+      ].join("\n"),
+      "utf8",
+    );
+    const sentBodies: unknown[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      sentBodies.push(JSON.parse(String(init?.body)));
+      return {
+        statusText: "OK",
+        json: async () => ({ ok: true }),
+      };
+    }) as unknown as typeof fetch;
+
+    const result = await sendOutboxReplies({
+      token: "token",
+      chatId: "12345",
+      outboxDir: outbox,
+      statePath,
+      sendExisting: true,
+      minAgeMs: 0,
+      fetchImpl,
+    });
+
+    expect(result.sent[0]?.messages).toBe(2);
+    expect(sentBodies.map((body) => (body as { text: string }).text)).toEqual([
+      [
+        "Samantha outbox: remote-propose.md",
+        "",
+        "# proposals:add",
+        "",
+        "Saved proposal: `proposal-2026-05-04t10-00-00.000z-10`",
+        "Status: `pending_review`",
+      ].join("\n"),
+      "proposal-2026-05-04t10-00-00.000z-10",
+    ]);
+  });
+
   test("splits long reports into multiple Telegram messages", () => {
     const messages = telegramReplyMessages("remote-long.md", "x".repeat(5000), 100);
 
     expect(messages.length).toBeGreaterThan(1);
     expect(messages.every((message) => message.length <= 100)).toBe(true);
     expect(messages[0]).toContain("part 1/");
+  });
+
+  test("extracts copyable ids without status or timestamp values", () => {
+    const ids = copyableIdsFromReport(
+      [
+        "# proposals:list",
+        "",
+        "- `proposal-1` status=`pending_review` created=`2026-05-04T10:00:00.000Z` text=Improve UX",
+        "- `proposal-2` status=`accepted` created=`2026-05-04T10:01:00.000Z` text=Add retries",
+        "Status: `accepted`",
+        "Created: `2026-05-04T10:00:00.000Z`",
+      ].join("\n"),
+    );
+
+    expect(ids).toEqual(["proposal-1", "proposal-2"]);
+  });
+
+  test("sends id-only Telegram messages after reports that return ids", () => {
+    const messages = telegramReplyMessages(
+      "remote-propose.md",
+      [
+        "# proposals:add",
+        "",
+        "Saved proposal: `proposal-2026-05-04t10-00-00.000z-10`",
+        "Status: `pending_review`",
+      ].join("\n"),
+    );
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toContain("Saved proposal:");
+    expect(messages[1]).toBe("proposal-2026-05-04t10-00-00.000z-10");
   });
 
   test("records failed sends for retry without marking the file sent", async () => {

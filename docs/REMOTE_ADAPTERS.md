@@ -110,6 +110,8 @@ The adapter only reads `outbox/remote-*.md` by default. It does not execute comm
 
 Long outbox reports are split into multiple Telegram messages instead of truncated.
 
+Reports that return proposal, run, or task IDs also send each detected ID as its own follow-up message. This keeps iPhone Telegram copy/paste practical; status values, timestamps, and paths are not sent as copy-only messages.
+
 Sent state is stored in:
 
 ```text

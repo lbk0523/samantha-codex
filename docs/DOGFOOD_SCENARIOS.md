@@ -478,6 +478,7 @@ Pass criteria:
 - `state/telegram-offset.json` is updated after a successful poll
 - `state/telegram-replies.json` prevents duplicate Telegram replies
 - long remote outbox replies are split into multiple Telegram messages instead of truncated
+- reports that return proposal, run, or task IDs also send each ID as a separate copy-only Telegram message
 - `/propose <text>` writes only to `state/proposals.jsonl` and does not dispatch a worker
 - `/accept <id>` and `/reject <id>` update proposal review state only and do not dispatch workers
 - no remote path executes shell, merge, push, cleanup, or worker dispatch directly
@@ -499,6 +500,7 @@ Stop dogfood and fix Samantha before continuing if any of these happen:
 - Telegram input bypasses the inbox or sender allowlist
 - Telegram reply sends local non-remote outbox files unexpectedly
 - Telegram reply resends the same outbox file repeatedly
+- Telegram reply sends status values, timestamps, or file paths as copy-only ID messages
 - `/propose` dispatches a worker, creates a commit, or changes project files
 - `/accept` or `/reject` dispatches a worker, creates a commit, or changes project files
 - remote command can create arbitrary shell execution

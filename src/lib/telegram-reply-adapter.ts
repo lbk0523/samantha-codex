@@ -88,16 +88,47 @@ function splitText(input: string, limit: number): string[] {
   return chunks;
 }
 
+function matchFirst(pattern: RegExp, value: string): string | undefined {
+  return pattern.exec(value)?.[1]?.trim();
+}
+
+export function copyableIdsFromReport(report: string): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: string | undefined) => {
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    ids.push(value);
+  };
+
+  for (const rawLine of report.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    push(matchFirst(/^Saved proposal:\s+`([^`]+)`$/, line));
+    push(matchFirst(/^Proposal:\s+`([^`]+)`$/, line));
+    push(matchFirst(/^Run:\s+`([^`]+)`$/, line));
+    push(matchFirst(/^Task:\s+`([^`]+)`(?:\s+-.*)?$/, line));
+    push(matchFirst(/^- `([^`]+)`\s+status=`[^`]+`\s+(?:agent|created)=/, line));
+    push(matchFirst(/^- `([^`]+)`\s+outcome=`[^`]+`/, line));
+    push(matchFirst(/^- latest:\s+`([^`]+)`\s+outcome=`[^`]+`/, line));
+  }
+
+  return ids;
+}
+
 export function telegramReplyMessages(file: string, report: string, limit = 3900): string[] {
   const body = report.trim() || "(empty report)";
   const header = `Samantha outbox: ${file}`;
   const single = [header, "", body].join("\n");
-  if (single.length <= limit) return [single];
+  const idMessages = copyableIdsFromReport(body);
+  if (single.length <= limit) return [single, ...idMessages];
 
   const partHeader = `Samantha outbox: ${file} (part 999/999)\n\n`;
   const bodyLimit = Math.max(1, limit - partHeader.length);
   const chunks = splitText(body, bodyLimit);
-  return chunks.map((chunk, index) => [`Samantha outbox: ${file} (part ${index + 1}/${chunks.length})`, "", chunk].join("\n"));
+  return [
+    ...chunks.map((chunk, index) => [`Samantha outbox: ${file} (part ${index + 1}/${chunks.length})`, "", chunk].join("\n")),
+    ...idMessages,
+  ];
 }
 
 export function telegramReplyText(file: string, report: string, limit = 3900): string {
