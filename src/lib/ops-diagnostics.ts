@@ -213,3 +213,13 @@ export async function collectOpsSnapshot(input: {
     failures,
   };
 }
+
+export function withoutActiveInboxCommand(snapshot: OpsSnapshot): OpsSnapshot {
+  return {
+    ...snapshot,
+    queues: {
+      ...snapshot.queues,
+      pendingInboxCount: Math.max(0, snapshot.queues.pendingInboxCount - 1),
+    },
+  };
+}

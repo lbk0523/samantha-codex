@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { acquireDaemonLock, writeDaemonHeartbeat } from "../src/lib/daemon";
-import { collectOpsSnapshot } from "../src/lib/ops-diagnostics";
+import { collectOpsSnapshot, withoutActiveInboxCommand } from "../src/lib/ops-diagnostics";
 
 let tmpRoots: string[] = [];
 
@@ -116,6 +116,29 @@ describe("collectOpsSnapshot", () => {
     expect(snapshot.failures).toContain("TELEGRAM_BOT_TOKEN is missing");
     expect(snapshot.failures).toContain("daemon lock is missing");
     expect(snapshot.warnings).toContain("telegram offset state is missing");
+  });
+
+  test("can exclude the currently processed inbox command from queue counts", async () => {
+    const root = await makeRoot();
+    const snapshot = await collectOpsSnapshot({
+      envFilePath: join(root, ".env"),
+      inboxDir: join(root, "inbox"),
+      outboxDir: join(root, "outbox"),
+      heartbeatPath: join(root, "state", "heartbeat.json"),
+      lockPath: join(root, "state", "daemon.lock"),
+      telegramOffsetPath: join(root, "state", "telegram-offset.json"),
+      telegramRepliesPath: join(root, "state", "telegram-replies.json"),
+      systemdUserDir: join(root, "systemd"),
+      env: {},
+    });
+
+    expect(withoutActiveInboxCommand(snapshot).queues.pendingInboxCount).toBe(0);
+
+    const withPending = {
+      ...snapshot,
+      queues: { ...snapshot.queues, pendingInboxCount: 2 },
+    };
+    expect(withoutActiveInboxCommand(withPending).queues.pendingInboxCount).toBe(1);
   });
 
   test("downgrades pid visibility failures when heartbeat and lock are fresh", async () => {

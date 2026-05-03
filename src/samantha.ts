@@ -17,7 +17,7 @@ import {
   tasksListReport,
   taskShowReport,
 } from "./lib/operator-reports";
-import { collectOpsSnapshot } from "./lib/ops-diagnostics";
+import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnostics";
 import { runPlan } from "./lib/plan-runner";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { TaskStore } from "./lib/task-store";
@@ -146,7 +146,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
   }
   if (command.type === "status:show") {
     const runs = await new RunIndex(runsPath(args)).list();
-    const ops = await collectOps(args);
+    const ops = withoutActiveInboxCommand(await collectOps(args));
     return statusReport({
       runs,
       heartbeat: ops.health.heartbeat,
@@ -155,7 +155,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     });
   }
   if (command.type === "ops:doctor") {
-    return doctorReport(await collectOps(args));
+    return doctorReport(withoutActiveInboxCommand(await collectOps(args)));
   }
   if (command.type === "health:check") {
     return healthReport(
