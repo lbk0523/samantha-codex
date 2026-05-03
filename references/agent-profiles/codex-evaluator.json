@@ -1,0 +1,17 @@
+{
+  "id": "codex-evaluator",
+  "role": "evaluator",
+  "model": "gpt-5.5",
+  "codexProfile": "default",
+  "writerClass": "non-writer",
+  "worktreePolicy": "none",
+  "mergePolicy": "none",
+  "skillPolicy": {
+    "requiredBundles": [],
+    "blockedSkills": [
+      "using-git-worktrees",
+      "dispatching-parallel-agents",
+      "subagent-driven-development"
+    ]
+  }
+}

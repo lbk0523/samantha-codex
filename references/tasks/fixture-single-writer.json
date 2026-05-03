@@ -1,0 +1,11 @@
+{
+  "id": "fixture-single-writer",
+  "title": "Validate the first Codex-only safety contract",
+  "targetAgent": "codex-worker",
+  "targetFiles": ["src/lib/policy.ts"],
+  "forbiddenChanges": ["04 Backlog/**", "state/**", "worktrees/**"],
+  "verifyCommands": ["bun test tests/policy.test.ts"],
+  "instructions": "No code change is required. Inspect the policy fixture and report whether it is dispatch-safe.",
+  "expectedCommitSubject": "test: validate safety policy fixture",
+  "status": "pending"
+}
