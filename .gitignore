@@ -1,5 +1,7 @@
 node_modules/
 state/*.jsonl
+state/*.json
+state/*.lock
 runs/
 worktrees/
 archive/
