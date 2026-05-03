@@ -310,7 +310,11 @@ async function main(): Promise<void> {
 
   if (args.command === "telegram:poll") {
     const token = flag(args, "bot-token", process.env.TELEGRAM_BOT_TOKEN ?? "");
-    const allowedSenderId = flag(args, "allowed-sender-id", process.env.TELEGRAM_ALLOWED_SENDER_ID ?? "");
+    const allowedSenderId = flag(
+      args,
+      "allowed-sender-id",
+      process.env.TELEGRAM_ALLOWED_SENDER_ID ?? process.env.TELEGRAM_CHAT_ID ?? "",
+    );
     const offsetPath = telegramOffsetPath(args);
     const storedOffset = await readOptionalJson<{ nextOffset?: number }>(offsetPath);
     const explicitOffset = args.flags.get("offset");
@@ -357,7 +361,7 @@ async function main(): Promise<void> {
       "  inbox:process",
       "  inbox:watch",
       "  remote:enqueue <remote-command.json>",
-      "  telegram:poll --allowed-sender-id=<id> [--bot-token=<token>]",
+      "  telegram:poll [--allowed-sender-id=<id>] [--bot-token=<token>]",
       "  dashboard:build",
     ].join("\n"),
   );

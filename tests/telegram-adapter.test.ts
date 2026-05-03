@@ -33,6 +33,7 @@ describe("pollTelegramToInbox", () => {
                 date: 1770000000,
                 text: "/runs",
                 from: { id: 12345 },
+                chat: { id: 12345 },
               },
             },
           ],
@@ -52,6 +53,35 @@ describe("pollTelegramToInbox", () => {
     expect(result.enqueued).toHaveLength(1);
     expect(result.enqueued[0]?.command.type).toBe("runs:list");
     expect(await readFile(result.enqueued[0]?.path ?? "", "utf8")).toContain("runs:list");
+  });
+
+  test("can authorize by Telegram chat id for legacy Samantha env compatibility", async () => {
+    const root = await makeRoot();
+    const fetchImpl = (async () => ({
+      statusText: "OK",
+      json: async () => ({
+        ok: true,
+        result: [
+          {
+            update_id: 30,
+            message: {
+              text: "/tasks",
+              from: { id: 12345 },
+              chat: { id: 777 },
+            },
+          },
+        ],
+      }),
+    })) as unknown as typeof fetch;
+
+    const result = await pollTelegramToInbox({
+      token: "token",
+      inboxDir: join(root, "inbox"),
+      allowedSenderId: "777",
+      fetchImpl,
+    });
+
+    expect(result.enqueued[0]?.command.type).toBe("tasks:list");
   });
 
   test("ignores disallowed or unsupported Telegram updates", async () => {

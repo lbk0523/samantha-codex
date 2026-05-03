@@ -9,6 +9,9 @@ export interface TelegramMessage {
   date?: number;
   text?: string;
   from?: TelegramUser;
+  chat?: {
+    id: number;
+  };
 }
 
 export interface TelegramUpdate {
@@ -71,7 +74,7 @@ export async function pollTelegramToInbox(input: {
   for (const update of body.result) {
     nextOffset = Math.max(nextOffset ?? 0, update.update_id + 1);
     const text = update.message?.text;
-    const senderId = update.message?.from?.id;
+    const senderId = update.message?.chat?.id ?? update.message?.from?.id;
     if (!text || senderId === undefined) {
       ignored.push({ updateId: update.update_id, reason: "missing text or sender" });
       continue;

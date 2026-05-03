@@ -30,14 +30,16 @@ Unsupported commands are ignored or rejected.
 Required:
 
 - `TELEGRAM_BOT_TOKEN` or `--bot-token=<token>`
-- `TELEGRAM_ALLOWED_SENDER_ID` or `--allowed-sender-id=<id>`
+- `TELEGRAM_ALLOWED_SENDER_ID`, `TELEGRAM_CHAT_ID`, or `--allowed-sender-id=<id>`
+
+`TELEGRAM_CHAT_ID` is supported for compatibility with the older Claude-side Samantha Telegram environment.
 
 Example:
 
 ```bash
-bun run samantha telegram:poll \
-  --allowed-sender-id=<telegram-user-id> \
-  --timeout-seconds=0
+TELEGRAM_BOT_TOKEN=<token> \
+TELEGRAM_CHAT_ID=<telegram-chat-id> \
+bun run samantha telegram:poll --timeout-seconds=0
 ```
 
 Offset state is stored in:

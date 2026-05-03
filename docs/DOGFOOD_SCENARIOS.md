@@ -457,7 +457,7 @@ Command:
 ```bash
 cd /home/lbk0523/projects/samantha-codex
 TELEGRAM_BOT_TOKEN=<token> \
-TELEGRAM_ALLOWED_SENDER_ID=<telegram-user-id> \
+TELEGRAM_CHAT_ID=<telegram-chat-id> \
 bun run samantha telegram:poll --timeout-seconds=0
 ```
 
