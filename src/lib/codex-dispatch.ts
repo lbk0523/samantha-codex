@@ -58,6 +58,7 @@ export function buildCodexExecCommand(input: {
   agent: AgentProfile;
   worktreePath: string;
   prompt: string;
+  gitMetadataDir?: string;
 }): string[] {
   const command = [
     "codex",
@@ -66,8 +67,13 @@ export function buildCodexExecCommand(input: {
     input.worktreePath,
     "--sandbox",
     "workspace-write",
-    "--json",
   ];
+
+  if (input.gitMetadataDir) {
+    command.push("--add-dir", input.gitMetadataDir);
+  }
+
+  command.push("--json");
 
   if (input.agent.model) {
     command.push("--model", input.agent.model);
@@ -84,10 +90,16 @@ export function prepareCodexDispatch(
   task: TaskSpec,
   agent: AgentProfile,
   worktreePath: string,
+  options: { gitMetadataDir?: string } = {},
 ): PreparedCodexDispatch {
   const prompt = buildCodexWorkerPrompt(task, agent);
   return {
     prompt,
-    command: buildCodexExecCommand({ agent, worktreePath, prompt }),
+    command: buildCodexExecCommand({
+      agent,
+      worktreePath,
+      prompt,
+      gitMetadataDir: options.gitMetadataDir,
+    }),
   };
 }

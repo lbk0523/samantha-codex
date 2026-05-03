@@ -10,6 +10,11 @@ export class GitError extends Error {
 }
 
 export async function git(args: string[], cwd: string): Promise<string> {
+  const stdout = await gitRaw(args, cwd);
+  return stdout.trim();
+}
+
+export async function gitRaw(args: string[], cwd: string): Promise<string> {
   const child = Bun.spawn(["git", ...args], {
     cwd,
     stdout: "pipe",
@@ -25,7 +30,7 @@ export async function git(args: string[], cwd: string): Promise<string> {
   if (exitCode !== 0) {
     throw new GitError(args, cwd, stderr);
   }
-  return stdout.trim();
+  return stdout;
 }
 
 export async function gitHead(cwd: string): Promise<string> {
@@ -42,7 +47,7 @@ export async function gitChangedFilesSince(baseRef: string, cwd: string): Promis
 }
 
 export async function gitWorkingTreeFiles(cwd: string): Promise<string[]> {
-  const out = await git(["status", "--porcelain=v1", "--untracked-files=all", "-z"], cwd);
+  const out = await gitRaw(["status", "--porcelain=v1", "--untracked-files=all", "-z"], cwd);
   if (!out) return [];
   return out
     .split("\0")

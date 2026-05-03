@@ -1,4 +1,5 @@
 import type { AgentProfile, TaskSpec, WorktreeAllocation } from "./contracts";
+import { join } from "node:path";
 import { prepareCodexDispatch, type PreparedCodexDispatch } from "./codex-dispatch";
 import { gitHead } from "./git";
 import { validateDispatch } from "./policy";
@@ -59,7 +60,9 @@ export async function prepareWorkerDispatch(
     agentId: input.agent.id,
     worktreePath,
     allocation,
-    codex: prepareCodexDispatch(input.task, input.agent, worktreePath),
+    codex: prepareCodexDispatch(input.task, input.agent, worktreePath, {
+      gitMetadataDir: allocation ? join(input.repoRoot, ".git") : undefined,
+    }),
   };
 }
 

@@ -98,6 +98,21 @@ describe("evaluateWorkerResult", () => {
     });
   });
 
+  test("keeps the first character for uncommitted modified files", async () => {
+    const { root, baseCommit } = await makeRepo();
+    await writeFile(join(root, "allowed.txt"), "changed but not committed\n", "utf8");
+
+    const result = await evaluateWorkerResult({
+      task,
+      cwd: root,
+      baseCommit,
+      output: 'HARNESS_RESULT: {"status":"pass","note":"done","commit":""}',
+    });
+
+    expect(result.changedFiles).toEqual(["allowed.txt"]);
+    expect(result.scopeViolations).toEqual([]);
+  });
+
   test("fails when verify commands fail", async () => {
     const { root, baseCommit } = await makeRepo();
     await writeFile(join(root, "allowed.txt"), "changed\n", "utf8");

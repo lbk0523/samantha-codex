@@ -56,6 +56,17 @@ describe("prepareWorkerDispatch", () => {
     ).rejects.toThrow("writer tasks must declare forbiddenChanges");
   });
 
+  test("does not add git metadata write access on dry-run preparation", async () => {
+    const prepared = await prepareWorkerDispatch({
+      task,
+      agent,
+      repoRoot: "/repo",
+      allocate: false,
+    });
+
+    expect(prepared.codex.command).not.toContain("--add-dir");
+  });
+
   test("captures command stdout, stderr, and exit code", async () => {
     const result = await runCommand(["bash", "-lc", "echo out && echo err >&2"]);
 
