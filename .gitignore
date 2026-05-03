@@ -2,5 +2,9 @@ node_modules/
 state/*.jsonl
 runs/
 worktrees/
+archive/
+dashboard/
+inbox/
+outbox/
 .env
 .env.*

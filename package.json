@@ -11,6 +11,7 @@
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test --path-ignore-patterns='worktrees/**' tests",
     "dispatch-worker": "bun run src/dispatch-worker.ts",
+    "samantha": "bun run src/samantha.ts",
     "validate-fixture": "bun run src/index.ts validate-fixture"
   },
   "devDependencies": {

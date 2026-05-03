@@ -21,11 +21,27 @@ export interface WorkerRunLogWrite {
   runId: string;
 }
 
+export interface WorkerRunLog {
+  schemaVersion: 1;
+  runId: string;
+  startedAt: string;
+  finishedAt: string;
+  task: TaskSpec;
+  agent: AgentProfile;
+  input: {
+    repoRoot: string;
+    allocate: boolean;
+    execute: boolean;
+    worktreesDir?: string;
+  };
+  result: WorkerDispatchExecution;
+}
+
 function timestampForFile(value: string): string {
   return value.replace(/[:.]/g, "-");
 }
 
-export function buildWorkerRunLog(input: WorkerRunLogInput): Record<string, unknown> {
+export function buildWorkerRunLog(input: WorkerRunLogInput): WorkerRunLog {
   const runId = `${timestampForFile(input.startedAt)}-${sanitizeTaskId(input.task.id)}`;
 
   return {

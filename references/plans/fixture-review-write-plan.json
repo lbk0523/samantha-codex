@@ -1,0 +1,19 @@
+{
+  "id": "fixture-review-write-plan",
+  "title": "Fixture review then writer dry run",
+  "tasks": [
+    {
+      "id": "review-policy",
+      "task": "../tasks/fixture-reviewer-readonly.json",
+      "agent": "../agent-profiles/codex-reviewer.json",
+      "repoRoot": "../.."
+    },
+    {
+      "id": "write-policy",
+      "task": "../tasks/fixture-single-writer.json",
+      "agent": "../agent-profiles/codex-worker.json",
+      "repoRoot": "../..",
+      "dependsOn": ["review-policy"]
+    }
+  ]
+}

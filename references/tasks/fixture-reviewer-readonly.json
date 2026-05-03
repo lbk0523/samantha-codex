@@ -1,0 +1,10 @@
+{
+  "id": "fixture-reviewer-readonly",
+  "title": "Fixture reviewer read-only check",
+  "targetAgent": "codex-reviewer",
+  "targetFiles": [],
+  "forbiddenChanges": ["**/*"],
+  "verifyCommands": ["git status --short"],
+  "instructions": "Review the repository safety fixture without changing files.",
+  "status": "pending"
+}

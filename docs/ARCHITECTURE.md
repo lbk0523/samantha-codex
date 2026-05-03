@@ -74,6 +74,17 @@ With `--execute`, it also runs task `setupCommands` inside the worktree, then ru
 
 Executed worker runs are written to `runs/<timestamp>-<task-id>.json` by default. Each log includes the task, agent profile, dispatch input, setup results, Codex command result when it ran, and Samantha's evaluation. Use `--log-dir=<path>` to choose another directory or `--no-log` for one-off debugging runs that should not leave an audit file.
 
+Compact run summaries are appended to `state/runs.jsonl`. The local operator CLI is `bun run samantha`.
+
+The current operator surface includes:
+
+- run and task ledger inspection
+- merge candidate checks
+- multi-task plan execution
+- local inbox processing
+- remote command enqueueing into the inbox
+- read-only static dashboard generation
+
 ## Worker Result Gate
 
 Samantha accepts a worker run only when all of these pass:

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
+import { RunIndex, summarizeWorkerRun } from "./lib/ledger";
 import { writeWorkerRunLog } from "./lib/run-log";
 import { executeWorkerDispatch, prepareWorkerDispatch } from "./lib/worker-dispatch";
 
@@ -12,6 +13,7 @@ interface Args {
   execute: boolean;
   log: boolean;
   logDir?: string;
+  stateDir?: string;
   worktreesDir?: string;
 }
 
@@ -32,11 +34,12 @@ function parseArgs(argv: string[]): Args {
   const repoRoot = values.get("repo-root");
   if (typeof task !== "string" || typeof agent !== "string" || typeof repoRoot !== "string") {
     throw new Error(
-      "usage: bun run src/dispatch-worker.ts --task=<task.json> --agent=<profile.json> --repo-root=<repo> [--allocate] [--execute] [--log-dir=runs] [--no-log] [--worktrees-dir=worktrees]",
+      "usage: bun run src/dispatch-worker.ts --task=<task.json> --agent=<profile.json> --repo-root=<repo> [--allocate] [--execute] [--log-dir=runs] [--state-dir=state] [--no-log] [--worktrees-dir=worktrees]",
     );
   }
 
   const logDir = values.get("log-dir");
+  const stateDir = values.get("state-dir");
   const worktreesDir = values.get("worktrees-dir");
   return {
     task,
@@ -46,6 +49,7 @@ function parseArgs(argv: string[]): Args {
     execute: values.get("execute") === true,
     log: values.get("no-log") !== true,
     logDir: typeof logDir === "string" ? logDir : undefined,
+    stateDir: typeof stateDir === "string" ? stateDir : undefined,
     worktreesDir: typeof worktreesDir === "string" ? worktreesDir : undefined,
   };
 }
@@ -76,7 +80,8 @@ if (args.execute) {
 
   if (args.log) {
     const logDir = resolve(args.logDir ?? resolve(import.meta.dir, "..", "runs"));
-    const runLog = await writeWorkerRunLog(logDir, {
+    const stateDir = resolve(args.stateDir ?? resolve(import.meta.dir, "..", "state"));
+    const logInput = {
       task,
       agent,
       repoRoot: input.repoRoot,
@@ -86,8 +91,17 @@ if (args.execute) {
       startedAt,
       finishedAt,
       execution,
+    };
+    const runLog = await writeWorkerRunLog(logDir, {
+      ...logInput,
     });
-    output = { ...execution, runLog };
+    const runSummary = summarizeWorkerRun({
+      ...logInput,
+      runId: runLog.runId,
+      logPath: runLog.path,
+    });
+    await new RunIndex(join(stateDir, "runs.jsonl")).append(runSummary);
+    output = { ...execution, runLog, runSummary };
   }
 
   console.log(JSON.stringify(output, null, 2));

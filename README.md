@@ -21,6 +21,7 @@ bun typecheck
 bun run test
 bun run src/index.ts validate-fixture
 bun run dispatch-worker --task=references/tasks/fixture-single-writer.json --agent=references/agent-profiles/codex-worker.json --repo-root=.
+bun run samantha runs:list
 ```
 
 ## Worker Dispatch Dry Run
@@ -47,6 +48,28 @@ bun run dispatch-worker \
 ```
 
 Executed runs write audit JSON files to `runs/` by default. Use `--log-dir=<path>` to choose another location, or `--no-log` to disable logging for a one-off run.
+
+## Operator CLI
+
+The `samantha` CLI is the local operator surface for the current control plane:
+
+```bash
+bun run samantha runs:list
+bun run samantha tasks:add references/tasks/fixture-reviewer-readonly.json
+bun run samantha tasks:list
+bun run samantha plan:run references/plans/fixture-review-write-plan.json
+bun run samantha dashboard:build
+```
+
+Available command groups:
+
+- `runs:*` reads the compact run index in `state/runs.jsonl`
+- `tasks:*` manages the task ledger in `state/tasks.jsonl`
+- `merge:check` evaluates a passed run log as a safe merge candidate
+- `plan:run` runs a multi-task plan with non-writer batching and writer serialization
+- `inbox:*` processes local file-backed commands
+- `remote:enqueue` maps a narrow remote command JSON into the local inbox
+- `dashboard:build` writes a read-only static dashboard from run summaries
 
 Run the first external read-only canary against `oh-my-health-trainer`:
 

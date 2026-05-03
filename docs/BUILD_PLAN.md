@@ -37,6 +37,14 @@ Already implemented:
 - verify command gate
 - task `setupCommands`, run before Codex starts
 - worker run audit logs under `runs/`
+- compact run index under `state/runs.jsonl`
+- local task ledger under `state/tasks.jsonl`
+- `samantha` operator CLI
+- merge candidate checks
+- multi-task plan runner
+- file-backed local inbox/outbox processing
+- narrow remote command enqueueing
+- read-only static dashboard generation
 - OMHT read-only canary
 - OMHT tests-only write canary
 
@@ -49,6 +57,8 @@ Important dogfood findings:
 ## Near-Term Roadmap
 
 ### Phase 1: Run Index And Task Ledger
+
+MVP status: implemented.
 
 Goal: make Samantha aware of past and current work without scanning every run log manually.
 
@@ -67,6 +77,8 @@ Success criteria:
 
 ### Phase 2: Operator CLI
 
+MVP status: implemented.
+
 Goal: provide a small local command surface for BK and for future daemon usage.
 
 Build commands like:
@@ -83,6 +95,8 @@ Success criteria:
 - run/task status is visible from a single CLI
 
 ### Phase 3: Merge Gate
+
+MVP status: implemented as `merge:check`. Actual merge execution remains intentionally separate.
 
 Goal: move from "worker produced a pass result" to "Samantha can safely prepare integration."
 
@@ -104,6 +118,8 @@ Success criteria:
 
 ### Phase 4: Plan Runner
 
+MVP status: implemented.
+
 Goal: run a multi-task plan, not only one task JSON at a time.
 
 Build:
@@ -121,6 +137,8 @@ Success criteria:
 - one plan produces one final report
 
 ### Phase 5: Local 24/7 Loop
+
+MVP status: implemented as file-backed `inbox:process` and `inbox:watch`.
 
 Goal: run Samantha continuously without adding remote UX risk too early.
 
@@ -140,6 +158,8 @@ Success criteria:
 
 ### Phase 6: Remote Command Surface
 
+MVP status: implemented as `remote:enqueue`, which maps narrow remote command JSON into the local inbox.
+
 Goal: let BK instruct Samantha remotely after local loop safety is proven.
 
 Preferred order:
@@ -155,6 +175,8 @@ Success criteria:
 - every remote command maps to a ledger entry and audit log
 
 ### Phase 7: Dashboard
+
+MVP status: implemented as read-only static HTML generation.
 
 Goal: make long-running operation inspectable.
 
@@ -199,13 +221,15 @@ Do not prioritize these until the ledger, CLI, and merge gate exist:
 
 ## Immediate Next Step
 
-Build Phase 1: Run Index And Task Ledger.
+Dogfood the full MVP loop on a low-risk real task.
 
 The practical next implementation should:
 
-1. append a compact run summary whenever `dispatch-worker --execute` writes a run log
-2. keep the full run JSON in `runs/`
-3. keep the compact index in `state/runs.jsonl`
-4. add tests for pass run, setup-blocked run, and verify-failed run summaries
+1. add one real plan for `oh-my-health-trainer`
+2. run reviewer/spec tasks first
+3. run one writer task with `setupCommands`
+4. inspect `runs/`, `state/runs.jsonl`, and the dashboard
+5. use `merge:check` before any integration
+6. harden any failure found during the dogfood run
 
-This turns Samantha from "a command that can run workers" into "a system that remembers and can explain worker activity."
+This turns Samantha from "an MVP control plane" into a system that can survive repeated real use.
