@@ -93,9 +93,18 @@ Worker dispatch is local-only:
 ```bash
 bun run samantha tasks:dispatch <task-id> --repo-root=<repo>
 bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute
+bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute --tmux
 ```
 
 Without `--execute`, `tasks:dispatch` only prepares and prints the Codex command. With `--execute`, it writes a run log under `runs/`, appends `state/runs.jsonl`, and updates the task to `completed` or `failed`. Remote adapters cannot call this command.
+
+Use `--tmux` for a read-only supervisor view while the worker runs. Samantha still owns the worker process, safety gates, merge, and push; tmux only tails `runs/live/<run-id>.jsonl` through a formatter. Attach with:
+
+```bash
+tmux attach -t samantha
+```
+
+If tmux is unavailable, dispatch continues and the JSON result includes a warning. Use `--live-log` without `--tmux` to write the live JSONL stream without opening a tmux observer.
 
 Merge/push/cleanup lifecycle is recorded locally in `state/run-lifecycle.jsonl`. Use the run log when pushing so Samantha can verify the run commit is integrated and stop recommending already-completed work:
 

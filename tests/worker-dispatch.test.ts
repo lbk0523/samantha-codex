@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
@@ -126,6 +126,34 @@ describe("prepareWorkerDispatch", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe("out");
     expect(result.stderr.trim()).toBe("err");
+  });
+
+  test("tees command progress to a live log when requested", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-live-log-"));
+    try {
+      const path = join(root, "live.jsonl");
+      const result = await runCommand(["bash", "-lc", "echo out && echo err >&2"], {
+        liveLog: {
+          path,
+          runId: "run-fixture",
+          taskId: task.id,
+          phase: "worker",
+        },
+      });
+      const raw = await readFile(path, "utf8");
+      const events = raw
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type: string; text?: string; exitCode?: number });
+
+      expect(result.exitCode).toBe(0);
+      expect(events.map((event) => event.type)).toContain("command_start");
+      expect(events.find((event) => event.type === "stdout")?.text).toContain("out");
+      expect(events.find((event) => event.type === "stderr")?.text).toContain("err");
+      expect(events.find((event) => event.type === "command_exit")?.exitCode).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("runs setup commands in order inside the worktree", async () => {

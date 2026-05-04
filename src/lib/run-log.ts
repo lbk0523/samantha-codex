@@ -37,12 +37,16 @@ export interface WorkerRunLog {
   result: WorkerDispatchExecution;
 }
 
-function timestampForFile(value: string): string {
+export function timestampForFile(value: string): string {
   return value.replace(/[:.]/g, "-");
 }
 
+export function buildWorkerRunId(input: { startedAt: string; taskId: string }): string {
+  return `${timestampForFile(input.startedAt)}-${sanitizeTaskId(input.taskId)}`;
+}
+
 export function buildWorkerRunLog(input: WorkerRunLogInput): WorkerRunLog {
-  const runId = `${timestampForFile(input.startedAt)}-${sanitizeTaskId(input.task.id)}`;
+  const runId = buildWorkerRunId({ startedAt: input.startedAt, taskId: input.task.id });
 
   return {
     schemaVersion: 1,

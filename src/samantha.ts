@@ -5,6 +5,7 @@ import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonH
 import { writeDashboard } from "./lib/dashboard";
 import { processInbox, type InboxCommand } from "./lib/inbox";
 import { RunIndex, summarizeWorkerRun } from "./lib/ledger";
+import { buildWorkerLiveLogPath, formatWorkerLiveLogLine, startTmuxObserver, type TmuxObserverResult } from "./lib/live-log";
 import { applyMerge, evaluateMergeGate, pushMerge, readWorkerRunLog } from "./lib/merge-gate";
 import {
   doctorReport,
@@ -32,7 +33,7 @@ import { applyProjectDefaults, loadProjectProfile } from "./lib/project-profile"
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { lifecycleBaseFromRunLog, RunLifecycleStore } from "./lib/run-lifecycle-store";
-import { writeWorkerRunLog } from "./lib/run-log";
+import { buildWorkerRunId, writeWorkerRunLog } from "./lib/run-log";
 import {
   checkTaskDraft,
   parseTaskDraftUpdatePatch,
@@ -152,6 +153,25 @@ async function readOptionalJson<T>(path: string): Promise<T | undefined> {
 
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
+}
+
+async function formatLiveLogFromStdin(): Promise<void> {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for await (const chunk of Bun.stdin.stream() as AsyncIterable<Uint8Array>) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const formatted = formatWorkerLiveLogLine(line);
+      if (formatted) console.log(formatted);
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    const formatted = formatWorkerLiveLogLine(buffer);
+    if (formatted) console.log(formatted);
+  }
 }
 
 async function pendingInboxCount(path: string): Promise<number> {
@@ -356,6 +376,11 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
+  if (args.command === "live:format") {
+    await formatLiveLogFromStdin();
+    return;
+  }
+
   if (args.command === "runs:list") {
     printJson(await new RunIndex(runsPath(args)).list());
     return;
@@ -406,12 +431,19 @@ async function main(): Promise<void> {
     const execute = args.flags.get("execute") === true;
     const allocate = args.flags.get("allocate") === true || (execute && agent.worktreePolicy === "per-task");
     const worktreesDir = flag(args, "worktrees-dir", "");
+    const logDir = resolve(flag(args, "log-dir", join(root, "runs")));
+    const startedAt = new Date().toISOString();
+    const runId = buildWorkerRunId({ startedAt, taskId: task.id });
+    const liveLogPath = args.flags.get("tmux") === true || args.flags.get("live-log") === true
+      ? buildWorkerLiveLogPath(logDir, runId)
+      : undefined;
     const input = {
       task,
       agent,
       repoRoot: resolve(repoRoot),
       allocate,
       worktreesDir: worktreesDir || undefined,
+      ...(liveLogPath ? { liveLogPath, runId } : {}),
     };
 
     if (!execute) {
@@ -419,7 +451,17 @@ async function main(): Promise<void> {
       return;
     }
 
-    const startedAt = new Date().toISOString();
+    let tmux: TmuxObserverResult | undefined;
+    if (args.flags.get("tmux") === true && liveLogPath) {
+      tmux = await startTmuxObserver({
+        sessionName: flag(args, "tmux-session", "samantha"),
+        taskId: task.id,
+        runId,
+        liveLogPath,
+        cwd: root,
+        formatterCommand: "bun run src/samantha.ts live:format",
+      });
+    }
     const execution = await executeWorkerDispatch(input);
     const finishedAt = new Date().toISOString();
     const logInput = {
@@ -429,11 +471,16 @@ async function main(): Promise<void> {
       finishedAt,
       execution,
     };
-    const runLog = await writeWorkerRunLog(resolve(flag(args, "log-dir", join(root, "runs"))), logInput);
+    const runLog = await writeWorkerRunLog(logDir, logInput);
     const runSummary = summarizeWorkerRun({ ...logInput, runId: runLog.runId, logPath: runLog.path });
     await new RunIndex(runsPath(args)).append(runSummary);
     await taskStore.updateStatus(task.id, runSummary.pass ? "completed" : "failed");
-    printJson({ runLog, runSummary });
+    printJson({
+      runLog,
+      runSummary,
+      ...(liveLogPath ? { liveLog: { path: liveLogPath } } : {}),
+      ...(tmux ? { tmux } : {}),
+    });
     if (!runSummary.pass) process.exitCode = 1;
     return;
   }
@@ -1016,7 +1063,7 @@ async function main(): Promise<void> {
       "  tasks:list --include-archived",
       "  tasks:show <task-id>",
       "  tasks:archive <task-id> --reason=<text>",
-      "  tasks:dispatch <task-id> --repo-root=<repo> [--execute]",
+      "  tasks:dispatch <task-id> --repo-root=<repo> [--execute] [--tmux] [--live-log]",
       "  tasks:finalize-worktree <task-id> --repo-root=<repo> [--worktree=<path>] [--note=<text>]",
       "  tasks:retry <task-id>",
       "  next-action",
@@ -1045,6 +1092,7 @@ async function main(): Promise<void> {
       "  telegram:poll [--allowed-sender-id=<id>] [--bot-token=<token>]",
       "  telegram:reply [--chat-id=<id>] [--mark-existing] [--send-existing]",
       "  dashboard:build",
+      "  live:format",
     ].join("\n"),
   );
 }

@@ -1,6 +1,7 @@
 import type { AgentProfile, TaskSpec, WorktreeAllocation } from "./contracts";
 import { prepareCodexDispatch, type PreparedCodexDispatch } from "./codex-dispatch";
 import { gitHead } from "./git";
+import { appendWorkerLiveEvent, initializeWorkerLiveLog } from "./live-log";
 import { validateDispatch } from "./policy";
 import { evaluateWorkerResult, type WorkerResultEvaluation } from "./worker-result";
 import { allocateWorktree, worktreePathForTask } from "./worktree";
@@ -11,6 +12,8 @@ export interface PrepareWorkerDispatchInput {
   repoRoot: string;
   allocate: boolean;
   worktreesDir?: string;
+  liveLogPath?: string;
+  runId?: string;
 }
 
 export interface WorkerDispatchPreparation {
@@ -30,6 +33,7 @@ export interface CommandRunResult {
 
 export interface WorkerDispatchExecution {
   preparation: WorkerDispatchPreparation;
+  liveLogPath?: string;
   setupResults: CommandRunResult[];
   command?: CommandRunResult;
   evaluation?: WorkerResultEvaluation;
@@ -43,6 +47,13 @@ export interface WorkerCommitResult {
   add: CommandRunResult;
   commit: CommandRunResult;
   commitHash: string;
+}
+
+export interface CommandLiveLogOptions {
+  path: string;
+  runId: string;
+  taskId: string;
+  phase: string;
 }
 
 export async function prepareWorkerDispatch(
@@ -75,8 +86,19 @@ export async function prepareWorkerDispatch(
 
 export async function runCommand(
   command: string[],
-  options: { cwd?: string } = {},
+  options: { cwd?: string; liveLog?: CommandLiveLogOptions } = {},
 ): Promise<CommandRunResult> {
+  await appendWorkerLiveEvent(
+    options.liveLog?.path,
+    {
+      type: "command_start",
+      runId: options.liveLog?.runId ?? "",
+      taskId: options.liveLog?.taskId ?? "",
+      phase: options.liveLog?.phase,
+      command,
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+    },
+  );
   const child = Bun.spawn(command, {
     cwd: options.cwd,
     stdout: "pipe",
@@ -84,19 +106,77 @@ export async function runCommand(
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
+    collectStream(child.stdout, async (text) => {
+      await appendWorkerLiveEvent(options.liveLog?.path, {
+        type: "stdout",
+        runId: options.liveLog?.runId ?? "",
+        taskId: options.liveLog?.taskId ?? "",
+        phase: options.liveLog?.phase,
+        text,
+      });
+    }),
+    collectStream(child.stderr, async (text) => {
+      await appendWorkerLiveEvent(options.liveLog?.path, {
+        type: "stderr",
+        runId: options.liveLog?.runId ?? "",
+        taskId: options.liveLog?.taskId ?? "",
+        phase: options.liveLog?.phase,
+        text,
+      });
+    }),
     child.exited,
   ]);
+
+  await appendWorkerLiveEvent(options.liveLog?.path, {
+    type: "command_exit",
+    runId: options.liveLog?.runId ?? "",
+    taskId: options.liveLog?.taskId ?? "",
+    phase: options.liveLog?.phase,
+    command,
+    exitCode,
+  });
 
   return { command, exitCode, stdout, stderr };
 }
 
-export async function runSetupCommands(commands: string[], cwd: string): Promise<CommandRunResult[]> {
+async function collectStream(
+  stream: ReadableStream<Uint8Array> | null,
+  onChunk: (text: string) => Promise<void>,
+): Promise<string> {
+  if (!stream) return "";
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const text = decoder.decode(value, { stream: true });
+    output += text;
+    await onChunk(text);
+  }
+  const tail = decoder.decode();
+  if (tail) {
+    output += tail;
+    await onChunk(tail);
+  }
+  return output;
+}
+
+export async function runSetupCommands(
+  commands: string[],
+  cwd: string,
+  options: { liveLog?: Omit<CommandLiveLogOptions, "phase"> } = {},
+): Promise<CommandRunResult[]> {
   const results: CommandRunResult[] = [];
 
-  for (const command of commands) {
-    const result = await runCommand(["bash", "-lc", command], { cwd });
+  for (const [index, command] of commands.entries()) {
+    const result = await runCommand(["bash", "-lc", command], {
+      cwd,
+      ...(options.liveLog
+        ? { liveLog: { ...options.liveLog, phase: `setup:${index + 1}` } }
+        : {}),
+    });
     results.push(result);
     if (result.exitCode !== 0) break;
   }
@@ -145,16 +225,34 @@ export async function commitWorkerChanges(input: {
 export async function executeWorkerDispatch(input: PrepareWorkerDispatchInput): Promise<WorkerDispatchExecution> {
   const preparation = await prepareWorkerDispatch(input);
   const baseCommit = preparation.allocation?.baseCommit ?? (await gitHead(preparation.worktreePath));
-  const setupResults = await runSetupCommands(input.task.setupCommands ?? [], preparation.worktreePath);
+  if (input.liveLogPath && input.runId) {
+    await initializeWorkerLiveLog(input.liveLogPath, {
+      runId: input.runId,
+      taskId: input.task.id,
+      agentId: input.agent.id,
+      repoRoot: input.repoRoot,
+      worktreePath: preparation.worktreePath,
+    });
+  }
+  const liveLog =
+    input.liveLogPath && input.runId
+      ? { path: input.liveLogPath, runId: input.runId, taskId: input.task.id }
+      : undefined;
+  const setupResults = await runSetupCommands(input.task.setupCommands ?? [], preparation.worktreePath, {
+    ...(liveLog ? { liveLog } : {}),
+  });
   if (setupResults.some((result) => result.exitCode !== 0)) {
     return {
       preparation,
+      ...(input.liveLogPath ? { liveLogPath: input.liveLogPath } : {}),
       setupResults,
       pass: false,
     };
   }
 
-  const command = await runCommand(preparation.codex.command);
+  const command = await runCommand(preparation.codex.command, {
+    ...(liveLog ? { liveLog: { ...liveLog, phase: "worker" } } : {}),
+  });
   const output = [command.stdout, command.stderr].filter(Boolean).join("\n");
   const evaluation = await evaluateWorkerResult({
     task: input.task,
@@ -174,6 +272,7 @@ export async function executeWorkerDispatch(input: PrepareWorkerDispatchInput): 
 
   return {
     preparation,
+    ...(input.liveLogPath ? { liveLogPath: input.liveLogPath } : {}),
     setupResults,
     command,
     evaluation,
