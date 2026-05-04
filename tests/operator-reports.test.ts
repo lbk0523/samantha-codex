@@ -155,10 +155,33 @@ describe("operator reports", () => {
         outboxCount: 5,
         remoteOutboxCount: 4,
         unsentRemoteOutboxCount: 1,
+        latestRemoteCommand: {
+          file: "remote-2026-05-03t10-00-00.000z-status.json",
+          updatedAt: "2026-05-03T10:00:01.000Z",
+          id: "remote-2026-05-03t10-00-00.000z-status",
+          type: "status:show",
+          receivedAt: "2026-05-03T10:00:00.000Z",
+        },
+        latestRemoteOutbox: {
+          file: "remote-2026-05-03t10-00-00.000z-status.md",
+          updatedAt: "2026-05-03T10:00:02.000Z",
+        },
       },
       telegram: {
         offset: { nextOffset: 42 },
-        replyState: { schemaVersion: 1, sentFiles: ["remote-a.md"], updatedAt: "2026-05-03T10:02:00.000Z" },
+        replyState: {
+          schemaVersion: 1,
+          sentFiles: ["remote-a.md"],
+          failures: [
+            {
+              file: "remote-b.md",
+              attempts: 2,
+              lastError: "Telegram error",
+              updatedAt: "2026-05-03T10:02:00.000Z",
+            },
+          ],
+          updatedAt: "2026-05-03T10:02:00.000Z",
+        },
       },
       systemd: { directory: "/systemd", files: [{ file: "samantha-inbox-watch.service", installed: true }] },
       warnings: [],
@@ -171,14 +194,27 @@ describe("operator reports", () => {
       ops,
       proposals: [proposal],
       drafts: [draft],
+      lifecycles: [{ ...lifecycle, cleanedAt: "2026-05-03T10:03:00.000Z" }],
     });
     expect(status).toContain("- pending inbox: 2");
     expect(status).toContain("Operation: ok");
     expect(status).toContain("- non-passing: 1");
     expect(status).toContain("- next offset: 42");
     expect(status).toContain("- unsent remote outbox: 1");
+    expect(status).toContain("latest command: type=`status:show`");
+    expect(status).toContain("latest report: `remote-2026-05-03t10-00-00.000z-status.md`");
+    expect(status).toContain("latest reply failure: remote-b.md attempts=2 error=Telegram error");
+    expect(status).toContain("- lifecycle: missing");
     expect(status).toContain("- pending_review: 1 accepted: 0 rejected: 0");
     expect(status).toContain("- drafted: 1 approved: 0 discarded: 0");
+    expect(
+      statusReport({
+        runs: [passRun],
+        heartbeat,
+        pendingInboxCount: 0,
+        lifecycles: [{ ...lifecycle, cleanedAt: "2026-05-03T10:03:00.000Z" }],
+      }),
+    ).toContain("- lifecycle: merged=no pushed=no cleaned=yes");
 
     const health: DaemonHealthResult = {
       ok: false,
@@ -190,6 +226,8 @@ describe("operator reports", () => {
     expect(healthReport(health)).toContain("heartbeat is stale");
     expect(doctorReport(ops)).toContain("Overall: ok");
     expect(doctorReport(ops)).toContain("TELEGRAM_BOT_TOKEN: present");
+    expect(doctorReport(ops)).toContain("latest remote command: type=`status:show`");
+    expect(doctorReport(ops)).toContain("latest reply failure: remote-b.md attempts=2 error=Telegram error");
   });
 
   test("renders task summaries", () => {

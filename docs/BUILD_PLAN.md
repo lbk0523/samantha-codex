@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-04
 
-Current planning status: MVP control plane built, read-only dogfood completed, the first low-risk writer dogfood passed with a Samantha-owned commit, explicit merge apply/push gates are implemented, and the local daemon has heartbeat/lock hardening. Current focus is Telegram remote adapter dogfood using the legacy Samantha bot environment.
+Current planning status: MVP control plane built, read-only dogfood completed, the first low-risk writer dogfood passed with a Samantha-owned commit, explicit merge apply/push/cleanup gates are implemented, and the local daemon plus Telegram poll/reply loop are operating. Current focus is Telegram operating UX hardening, not broader autonomy.
 
 ## Purpose
 
@@ -75,6 +75,7 @@ Important dogfood findings:
 - Failed dispatch attempts may leave clean worktrees behind; Samantha can now reuse or finalize them instead of forcing manual branch cleanup.
 - Already-merged runs should report as already integrated, not as generic HEAD mismatch failures.
 - `/next-action` must use run lifecycle state, not just the latest pass run, or it will recommend already-completed merge/push/cleanup work.
+- Once Telegram polling and replies work, `/status` and `/doctor` become the main operating surface and must show remote command/report and lifecycle state clearly.
 - Codex workers should not receive parent `.git` metadata write access.
 - Samantha should create commits itself after worker output passes scope and verify gates.
 - Audit logs are mandatory before 24/7 operation; otherwise Samantha cannot explain what happened after the fact.
@@ -250,7 +251,7 @@ These gates should not be weakened for convenience:
 
 ## What Not To Build Yet
 
-Do not prioritize these until Telegram dogfood proves the remote command loop is stable:
+Do not prioritize these until the Telegram operating surface is stable:
 
 - multi-writer parallelism
 - web dashboard with write controls
@@ -261,15 +262,14 @@ Do not prioritize these until Telegram dogfood proves the remote command loop is
 
 ## Immediate Next Step
 
-Dogfood the Telegram adapter with a real bot token after the local `inbox:watch` soak remains healthy.
+Harden the Telegram operating UX.
 
 The practical next implementation should:
 
-1. keep `inbox:watch` running through the systemd user service
-2. configure local, uncommitted Telegram env values in `.env`
-3. run one manual `telegram:poll --timeout-seconds=0` with `/runs` or `/tasks`
-4. verify the adapter only writes an inbox command
-5. verify `inbox:watch` writes the final outbox report
-6. then enable `samantha-telegram-poll.timer`
+1. keep `/status` compact but operationally useful
+2. show latest remote command/report context
+3. show Telegram reply failures clearly
+4. show latest run lifecycle state
+5. keep all execution gates local-only
 
 The detailed next plan is in [NEXT_PLAN.md](NEXT_PLAN.md).

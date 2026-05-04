@@ -24,6 +24,7 @@ describe("collectOpsSnapshot", () => {
     const envFilePath = join(root, ".env");
     const inboxDir = join(root, "inbox");
     const outboxDir = join(root, "outbox");
+    const archiveInboxDir = join(root, "archive", "inbox");
     const stateDir = join(root, "state");
     const systemdDir = join(root, "systemd");
     const lockPath = join(stateDir, "daemon.lock");
@@ -31,6 +32,7 @@ describe("collectOpsSnapshot", () => {
     await Promise.all([
       mkdir(inboxDir, { recursive: true }),
       mkdir(outboxDir, { recursive: true }),
+      mkdir(archiveInboxDir, { recursive: true }),
       mkdir(systemdDir, { recursive: true }),
     ]);
     await writeFile(envFilePath, "TELEGRAM_BOT_TOKEN=secret\nTELEGRAM_CHAT_ID=12345\n", "utf8");
@@ -38,6 +40,15 @@ describe("collectOpsSnapshot", () => {
     await writeFile(join(outboxDir, "remote-a.md"), "# a\n", "utf8");
     await writeFile(join(outboxDir, "remote-b.md"), "# b\n", "utf8");
     await writeFile(join(outboxDir, "local.md"), "# local\n", "utf8");
+    await writeFile(
+      join(archiveInboxDir, "remote-2026-05-03t10-00-00.000z-status.json"),
+      JSON.stringify({
+        id: "remote-2026-05-03t10-00-00.000z-status",
+        type: "status:show",
+        args: { receivedAt: "2026-05-03T10:00:00.000Z" },
+      }),
+      "utf8",
+    );
     await mkdir(stateDir, { recursive: true });
     await writeFile(join(stateDir, "telegram-offset.json"), JSON.stringify({ nextOffset: 77 }), "utf8");
     await writeFile(
@@ -78,6 +89,7 @@ describe("collectOpsSnapshot", () => {
       envFilePath,
       inboxDir,
       outboxDir,
+      archiveInboxDir,
       heartbeatPath,
       lockPath,
       telegramOffsetPath: join(stateDir, "telegram-offset.json"),
@@ -94,6 +106,8 @@ describe("collectOpsSnapshot", () => {
     expect(snapshot.queues.outboxCount).toBe(3);
     expect(snapshot.queues.remoteOutboxCount).toBe(2);
     expect(snapshot.queues.unsentRemoteOutboxCount).toBe(1);
+    expect(snapshot.queues.latestRemoteCommand?.type).toBe("status:show");
+    expect(snapshot.queues.latestRemoteOutbox?.file).toBe("remote-b.md");
     expect(snapshot.telegram.offset?.nextOffset).toBe(77);
     expect(JSON.stringify(snapshot)).not.toContain("secret");
   });

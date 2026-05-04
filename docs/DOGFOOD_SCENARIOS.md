@@ -543,4 +543,4 @@ After Scenarios 9-16, Samantha should additionally demonstrate:
 - Telegram outbox replies for remote command reports
 - remote proposal intake without worker execution
 
-At that point the next engineering step is enabling the Telegram poll and reply timers after one manual real-world Telegram dogfood pass.
+At that point the next engineering step is hardening `/status` and `/doctor` so Telegram works as the practical operating console.

@@ -41,9 +41,9 @@ Unsupported commands are ignored or rejected.
 
 Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, and conservative task draft creation. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/draft-propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal-id>` may write a draft to `state/task-drafts.jsonl`. Worker dispatch, task ledger promotion, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
 
-`/status` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, draft counts, latest run, Telegram offset, reply state, and unsent remote outbox count.
+`/status` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
 
-`/doctor` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, and expected systemd template installation without printing secret values.
+`/doctor` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, latest remote command/report context, reply failures, and expected systemd template installation without printing secret values.
 
 Proposal commands are intake/review only:
 

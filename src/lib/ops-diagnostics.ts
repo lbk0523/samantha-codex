@@ -21,11 +21,24 @@ export interface QueueDiagnostics {
   outboxCount: number;
   remoteOutboxCount: number;
   unsentRemoteOutboxCount: number;
+  latestRemoteCommand?: RemoteCommandDiagnostics;
+  latestRemoteOutbox?: FileDiagnostics;
 }
 
 export interface TelegramStateDiagnostics {
   offset?: TelegramOffsetState;
   replyState?: TelegramReplyState;
+}
+
+export interface FileDiagnostics {
+  file: string;
+  updatedAt: string;
+}
+
+export interface RemoteCommandDiagnostics extends FileDiagnostics {
+  id?: string;
+  type?: string;
+  receivedAt?: string;
 }
 
 export interface SystemdTemplateDiagnostics {
@@ -117,10 +130,45 @@ async function remoteOutboxFiles(path: string): Promise<string[]> {
   }
 }
 
+async function latestFile(path: string, predicate: (file: string) => boolean): Promise<FileDiagnostics | undefined> {
+  try {
+    const files = (await readdir(path)).filter(predicate).sort();
+    const file = files.at(-1);
+    if (!file) return undefined;
+    const info = await stat(join(path, file));
+    return { file, updatedAt: info.mtime.toISOString() };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+}
+
+async function latestRemoteCommand(path?: string): Promise<RemoteCommandDiagnostics | undefined> {
+  if (!path) return undefined;
+  const latest = await latestFile(path, (file) => file.startsWith("remote-") && file.endsWith(".json"));
+  if (!latest) return undefined;
+  try {
+    const raw = JSON.parse(await readFile(join(path, latest.file), "utf8")) as {
+      id?: string;
+      type?: string;
+      args?: { receivedAt?: string };
+    };
+    return {
+      ...latest,
+      id: raw.id,
+      type: raw.type,
+      receivedAt: raw.args?.receivedAt,
+    };
+  } catch {
+    return latest;
+  }
+}
+
 export async function collectOpsSnapshot(input: {
   envFilePath: string;
   inboxDir: string;
   outboxDir: string;
+  archiveInboxDir?: string;
   heartbeatPath: string;
   lockPath: string;
   telegramOffsetPath: string;
@@ -170,11 +218,18 @@ export async function collectOpsSnapshot(input: {
     health.heartbeat && health.lock && heartbeatIsFresh && hardHealthViolations.length === 0
       ? { ...health, ok: true, violations: [] }
       : health;
+  const latestRemoteCommandSummary = await latestRemoteCommand(input.archiveInboxDir);
+  const latestRemoteOutboxSummary = await latestFile(
+    input.outboxDir,
+    (file) => file.startsWith("remote-") && file.endsWith(".md"),
+  );
   const queues: QueueDiagnostics = {
     pendingInboxCount: await countFiles(input.inboxDir, (file) => file.endsWith(".json")),
     outboxCount: await countFiles(input.outboxDir, (file) => file.endsWith(".md")),
     remoteOutboxCount: remoteOutbox.length,
     unsentRemoteOutboxCount: remoteOutbox.filter((file) => !sentFiles.has(file)).length,
+    ...(latestRemoteCommandSummary ? { latestRemoteCommand: latestRemoteCommandSummary } : {}),
+    ...(latestRemoteOutboxSummary ? { latestRemoteOutbox: latestRemoteOutboxSummary } : {}),
   };
   const telegram: TelegramStateDiagnostics = {
     offset: await readOptionalJson<TelegramOffsetState>(input.telegramOffsetPath),
@@ -199,6 +254,7 @@ export async function collectOpsSnapshot(input: {
     ...(!telegram.replyState ? ["telegram reply state is missing"] : []),
     ...systemd.files.filter((file) => !file.installed).map((file) => `systemd template not installed: ${file.file}`),
     ...(queues.unsentRemoteOutboxCount > 0 ? [`${queues.unsentRemoteOutboxCount} unsent remote outbox report(s)`] : []),
+    ...((replyState?.failures?.length ?? 0) > 0 ? [`${replyState?.failures?.length ?? 0} Telegram reply failure(s)`] : []),
   ];
 
   return {

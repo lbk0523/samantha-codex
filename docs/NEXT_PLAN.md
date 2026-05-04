@@ -1,263 +1,124 @@
 # Samantha-Codex Next Plan
 
-Last updated: 2026-05-03
+Last updated: 2026-05-04
 
-## Starting Point
+## Current Baseline
 
-The Phase 1-7 MVP exists:
+The Phase 1-7 MVP exists and has passed the first real dogfood loop:
 
 - run index and task ledger
 - operator CLI
 - merge candidate checks
+- explicit `merge:apply`, `merge:push`, and completed worktree cleanup gates
+- run lifecycle ledger for merge/push/cleanup state
 - plan runner
-- local inbox/outbox loop
-- narrow remote command enqueueing
+- local `inbox:watch` daemon with heartbeat and lock protection
+- narrow Telegram polling into the inbox
+- Telegram outbox replies
 - proposal intake/review and accepted-proposal task drafts
+- project profiles and local-only task approval/dispatch
 - read-only static dashboard
 
-The first full dogfood pass completed through read-only real Codex execution against `oh-my-health-trainer`. No critical stop condition occurred.
+Current operating status:
 
-The writer dogfood, merge apply/push gates, completed worktree cleanup, daemon hardening, and Telegram adapter scaffold are now implemented. The next useful proof is real Telegram dogfood using the existing Samantha bot environment, while keeping the adapter limited to inbox writes.
+- `.env` has the local Telegram bot token and chat id values.
+- `doctor` reports no failures or warnings.
+- pending inbox is `0`.
+- unsent remote outbox reports are `0`.
+- `/next-action` reports no immediate action for the latest completed OMHT run.
+- The latest OMHT writer run is merged, pushed, cleaned, and backfilled in `state/run-lifecycle.jsonl`.
 
-## Current Constraints
+Runtime state under `state/`, `runs/`, `outbox/`, and `archive/` remains local and ignored by Git.
 
-- `oh-my-health-trainer` main is clean and pushed.
-- The old `omht-schema-07-new-block-fixture-canary` and `omht-schema-07-unknown-block-negative-canary` tasks must not be rerun because they were already applied.
-- Non-writer agents no longer receive parent `.git` metadata write access.
-- Writer agents do not receive parent `.git` metadata access. They edit and verify files only; Samantha creates commits after scope and verify gates pass.
-- Real Telegram dogfood is blocked until `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are available in the Samantha-Codex runtime.
+## Current Objective
 
-## Objective
+Make Telegram feel like the practical 24/7 operating console without opening unsafe execution paths.
 
-Prove Samantha can safely receive a real remote Telegram command end to end:
+The immediate implementation focus is:
 
-1. keep `inbox:watch` healthy
-2. poll Telegram using `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
-3. authorize by the legacy chat id
-4. map a narrow command such as `/runs` into `inbox/*.json`
-5. let `inbox:watch` process it
-6. verify an outbox report is written
-7. preserve offset state so the same Telegram update is not replayed
+1. keep `/status` as the quick operational view
+2. keep `/doctor` as the deeper diagnostic view
+3. show the latest remote command/report state
+4. show reply failure state clearly
+5. show latest run lifecycle state
+6. keep worker dispatch, merge, push, cleanup, task approval, and arbitrary shell execution local-only
 
-## Stage A: Local Daemon Soak
+## Next Implementation Slice
 
-Run `inbox:watch` for a longer local soak before real Telegram polling.
+### Stage A: Telegram Operating Status
 
-Success criteria:
+Improve `/status` so BK can answer these questions from Telegram:
 
-- `health:check` stays healthy
-- duplicate watcher start is blocked
-- one local inbox command moves to outbox and archive
-- heartbeat `processedTotal` increments
-
-## Stage B: Legacy Telegram Env Setup
-
-Use local, uncommitted env values:
-
-```text
-TELEGRAM_BOT_TOKEN=<token>
-TELEGRAM_CHAT_ID=<telegram-chat-id>
-```
+- Is Samantha healthy right now?
+- Is the local queue empty?
+- Did Telegram replies finish sending?
+- What was the latest remote command?
+- What was the latest remote report?
+- Did the latest worker run still need merge/push/cleanup, or is it done?
 
 Success criteria:
 
-- no secret is committed
-- `TELEGRAM_CHAT_ID` is accepted without requiring a renamed variable
-- `telegram:poll` can also accept `--allowed-sender-id` for explicit overrides
+- `/status` remains compact enough for Telegram.
+- It includes queue, daemon, Telegram offset/reply, proposal/draft, latest run, and lifecycle state.
+- It does not print secrets.
+- It does not expose new write actions.
 
-## Stage C: Real Telegram Poll Dogfood
+### Stage B: Doctor Clarity
 
-Send `/runs` or `/tasks` to the bot, then run:
+Improve `/doctor` so it identifies operational blockers quickly:
 
-```bash
-bun run samantha telegram:poll --timeout-seconds=0
-```
-
-Success criteria:
-
-- exactly one allowed update is enqueued
-- disallowed senders are ignored
-- unsupported commands fail closed
-- offset state is written under `state/telegram-offset.json`
-- `inbox:watch` writes the final report to `outbox/`
-
-Critical stop conditions:
-
-- Telegram token or chat id is missing from local runtime
-- poll returns updates from an unexpected chat
-- adapter attempts to execute work directly instead of writing inbox
-- duplicate update replay creates repeated inbox commands
-
-## Stage D: Enable 24/7 Timer
-
-After a manual real poll passes, enable the timer:
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp ops/systemd/samantha-telegram-poll.service ~/.config/systemd/user/
-cp ops/systemd/samantha-telegram-poll.timer ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now samantha-telegram-poll.timer
-```
+- missing env values
+- stale daemon heartbeat
+- pending inbox backlog
+- unsent remote reports
+- Telegram reply failures
+- missing Telegram offset/reply state
+- missing systemd templates
 
 Success criteria:
 
-- timer runs without overlapping failures
-- each poll writes only inbox files
-- `inbox:watch` remains the only processor
-- journal logs do not print token values
+- failures and warnings stay explicit.
+- latest remote command/report context is visible.
+- reply failures include the file, attempts, and last error.
+- no token, chat secret, or message body is printed unnecessarily.
 
-## Stage E: Post-Dogfood Hardening
+### Stage C: Documentation Sync
 
-Harden whatever Telegram dogfood reveals. Likely areas:
+Keep the docs aligned with the actual command surface:
 
-- clearer failure outbox reports for remote commands
-- dashboard display for latest remote command
-- timer failure health signal
-- duplicate update protection beyond Telegram offset
-
-Success criteria:
-
-- any discovered failure gets either a fix or a documented blocked reason
-- tests cover each fix
-- `BUILD_PLAN.md` and `DOGFOOD_SCENARIOS.md` stay consistent
-
-## Already Stable: Integration Gate Design
-
-After one writer dogfood passes and BK approves the integration model, use separate integration gates.
-
-Implemented commands:
-
-```text
-merge:check
-merge:apply --run-log=<path>
-merge:push --remote=origin --branch=main
-```
-
-Policy:
-
-- `merge:apply` only accepts a passing run log
-- no dirty target repo
-- no branch mismatch
-- no missing commit
-- post-merge verify commands must run
-- push remains separate from merge
-
-Do not combine merge and push in one command yet.
-
-Current behavior:
-
-- `merge:check` returns the fast-forward candidate without changing the target repo.
-- `merge:apply` reuses `merge:check`, executes `git merge --ff-only <commit>`, then runs the task `verifyCommands` on the target main worktree.
-- `merge:push` checks branch and clean worktree state, then runs `git push <remote> <branch>`.
-
-## Already Stable: Daemon Packaging
-
-Only after writer dogfood and integration gate are stable:
-
-- keep the systemd user service template
-- keep `inbox:watch` restart guidance
-- keep lockfile protection for duplicate watchers
-- keep `health:check`
-- keep structured daemon heartbeat under `state/`
+- `BUILD_PLAN.md`
+- `REMOTE_ADAPTERS.md`
+- `DAEMON_OPERATIONS.md`
+- `DOGFOOD_SCENARIOS.md`
+- this `NEXT_PLAN.md`
 
 Success criteria:
 
-- process restart does not lose queued inbox commands
-- duplicate daemon start is blocked or harmless
-- dashboard can show last heartbeat
-- bad inbox commands produce outbox failure reports and are archived
+- docs no longer say real Telegram dogfood is blocked.
+- docs state that remote command execution remains safe-gated.
+- docs state that the current next priority is Telegram operating UX, not multi-writer parallelism.
 
-## Already Stable: Remote Adapter Scaffold
+## Out Of Scope For This Slice
 
-Only after file-backed daemon is stable:
+Do not implement these yet:
 
-- keep the Telegram polling adapter
-- remote adapter writes to inbox only
-- adapter cannot run shell commands
-- sender allowlist is mandatory
-- all remote commands produce outbox reports
+- remote worker dispatch
+- remote task approval
+- remote merge/push/cleanup
+- multi-writer parallelism
+- dashboard write controls
+- autonomous push/deploy behavior
 
-Success criteria:
+These are deliberately delayed until the Telegram operating surface is boring and reliable.
 
-- no remote path bypasses inbox/ledger/audit
-- unsupported commands fail closed
-- remote UX stays read-mostly until merge gate is mature
+## After This Slice
 
-## Later: Dashboard Upgrade
+Reassess with BK before moving to the next phase.
 
-After writer dogfood:
+Likely next candidates:
 
-- show pending inbox count
-- show latest run outcome
-- show failed gate summary
-- show merge candidates
-- link to run log path
-- show repo status summaries from explicit snapshots
+1. simplify draft-to-task preparation
+2. upgrade the dashboard into a real read-only operations board
+3. run a second tiny OMHT writer dogfood through the full proposal-to-cleanup flow
 
-Keep dashboard read-only.
-
-## Definition Of Done For Next Cycle
-
-The next cycle is complete when:
-
-- local daemon soak stays healthy
-- real Telegram `/runs` or `/tasks` enqueues exactly one inbox command
-- `inbox:watch` writes the final outbox report
-- Telegram offset state prevents replay
-- Telegram timer templates are either enabled or blocked only by missing local token/chat id
-- any hardening fix is committed and pushed
-
-## Execution Notes
-
-This cycle revealed that Codex CLI sandboxing still blocks worker writes to parent worktree Git metadata, even when explicit Git metadata paths are supplied through `--add-dir`.
-
-The safer design is now:
-
-- worker agents edit files and run verification only
-- worker agents do not commit or push
-- Samantha creates the task commit after `HARNESS_RESULT`, scope checks, and verify commands pass
-- merge gate reads Samantha-owned commit metadata from the run log
-
-The fresh writer dogfood passed with commit:
-
-```text
-61824293b56fdf8ed84258c70de419b6f4353171
-```
-
-The merge candidate remained manual:
-
-```bash
-git merge --ff-only 61824293b56fdf8ed84258c70de419b6f4353171
-```
-
-## Recommended Next Action
-
-Next, dogfood the remote proposal flow end to end:
-
-```text
-/propose <work request>
-/accept <proposal-id>
-/draft <proposal-id>
-/draft-propose <work request>
-/drafts
-/draft <draft-id>
-```
-
-Next local dogfood:
-
-```bash
-bun run samantha drafts:check <draft-id>
-bun run samantha drafts:update <draft-id> --from=<draft-patch.json>
-bun run samantha drafts:approve <draft-id>
-bun run samantha tasks:show <task-id>
-bun run samantha tasks:dispatch <task-id> --repo-root=<repo>
-```
-
-After dry-run dispatch is correct, run local-only execution:
-
-```bash
-bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute
-```
-
-Do not open remote worker dispatch yet.
+The default next move should be draft-to-task simplification unless the Telegram operating UX reveals a blocker.

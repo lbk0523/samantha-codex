@@ -38,6 +38,7 @@ bun run samantha dashboard:build
 - `state/heartbeat.json`: last daemon heartbeat
 - `state/proposals.jsonl`: remote work proposals and review state
 - `state/task-drafts.jsonl`: task drafts created from accepted proposals
+- `state/run-lifecycle.jsonl`: merge, push, and cleanup state for completed runs
 - `inbox/*.json`: queued local commands
 - `outbox/*.md`: command reports
 - `archive/inbox/*.json`: processed input commands
@@ -131,6 +132,8 @@ The service templates are tuned for interactive latency:
 - `samantha-telegram-reply.timer` scans outbox 3 seconds after the prior reply pass exits.
 
 Normal reply latency should usually be a few seconds. It can be longer when Telegram network calls are slow or when the machine is sleeping.
+
+For routine operation, use Telegram `/status` first and `/doctor` when `/status` reports warnings or failures. `/status` is the compact operating view; `/doctor` is the diagnostic view.
 
 ## Safety Notes
 

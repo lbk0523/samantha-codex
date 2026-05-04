@@ -193,6 +193,7 @@ async function collectOps(args: ParsedArgs) {
     envFilePath: envFilePath(args),
     inboxDir: resolve(flag(args, "inbox-dir", join(root, "inbox"))),
     outboxDir: resolve(flag(args, "outbox-dir", join(root, "outbox"))),
+    archiveInboxDir: resolve(flag(args, "archive-dir", join(root, "archive", "inbox"))),
     heartbeatPath: heartbeatPath(args),
     lockPath: daemonLockPath(args),
     telegramOffsetPath: telegramOffsetPath(args),
@@ -215,6 +216,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       ops,
       proposals: await new ProposalStore(proposalsPath(args)).list(),
       drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
+      lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
     });
   }
   if (command.type === "ops:doctor") {

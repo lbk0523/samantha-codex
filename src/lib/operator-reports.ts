@@ -50,6 +50,17 @@ function draftLine(draft: TaskDraftRecord): string {
   return `- ${code(draft.id)} status=${code(draft.status)} source=${code(draft.sourceProposalId)} created=${code(draft.createdAt)} title=${oneLine(draft.title)}`;
 }
 
+function lifecycleText(lifecycle: RunLifecycleRecord | undefined): string {
+  if (!lifecycle) return "missing";
+  return `merged=${lifecycle.mergedAt ? "yes" : "no"} pushed=${lifecycle.pushedAt ? "yes" : "no"} cleaned=${lifecycle.cleanedAt ? "yes" : "no"}`;
+}
+
+function latestReplyFailure(snapshot: OpsSnapshot): string {
+  const failure = snapshot.telegram.replyState?.failures?.at(-1);
+  if (!failure) return "none";
+  return `${failure.file} attempts=${failure.attempts} error=${failure.lastError}`;
+}
+
 function nextActionLinesForRun(run: RunSummary): string[] {
   if (run.pass && run.commit) {
     return [
@@ -374,8 +385,10 @@ export function statusReport(input: {
   ops?: OpsSnapshot;
   proposals?: ProposalRecord[];
   drafts?: TaskDraftRecord[];
+  lifecycles?: RunLifecycleRecord[];
 }): string {
   const latest = input.runs.at(-1);
+  const latestLifecycle = latest ? input.lifecycles?.find((record) => record.runId === latest.runId) : undefined;
   const failureCount = input.runs.filter((run) => !run.pass).length;
   const proposalCounts = input.proposals
     ? {
@@ -409,6 +422,14 @@ export function statusReport(input: {
     input.ops ? `- remote outbox: ${input.ops.queues.remoteOutboxCount}` : "",
     input.ops ? `- unsent remote outbox: ${input.ops.queues.unsentRemoteOutboxCount}` : "",
     "",
+    "Remote:",
+    input.ops?.queues.latestRemoteCommand
+      ? `- latest command: type=${code(input.ops.queues.latestRemoteCommand.type ?? "unknown")} id=${code(input.ops.queues.latestRemoteCommand.id ?? input.ops.queues.latestRemoteCommand.file)} received=${code(input.ops.queues.latestRemoteCommand.receivedAt ?? "unknown")}`
+      : "- latest command: none",
+    input.ops?.queues.latestRemoteOutbox
+      ? `- latest report: ${code(input.ops.queues.latestRemoteOutbox.file)} updated=${code(input.ops.queues.latestRemoteOutbox.updatedAt)}`
+      : "- latest report: none",
+    "",
     "Telegram:",
     input.ops
       ? input.ops.telegram.offset?.nextOffset !== undefined
@@ -420,6 +441,11 @@ export function statusReport(input: {
         ? `- replies: sent=${input.ops.telegram.replyState.sentFiles.length} failures=${input.ops.telegram.replyState.failures?.length ?? 0} updated=${code(input.ops.telegram.replyState.updatedAt)}`
         : "- replies: missing"
       : "",
+    input.ops ? `- latest reply failure: ${oneLine(latestReplyFailure(input.ops))}` : "",
+    "",
+    "Attention:",
+    input.ops?.failures.length ? `- first failure: ${oneLine(input.ops.failures[0] ?? "")}` : "- failures: none",
+    input.ops?.warnings.length ? `- first warning: ${oneLine(input.ops.warnings[0] ?? "")}` : "- warnings: none",
     "",
     "Proposals:",
     proposalCounts
@@ -433,6 +459,7 @@ export function statusReport(input: {
     `- total: ${input.runs.length}`,
     `- non-passing: ${failureCount}`,
     latest ? `- latest: ${oneLine(runLine(latest).slice(2))}` : "- latest: none",
+    latest ? `- lifecycle: ${lifecycleText(latestLifecycle)}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -483,6 +510,12 @@ export function doctorReport(snapshot: OpsSnapshot): string {
     `- outbox reports: ${snapshot.queues.outboxCount}`,
     `- remote outbox reports: ${snapshot.queues.remoteOutboxCount}`,
     `- unsent remote outbox reports: ${snapshot.queues.unsentRemoteOutboxCount}`,
+    snapshot.queues.latestRemoteCommand
+      ? `- latest remote command: type=${code(snapshot.queues.latestRemoteCommand.type ?? "unknown")} id=${code(snapshot.queues.latestRemoteCommand.id ?? snapshot.queues.latestRemoteCommand.file)} received=${code(snapshot.queues.latestRemoteCommand.receivedAt ?? "unknown")}`
+      : "- latest remote command: none",
+    snapshot.queues.latestRemoteOutbox
+      ? `- latest remote report: ${code(snapshot.queues.latestRemoteOutbox.file)} updated=${code(snapshot.queues.latestRemoteOutbox.updatedAt)}`
+      : "- latest remote report: none",
     "",
     "Telegram state:",
     snapshot.telegram.offset?.nextOffset !== undefined
@@ -491,6 +524,7 @@ export function doctorReport(snapshot: OpsSnapshot): string {
     snapshot.telegram.replyState
       ? `- replies: sent=${snapshot.telegram.replyState.sentFiles.length} failures=${snapshot.telegram.replyState.failures?.length ?? 0} updated=${code(snapshot.telegram.replyState.updatedAt)}`
       : "- replies: missing",
+    `- latest reply failure: ${oneLine(latestReplyFailure(snapshot))}`,
     "",
     "systemd templates:",
     ...systemdLines,
