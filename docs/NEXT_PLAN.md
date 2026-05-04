@@ -17,7 +17,8 @@ The Phase 1-7 MVP exists and has passed the first real dogfood loop:
 - Telegram outbox replies
 - proposal intake/review and accepted-proposal task drafts
 - project profiles and local-only task approval/dispatch
-- read-only static dashboard
+- task draft readiness summaries and patch templates
+- read-only static operations dashboard
 
 Current operating status:
 
@@ -34,20 +35,17 @@ Runtime state under `state/`, `runs/`, `outbox/`, and `archive/` remains local a
 
 Make Telegram feel like the practical 24/7 operating console without opening unsafe execution paths.
 
-The immediate implementation focus is:
+The immediate implementation focus is now:
 
-1. keep `/status` as the quick operational view
-2. keep `/doctor` as the deeper diagnostic view
-3. show the latest remote command/report state
-4. show reply failure state clearly
-5. show latest run lifecycle state
-6. keep worker dispatch, merge, push, cleanup, task approval, and arbitrary shell execution local-only
+1. dogfood the improved draft-to-task path on a small OMHT task
+2. verify the read-only dashboard gives enough context without Telegram
+3. keep worker dispatch, merge, push, cleanup, task approval, and arbitrary shell execution local-only
 
 ## Next Implementation Slice
 
-### Stage A: Telegram Operating Status
+### Completed: Telegram Operating Status
 
-Improve `/status` so BK can answer these questions from Telegram:
+`/status` now helps BK answer these questions from Telegram:
 
 - Is Samantha healthy right now?
 - Is the local queue empty?
@@ -56,16 +54,16 @@ Improve `/status` so BK can answer these questions from Telegram:
 - What was the latest remote report?
 - Did the latest worker run still need merge/push/cleanup, or is it done?
 
-Success criteria:
+Completed criteria:
 
 - `/status` remains compact enough for Telegram.
 - It includes queue, daemon, Telegram offset/reply, proposal/draft, latest run, and lifecycle state.
 - It does not print secrets.
 - It does not expose new write actions.
 
-### Stage B: Doctor Clarity
+### Completed: Doctor Clarity
 
-Improve `/doctor` so it identifies operational blockers quickly:
+`/doctor` identifies operational blockers quickly:
 
 - missing env values
 - stale daemon heartbeat
@@ -75,16 +73,44 @@ Improve `/doctor` so it identifies operational blockers quickly:
 - missing Telegram offset/reply state
 - missing systemd templates
 
-Success criteria:
+Completed criteria:
 
 - failures and warnings stay explicit.
 - latest remote command/report context is visible.
 - reply failures include the file, attempts, and last error.
 - no token, chat secret, or message body is printed unnecessarily.
 
-### Stage C: Documentation Sync
+### Completed: Draft-To-Task Simplification
 
-Keep the docs aligned with the actual command surface:
+The local draft-to-task path now includes:
+
+- `drafts:check` readiness summaries
+- `drafts:template <draft-id> [--project=<id>]`
+- project-default patch templates
+- `drafts:update` rejection for unknown patch fields
+- `drafts:update` and `drafts:prepare` readiness output after changes
+- `drafts:approve` failure output with readiness context
+
+Remote task approval and dispatch remain closed.
+
+### Completed: Read-Only Dashboard Upgrade
+
+The dashboard now includes:
+
+- operation health
+- queue state
+- Telegram offset/reply state
+- latest remote command/report
+- proposal/draft/task counts
+- recent runs
+- latest run lifecycle
+- failures and warnings
+
+It remains read-only.
+
+### Completed: Documentation Sync
+
+The docs are aligned with the actual command surface:
 
 - `BUILD_PLAN.md`
 - `REMOTE_ADAPTERS.md`
@@ -92,7 +118,7 @@ Keep the docs aligned with the actual command surface:
 - `DOGFOOD_SCENARIOS.md`
 - this `NEXT_PLAN.md`
 
-Success criteria:
+Completed criteria:
 
 - docs no longer say real Telegram dogfood is blocked.
 - docs state that remote command execution remains safe-gated.
@@ -117,8 +143,8 @@ Reassess with BK before moving to the next phase.
 
 Likely next candidates:
 
-1. simplify draft-to-task preparation
-2. upgrade the dashboard into a real read-only operations board
-3. run a second tiny OMHT writer dogfood through the full proposal-to-cleanup flow
+1. run a second tiny OMHT writer dogfood through the full proposal-to-cleanup flow
+2. use that dogfood to find the next draft/task or dashboard gap
+3. only then consider broader workflow changes
 
-The default next move should be draft-to-task simplification unless the Telegram operating UX reveals a blocker.
+The default next move should be the second OMHT writer dogfood unless `/status`, `/doctor`, or the dashboard reveals a blocker.

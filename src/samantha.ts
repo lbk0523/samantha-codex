@@ -37,6 +37,8 @@ import {
   checkTaskDraft,
   parseTaskDraftUpdatePatch,
   TaskDraftStore,
+  taskDraftPatchTemplate,
+  taskDraftReadiness,
   taskDraftFromProposal,
   taskSpecFromDraft,
 } from "./lib/task-draft-store";
@@ -184,6 +186,11 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
   await writeDashboard(out, runs, {
     heartbeat: await readDaemonHeartbeat(heartbeatPath(args)),
     pendingInboxCount: await pendingInboxCount(inboxDir),
+    ops: await collectOps(args),
+    proposals: await new ProposalStore(proposalsPath(args)).list(),
+    drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
+    tasks: await new TaskStore(tasksPath(args)).list(),
+    lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
   });
   return runs.length;
 }
@@ -593,8 +600,25 @@ async function main(): Promise<void> {
     if (!draftId) throw new Error("usage: drafts:check <draft-id>");
     const draft = await new TaskDraftStore(taskDraftsPath(args)).find(draftId);
     const result = checkTaskDraft(draft, { knownAgentIds: await knownAgentIds(args) });
-    printJson(result);
+    printJson({
+      check: result,
+      readiness: taskDraftReadiness(draft, {
+        knownAgentIds: await knownAgentIds(args),
+        projectId: flag(args, "project", "") || undefined,
+      }),
+    });
     if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
+  if (args.command === "drafts:template") {
+    const draftId = args.positionals[0];
+    if (!draftId) throw new Error("usage: drafts:template <draft-id> [--project=<id>]");
+    const draft = await new TaskDraftStore(taskDraftsPath(args)).find(draftId);
+    if (!draft) throw new Error(`task draft not found: ${draftId}`);
+    const projectId = flag(args, "project", "");
+    const defaults = projectId ? applyProjectDefaults({}, await loadProjectProfile(projectProfilesDir(args), projectId)) : {};
+    printJson(taskDraftPatchTemplate(draft, defaults));
     return;
   }
 
@@ -607,7 +631,15 @@ async function main(): Promise<void> {
     const nextPatch = projectId
       ? applyProjectDefaults(patch, await loadProjectProfile(projectProfilesDir(args), projectId))
       : patch;
-    printJson(await new TaskDraftStore(taskDraftsPath(args)).update(draftId, nextPatch, new Date().toISOString()));
+    const updated = await new TaskDraftStore(taskDraftsPath(args)).update(draftId, nextPatch, new Date().toISOString());
+    printJson({
+      draft: updated,
+      check: checkTaskDraft(updated, { knownAgentIds: await knownAgentIds(args) }),
+      readiness: taskDraftReadiness(updated, {
+        knownAgentIds: await knownAgentIds(args),
+        projectId: projectId || undefined,
+      }),
+    });
     return;
   }
 
@@ -618,6 +650,7 @@ async function main(): Promise<void> {
     const from = flag(args, "from", "");
     const patch = parseTaskDraftUpdatePatch(from ? await readJson<unknown>(resolve(from)) : {});
     const project = await loadProjectProfile(projectProfilesDir(args), projectId);
+    const before = await new TaskDraftStore(taskDraftsPath(args)).find(draftId);
     const updated = await new TaskDraftStore(taskDraftsPath(args)).update(
       draftId,
       applyProjectDefaults(patch, project),
@@ -625,8 +658,17 @@ async function main(): Promise<void> {
     );
     printJson({
       project,
+      before: before
+        ? {
+            targetFiles: before.targetFiles.length,
+            forbiddenChanges: before.forbiddenChanges.length,
+            setupCommands: before.setupCommands?.length ?? 0,
+            verifyCommands: before.verifyCommands.length,
+          }
+        : undefined,
       draft: updated,
       check: checkTaskDraft(updated, { knownAgentIds: await knownAgentIds(args) }),
+      readiness: taskDraftReadiness(updated, { knownAgentIds: await knownAgentIds(args), projectId }),
     });
     return;
   }
@@ -638,7 +680,10 @@ async function main(): Promise<void> {
     const draft = await draftStore.find(draftId);
     const check = checkTaskDraft(draft, { knownAgentIds: await knownAgentIds(args) });
     if (!check.ok || !draft) {
-      printJson(check);
+      printJson({
+        check,
+        readiness: taskDraftReadiness(draft, { knownAgentIds: await knownAgentIds(args) }),
+      });
       process.exitCode = 1;
       return;
     }
@@ -983,6 +1028,7 @@ async function main(): Promise<void> {
       "  drafts:list",
       "  drafts:show <draft-id>",
       "  drafts:check <draft-id>",
+      "  drafts:template <draft-id> [--project=<id>]",
       "  drafts:update <draft-id> --from=<draft-patch.json>",
       "  drafts:prepare <draft-id> --project=<id> [--from=<draft-patch.json>]",
       "  drafts:approve <draft-id>",

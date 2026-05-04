@@ -69,12 +69,13 @@ Task promotion is local-only:
 
 ```bash
 bun run samantha drafts:check <draft-id>
+bun run samantha drafts:template <draft-id> [--project=<id>]
 bun run samantha drafts:update <draft-id> --from=<draft-patch.json>
 bun run samantha drafts:prepare <draft-id> --project=<id> [--from=<draft-patch.json>]
 bun run samantha drafts:approve <draft-id>
 ```
 
-`drafts:approve` refuses drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker.
+`drafts:check` returns a readiness summary with missing fields and next local commands. `drafts:template` prints an editable JSON patch, optionally filled with project defaults. `drafts:update` rejects unknown patch fields instead of silently ignoring them. `drafts:approve` refuses drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker.
 
 Draft patches may include `setupCommands`. Use this for fresh worktree dependencies, for example:
 

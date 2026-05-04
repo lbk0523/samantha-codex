@@ -30,6 +30,22 @@ export interface TaskDraftCheckResult {
   violations: string[];
 }
 
+export interface TaskDraftFieldReadiness {
+  field: string;
+  required: boolean;
+  ok: boolean;
+  summary: string;
+}
+
+export interface TaskDraftReadiness {
+  ok: boolean;
+  draftId: string;
+  status: TaskDraftStatus | "missing";
+  fields: TaskDraftFieldReadiness[];
+  violations: string[];
+  nextActions: string[];
+}
+
 export interface TaskDraftUpdatePatch {
   title?: string;
   targetAgent?: string;
@@ -55,7 +71,22 @@ function optionalStringArray(value: unknown, field: string): string[] | undefine
 }
 
 export function parseTaskDraftUpdatePatch(raw: unknown): TaskDraftUpdatePatch {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("draft update patch must be an object");
+  }
   const value = raw as Record<string, unknown>;
+  const allowed = new Set([
+    "title",
+    "targetAgent",
+    "targetFiles",
+    "forbiddenChanges",
+    "setupCommands",
+    "verifyCommands",
+    "instructions",
+  ]);
+  for (const field of Object.keys(value)) {
+    if (!allowed.has(field)) throw new Error(`${field} is not an allowed draft update field`);
+  }
   return {
     title: optionalString(value.title, "title"),
     targetAgent: optionalString(value.targetAgent, "targetAgent"),
@@ -143,6 +174,85 @@ export function checkTaskDraft(draft: TaskDraftRecord | undefined, input: { know
     ok: violations.length === 0,
     draftId: draft.id,
     violations,
+  };
+}
+
+function countSummary(items: string[]): string {
+  return items.length === 0 ? "empty" : `${items.length} set`;
+}
+
+export function taskDraftReadiness(
+  draft: TaskDraftRecord | undefined,
+  input: { knownAgentIds?: string[]; projectId?: string } = {},
+): TaskDraftReadiness {
+  const check = checkTaskDraft(draft, { knownAgentIds: input.knownAgentIds });
+  if (!draft) {
+    return {
+      ok: false,
+      draftId: "",
+      status: "missing",
+      fields: [],
+      violations: check.violations,
+      nextActions: ["Find a valid draft id with `bun run samantha drafts:list`."],
+    };
+  }
+
+  const targetAgentKnown = !input.knownAgentIds || input.knownAgentIds.includes(draft.targetAgent);
+  const fields: TaskDraftFieldReadiness[] = [
+    { field: "status", required: true, ok: draft.status === "drafted", summary: draft.status },
+    { field: "title", required: true, ok: draft.title.trim().length > 0, summary: draft.title.trim() ? "set" : "empty" },
+    {
+      field: "targetAgent",
+      required: true,
+      ok: draft.targetAgent.trim().length > 0 && targetAgentKnown,
+      summary: draft.targetAgent.trim() ? `${draft.targetAgent}${targetAgentKnown ? "" : " (unknown)"}` : "empty",
+    },
+    { field: "targetFiles", required: true, ok: draft.targetFiles.length > 0, summary: countSummary(draft.targetFiles) },
+    { field: "forbiddenChanges", required: false, ok: true, summary: countSummary(draft.forbiddenChanges) },
+    { field: "setupCommands", required: false, ok: true, summary: countSummary(draft.setupCommands ?? []) },
+    { field: "verifyCommands", required: true, ok: draft.verifyCommands.length > 0, summary: countSummary(draft.verifyCommands) },
+    {
+      field: "instructions",
+      required: true,
+      ok: draft.instructions.trim().length > 0,
+      summary: draft.instructions.trim() ? `${draft.instructions.trim().length} chars` : "empty",
+    },
+  ];
+
+  const nextActions = check.ok
+    ? [
+        `Approve locally: bun run samantha drafts:approve ${draft.id}`,
+        `Inspect task after approval: bun run samantha tasks:show ${buildTaskIdFromDraft(draft.id)}`,
+      ]
+    : [
+        input.projectId
+          ? `Apply project defaults: bun run samantha drafts:prepare ${draft.id} --project=${input.projectId}`
+          : `Apply project defaults: bun run samantha drafts:prepare ${draft.id} --project=<project-id>`,
+        input.projectId
+          ? `Create patch template: bun run samantha drafts:template ${draft.id} --project=${input.projectId}`
+          : `Create patch template: bun run samantha drafts:template ${draft.id} --project=<project-id>`,
+        `Update draft: bun run samantha drafts:update ${draft.id} --from=<draft-patch.json>`,
+      ];
+
+  return {
+    ok: check.ok,
+    draftId: draft.id,
+    status: draft.status,
+    fields,
+    violations: check.violations,
+    nextActions,
+  };
+}
+
+export function taskDraftPatchTemplate(draft: TaskDraftRecord, defaults: TaskDraftUpdatePatch = {}): TaskDraftUpdatePatch {
+  return {
+    title: draft.title,
+    targetAgent: draft.targetAgent || defaults.targetAgent || "codex-worker",
+    targetFiles: draft.targetFiles.length > 0 ? draft.targetFiles : defaults.targetFiles ?? [],
+    forbiddenChanges: draft.forbiddenChanges.length > 0 ? draft.forbiddenChanges : defaults.forbiddenChanges ?? [],
+    setupCommands: (draft.setupCommands ?? []).length > 0 ? draft.setupCommands : defaults.setupCommands ?? [],
+    verifyCommands: draft.verifyCommands.length > 0 ? draft.verifyCommands : defaults.verifyCommands ?? [],
+    instructions: draft.instructions,
   };
 }
 

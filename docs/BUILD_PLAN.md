@@ -55,6 +55,7 @@ Already implemented:
 - remote proposal intake and review state under `state/proposals.jsonl`
 - accepted proposal to task draft flow under `state/task-drafts.jsonl`
 - local-only task draft check, update, and approval gate
+- task draft readiness summaries and JSON patch templates
 - local-only pending task dispatch into existing worker run logs and run index
 - task draft `setupCommands` promotion into worker setup
 - project profiles for repo-level setup and verify defaults
@@ -64,7 +65,7 @@ Already implemented:
 - read-only `/next-action` Telegram command
 - run lifecycle ledger for merge/push/cleanup completion state
 - systemd timer templates for Telegram polling and outbox replies
-- read-only static dashboard generation
+- read-only static dashboard generation with operations summary
 - OMHT read-only canary
 - OMHT tests-only write canary
 
@@ -216,7 +217,7 @@ Success criteria:
 
 ### Phase 7: Dashboard
 
-MVP status: implemented as read-only static HTML generation from run summaries. Queue state, merge candidates, and project/repo status are still pending.
+MVP status: implemented as read-only static HTML generation from run summaries and local operations state. Project/repo status snapshots are still pending.
 
 Goal: make long-running operation inspectable.
 
@@ -225,8 +226,11 @@ Build:
 - current queue
 - recent runs
 - failed gates
-- pending merge candidates
-- project/repo status
+- latest remote command/report
+- Telegram poll/reply state
+- proposal/draft/task counts
+- latest run lifecycle
+- project/repo status snapshots
 
 Success criteria:
 

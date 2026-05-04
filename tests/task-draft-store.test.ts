@@ -8,6 +8,8 @@ import {
   checkTaskDraft,
   parseTaskDraftUpdatePatch,
   TaskDraftStore,
+  taskDraftPatchTemplate,
+  taskDraftReadiness,
   taskDraftFromProposal,
   taskSpecFromDraft,
   type TaskDraftRecord,
@@ -86,6 +88,36 @@ describe("TaskDraftStore", () => {
     );
   });
 
+  test("summarizes draft readiness and next local actions", () => {
+    const readiness = taskDraftReadiness(draft, { knownAgentIds: ["codex-worker"], projectId: "omht" });
+
+    expect(readiness.ok).toBe(false);
+    expect(readiness.fields.find((field) => field.field === "targetFiles")).toMatchObject({
+      required: true,
+      ok: false,
+      summary: "empty",
+    });
+    expect(readiness.nextActions).toContain(`Apply project defaults: bun run samantha drafts:prepare ${draft.id} --project=omht`);
+  });
+
+  test("builds an editable draft patch template with project defaults", () => {
+    const template = taskDraftPatchTemplate(draft, {
+      forbiddenChanges: ["state/**"],
+      setupCommands: ["bun install"],
+      verifyCommands: ["bun test"],
+    });
+
+    expect(template).toEqual({
+      title: "Improve proposal copy/paste UX.",
+      targetAgent: "codex-worker",
+      targetFiles: [],
+      forbiddenChanges: ["state/**"],
+      setupCommands: ["bun install"],
+      verifyCommands: ["bun test"],
+      instructions: proposal.text,
+    });
+  });
+
   test("converts ready drafts into pending task specs", () => {
     const task = taskSpecFromDraft({
       ...draft,
@@ -155,7 +187,6 @@ describe("TaskDraftStore", () => {
       title: "Updated title",
       targetFiles: ["src/lib/task-draft-store.ts"],
       setupCommands: ["bun install"],
-      status: "approved",
     });
 
     expect(patch).toEqual({
@@ -167,6 +198,9 @@ describe("TaskDraftStore", () => {
       verifyCommands: undefined,
       instructions: undefined,
     });
+    expect(() => parseTaskDraftUpdatePatch({ status: "approved" })).toThrow(
+      "status is not an allowed draft update field",
+    );
     expect(() => parseTaskDraftUpdatePatch({ targetFiles: "src/lib/task-draft-store.ts" })).toThrow(
       "targetFiles must be a string array",
     );

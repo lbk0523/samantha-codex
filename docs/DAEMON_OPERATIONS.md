@@ -26,11 +26,13 @@ Run full local diagnostics:
 bun run samantha doctor
 ```
 
-Build dashboard with daemon status:
+Build the read-only operations dashboard:
 
 ```bash
 bun run samantha dashboard:build
 ```
+
+The dashboard includes daemon, queue, Telegram, latest remote command/report, proposal/draft/task counts, recent runs, and latest run lifecycle state. It does not expose write actions.
 
 ## Runtime Files
 
