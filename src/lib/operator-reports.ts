@@ -3,6 +3,7 @@ import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import type { ProposalRecord } from "./proposal-store";
+import type { RunLifecycleRecord } from "./run-lifecycle-store";
 import type { TaskDraftRecord } from "./task-draft-store";
 
 function oneLine(value: string): string {
@@ -141,7 +142,7 @@ export function runShowReport(runId: string, run: RunSummary | undefined): strin
     .join("\n");
 }
 
-export function nextActionReport(input: { runs: RunSummary[]; tasks: TaskSpec[] }): string {
+export function nextActionReport(input: { runs: RunSummary[]; tasks: TaskSpec[]; lifecycles?: RunLifecycleRecord[] }): string {
   const activeTasks = input.tasks.filter((task) => task.status !== "archived");
   const pending = activeTasks.find((task) => task.status === "pending");
   if (pending) {
@@ -160,6 +161,37 @@ export function nextActionReport(input: { runs: RunSummary[]; tasks: TaskSpec[] 
   const latest = input.runs.at(-1);
   if (latest) {
     if (latest.pass && latest.commit) {
+      const lifecycle = input.lifecycles?.find((record) => record.runId === latest.runId);
+      if (lifecycle?.cleanedAt) {
+        return [
+          "# next-action",
+          "",
+          `Latest run: ${code(latest.runId)}`,
+          "",
+          "No immediate action.",
+          `Lifecycle: merged=${lifecycle.mergedAt ? "yes" : "no"} pushed=${lifecycle.pushedAt ? "yes" : "no"} cleaned=yes`,
+        ].join("\n");
+      }
+      if (lifecycle?.pushedAt) {
+        return [
+          "# next-action",
+          "",
+          `Latest run: ${code(latest.runId)}`,
+          "",
+          "Suggested local next action:",
+          code(`bun run samantha worktree:cleanup --run-log=${latest.logPath} --repo-root=${latest.repoRoot}`),
+        ].join("\n");
+      }
+      if (lifecycle?.mergedAt) {
+        return [
+          "# next-action",
+          "",
+          `Latest run: ${code(latest.runId)}`,
+          "",
+          "Suggested local next action:",
+          code(`bun run samantha merge:push --run-log=${latest.logPath} --repo-root=${latest.repoRoot}`),
+        ].join("\n");
+      }
       return [
         "# next-action",
         "",

@@ -24,6 +24,7 @@ import {
 } from "../src/lib/operator-reports";
 import type { OpsSnapshot } from "../src/lib/ops-diagnostics";
 import type { ProposalRecord } from "../src/lib/proposal-store";
+import type { RunLifecycleRecord } from "../src/lib/run-lifecycle-store";
 import type { TaskDraftRecord } from "../src/lib/task-draft-store";
 
 const passRun: RunSummary = {
@@ -52,6 +53,16 @@ const failRun: RunSummary = {
   pass: false,
   commit: "",
   failureReason: "verify command failed",
+};
+
+const lifecycle: RunLifecycleRecord = {
+  schemaVersion: 1,
+  runId: "run-pass",
+  taskId: "task-pass",
+  repoRoot: "/repo",
+  runLogPath: "/logs/pass.json",
+  commit: "abcdef1234567890",
+  updatedAt: "2026-05-03T10:02:00.000Z",
 };
 
 const heartbeat: DaemonHeartbeat = {
@@ -194,6 +205,15 @@ describe("operator reports", () => {
   test("renders next action reports", () => {
     expect(nextActionReport({ runs: [passRun], tasks: [task] })).toContain("tasks:dispatch task-pass");
     expect(nextActionReport({ runs: [passRun], tasks: [{ ...task, status: "archived" }] })).toContain("merge:check");
+    expect(nextActionReport({ runs: [passRun], tasks: [], lifecycles: [{ ...lifecycle, mergedAt: "now" }] })).toContain(
+      "merge:push --run-log=/logs/pass.json",
+    );
+    expect(nextActionReport({ runs: [passRun], tasks: [], lifecycles: [{ ...lifecycle, pushedAt: "now" }] })).toContain(
+      "worktree:cleanup --run-log=/logs/pass.json",
+    );
+    expect(nextActionReport({ runs: [passRun], tasks: [], lifecycles: [{ ...lifecycle, cleanedAt: "now" }] })).toContain(
+      "No immediate action.",
+    );
     expect(nextActionReport({ runs: [passRun], tasks: [] })).toContain("merge:check");
     expect(nextActionReport({ runs: [failRun], tasks: [] })).toContain("tasks:retry task-fail");
   });

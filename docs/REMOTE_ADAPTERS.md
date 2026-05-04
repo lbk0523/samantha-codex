@@ -96,6 +96,18 @@ bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute
 
 Without `--execute`, `tasks:dispatch` only prepares and prints the Codex command. With `--execute`, it writes a run log under `runs/`, appends `state/runs.jsonl`, and updates the task to `completed` or `failed`. Remote adapters cannot call this command.
 
+Merge/push/cleanup lifecycle is recorded locally in `state/run-lifecycle.jsonl`. Use the run log when pushing so Samantha can verify the run commit is integrated and stop recommending already-completed work:
+
+```bash
+bun run samantha merge:push --repo-root=<repo> --run-log=<run-log.json>
+```
+
+For older runs that were merged/pushed/cleaned before lifecycle recording existed, backfill explicitly:
+
+```bash
+bun run samantha runs:mark-lifecycle --run-log=<run-log.json> --repo-root=<repo> --merged --pushed --cleaned
+```
+
 If a worker run fails for a recoverable reason, keep the recovery local:
 
 ```bash

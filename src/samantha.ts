@@ -5,7 +5,7 @@ import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonH
 import { writeDashboard } from "./lib/dashboard";
 import { processInbox, type InboxCommand } from "./lib/inbox";
 import { RunIndex, summarizeWorkerRun } from "./lib/ledger";
-import { applyMerge, evaluateMergeGate, pushMerge } from "./lib/merge-gate";
+import { applyMerge, evaluateMergeGate, pushMerge, readWorkerRunLog } from "./lib/merge-gate";
 import {
   doctorReport,
   draftProposeAddedReport,
@@ -31,6 +31,7 @@ import { runPlan } from "./lib/plan-runner";
 import { applyProjectDefaults, loadProjectProfile } from "./lib/project-profile";
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
+import { lifecycleBaseFromRunLog, RunLifecycleStore } from "./lib/run-lifecycle-store";
 import { writeWorkerRunLog } from "./lib/run-log";
 import {
   checkTaskDraft,
@@ -100,6 +101,10 @@ function proposalsPath(args: ParsedArgs): string {
 
 function taskDraftsPath(args: ParsedArgs): string {
   return join(stateDir(args), "task-drafts.jsonl");
+}
+
+function runLifecyclePath(args: ParsedArgs): string {
+  return join(stateDir(args), "run-lifecycle.jsonl");
 }
 
 function agentProfilesDir(args: ParsedArgs): string {
@@ -327,6 +332,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     return nextActionReport({
       runs: await new RunIndex(runsPath(args)).list(),
       tasks: await new TaskStore(tasksPath(args)).list(),
+      lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
     });
   }
   if (command.type === "dashboard:build") {
@@ -653,24 +659,77 @@ async function main(): Promise<void> {
   }
 
   if (args.command === "merge:apply") {
-    printJson(
-      await applyMerge({
-        runLogPath: resolve(flag(args, "run-log", "")),
-        repoRoot: resolve(flag(args, "repo-root", ".")),
-        targetBranch: flag(args, "target-branch", "main"),
-      }),
-    );
+    const runLogPath = resolve(flag(args, "run-log", ""));
+    const repoRoot = resolve(flag(args, "repo-root", "."));
+    const result = await applyMerge({
+      runLogPath,
+      repoRoot,
+      targetBranch: flag(args, "target-branch", "main"),
+    });
+    let lifecycle;
+    if ((result.applied && result.verified) || (result.gate.alreadyMerged && result.violations.length === 0)) {
+      lifecycle = await new RunLifecycleStore(runLifecyclePath(args)).mark(
+        lifecycleBaseFromRunLog({
+          log: await readWorkerRunLog(runLogPath),
+          runLogPath,
+          repoRoot,
+          updatedAt: new Date().toISOString(),
+        }),
+        "merged",
+        new Date().toISOString(),
+      );
+    }
+    printJson({ ...result, lifecycle });
     return;
   }
 
   if (args.command === "merge:push") {
-    printJson(
-      await pushMerge({
-        repoRoot: resolve(flag(args, "repo-root", ".")),
-        remote: flag(args, "remote", "origin"),
-        branch: flag(args, "branch", "main"),
-      }),
-    );
+    const runLogFlag = flag(args, "run-log", "");
+    const repoRoot = resolve(flag(args, "repo-root", "."));
+    const branch = flag(args, "branch", "main");
+    const remote = flag(args, "remote", "origin");
+    let resolvedRunLogPath = "";
+    let preflight;
+    if (runLogFlag) {
+      resolvedRunLogPath = resolve(runLogFlag);
+      preflight = await evaluateMergeGate({
+        runLogPath: resolvedRunLogPath,
+        repoRoot,
+        targetBranch: branch,
+      });
+      if (!preflight.alreadyMerged || preflight.violations.length > 0) {
+        printJson({
+          mayPush: false,
+          remote,
+          branch,
+          preflight,
+          violations: [
+            ...preflight.violations,
+            ...(preflight.alreadyMerged ? [] : ["run commit is not integrated; run merge:apply first"]),
+          ],
+        });
+        return;
+      }
+    }
+    const result = await pushMerge({
+      repoRoot,
+      remote,
+      branch,
+    });
+    let lifecycle;
+    if (resolvedRunLogPath && result.mayPush) {
+      lifecycle = await new RunLifecycleStore(runLifecyclePath(args)).mark(
+        lifecycleBaseFromRunLog({
+          log: await readWorkerRunLog(resolvedRunLogPath),
+          runLogPath: resolvedRunLogPath,
+          repoRoot,
+          updatedAt: new Date().toISOString(),
+        }),
+        "pushed",
+        new Date().toISOString(),
+      );
+    }
+    printJson({ ...result, preflight, lifecycle });
     return;
   }
 
@@ -679,20 +738,55 @@ async function main(): Promise<void> {
       report: nextActionReport({
         runs: await new RunIndex(runsPath(args)).list(),
         tasks: await new TaskStore(tasksPath(args)).list(),
+        lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
       }),
     });
     return;
   }
 
+  if (args.command === "runs:mark-lifecycle") {
+    const runLogFlag = flag(args, "run-log", "");
+    const repoRoot = resolve(flag(args, "repo-root", "."));
+    if (!runLogFlag) throw new Error("usage: runs:mark-lifecycle --run-log=<path> --repo-root=<repo> [--merged] [--pushed] [--cleaned]");
+    const runLogPath = resolve(runLogFlag);
+    const log = await readWorkerRunLog(runLogPath);
+    const store = new RunLifecycleStore(runLifecyclePath(args));
+    let lifecycle = lifecycleBaseFromRunLog({
+      log,
+      runLogPath,
+      repoRoot,
+      updatedAt: new Date().toISOString(),
+    });
+    if (args.flags.get("merged") === true) lifecycle = await store.mark(lifecycle, "merged", new Date().toISOString());
+    if (args.flags.get("pushed") === true) lifecycle = await store.mark(lifecycle, "pushed", new Date().toISOString());
+    if (args.flags.get("cleaned") === true) lifecycle = await store.mark(lifecycle, "cleaned", new Date().toISOString());
+    printJson(lifecycle);
+    return;
+  }
+
   if (args.command === "worktree:cleanup") {
-    printJson(
-      await cleanupCompletedWorktree({
-        runLogPath: resolve(flag(args, "run-log", "")),
-        repoRoot: resolve(flag(args, "repo-root", ".")),
-        targetBranch: flag(args, "target-branch", "main"),
-        deleteBranch: args.flags.get("keep-branch") !== true,
-      }),
-    );
+    const runLogPath = resolve(flag(args, "run-log", ""));
+    const repoRoot = resolve(flag(args, "repo-root", "."));
+    const result = await cleanupCompletedWorktree({
+      runLogPath,
+      repoRoot,
+      targetBranch: flag(args, "target-branch", "main"),
+      deleteBranch: args.flags.get("keep-branch") !== true,
+    });
+    let lifecycle;
+    if (result.cleaned) {
+      lifecycle = await new RunLifecycleStore(runLifecyclePath(args)).mark(
+        lifecycleBaseFromRunLog({
+          log: await readWorkerRunLog(runLogPath),
+          runLogPath,
+          repoRoot,
+          updatedAt: new Date().toISOString(),
+        }),
+        "cleaned",
+        new Date().toISOString(),
+      );
+    }
+    printJson({ ...result, lifecycle });
     return;
   }
 
@@ -869,6 +963,7 @@ async function main(): Promise<void> {
       "commands:",
       "  runs:list",
       "  runs:show <run-id>",
+      "  runs:mark-lifecycle --run-log=<path> --repo-root=<repo> [--merged] [--pushed] [--cleaned]",
       "  tasks:add <task.json>",
       "  tasks:list",
       "  tasks:list --include-archived",
@@ -891,7 +986,7 @@ async function main(): Promise<void> {
       "  drafts:approve <draft-id>",
       "  merge:check --run-log=<path> --repo-root=<repo>",
       "  merge:apply --run-log=<path> --repo-root=<repo>",
-      "  merge:push --repo-root=<repo> [--remote=origin] [--branch=main]",
+      "  merge:push --repo-root=<repo> [--run-log=<path>] [--remote=origin] [--branch=main]",
       "  worktree:cleanup --run-log=<path> --repo-root=<repo> [--keep-branch]",
       "  health:check [--max-age-ms=15000]",
       "  doctor [--json]",

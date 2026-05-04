@@ -62,6 +62,7 @@ Already implemented:
 - existing clean worktree reuse for same-task dispatch retries
 - local `tasks:retry` and `tasks:finalize-worktree` recovery commands
 - read-only `/next-action` Telegram command
+- run lifecycle ledger for merge/push/cleanup completion state
 - systemd timer templates for Telegram polling and outbox replies
 - read-only static dashboard generation
 - OMHT read-only canary
@@ -73,6 +74,7 @@ Important dogfood findings:
 - `setupCommands` must be set before task approval when the target repo needs dependencies in an isolated worktree.
 - Failed dispatch attempts may leave clean worktrees behind; Samantha can now reuse or finalize them instead of forcing manual branch cleanup.
 - Already-merged runs should report as already integrated, not as generic HEAD mismatch failures.
+- `/next-action` must use run lifecycle state, not just the latest pass run, or it will recommend already-completed merge/push/cleanup work.
 - Codex workers should not receive parent `.git` metadata write access.
 - Samantha should create commits itself after worker output passes scope and verify gates.
 - Audit logs are mandatory before 24/7 operation; otherwise Samantha cannot explain what happened after the fact.
