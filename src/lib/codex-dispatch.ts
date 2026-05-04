@@ -56,6 +56,7 @@ export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): str
       : "Samantha will choose a concise commit subject after gates pass.",
     "",
     "Before final response, run the verify commands if you changed files.",
+    "If a verify command is blocked only because the worker sandbox cannot bind a local dev-server port, report `blocked` and include `sandbox port bind` in the note; Samantha may rerun verification outside the worker sandbox.",
     "Final response must include:",
     "Use an empty commit value; Samantha records the commit after gates pass.",
     'HARNESS_RESULT: {"status":"pass|rework|blocked","note":"short","commit":"<hash-or-empty>"}',

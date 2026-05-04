@@ -20,6 +20,7 @@ export interface WorkerResultEvaluation {
   pass: boolean;
   harness?: HarnessResult;
   parseError?: string;
+  verifyOverrideReason?: string;
   changedFiles: string[];
   scopeViolations: ScopeViolation[];
   verifyResults: VerifyCommandResult[];
@@ -59,6 +60,29 @@ function findScopeViolations(task: TaskSpec, changedFiles: string[]): ScopeViola
   return violations;
 }
 
+function sandboxVerifyBlockReason(harness: HarnessResult | undefined, output: string): string | undefined {
+  if (harness?.status !== "blocked") return undefined;
+
+  const text = `${harness.note}\n${output}`.toLowerCase();
+  const hasPortBindError =
+    text.includes("listen eperm") ||
+    text.includes("port bind eperm") ||
+    (text.includes("eperm") && (text.includes("bind") || text.includes("0.0.0.0:3000")));
+  if (hasPortBindError) {
+    return "worker sandbox blocked local dev server port bind; Samantha verify commands passed outside worker sandbox";
+  }
+
+  const hasPlaywrightWebServerStartup =
+    text.includes("playwright") &&
+    text.includes("webserver") &&
+    text.includes("process from config.webserver was not able to start");
+  if (hasPlaywrightWebServerStartup) {
+    return "worker sandbox blocked Playwright webServer startup; Samantha verify commands passed outside worker sandbox";
+  }
+
+  return undefined;
+}
+
 export async function evaluateWorkerResult(input: {
   task: TaskSpec;
   cwd: string;
@@ -81,18 +105,23 @@ export async function evaluateWorkerResult(input: {
   const workingTreeFiles = await gitWorkingTreeFiles(input.cwd);
   const changedFiles = Array.from(new Set([...committedFiles, ...workingTreeFiles]));
   const scopeViolations = findScopeViolations(input.task, changedFiles);
+  const verifyOverrideReason = sandboxVerifyBlockReason(harness, input.output);
+  const shouldRunVerify =
+    harness?.status === "pass" || (verifyOverrideReason !== undefined && scopeViolations.length === 0);
   const verifyResults =
-    harness?.status === "pass"
+    shouldRunVerify
       ? await Promise.all(input.task.verifyCommands.map((command) => runVerifyCommand(command, input.cwd)))
       : [];
+  const verifyPassed = verifyResults.every((result) => result.exitCode === 0);
 
   return {
     pass:
-      harness?.status === "pass" &&
+      (harness?.status === "pass" || verifyOverrideReason !== undefined) &&
       scopeViolations.length === 0 &&
-      verifyResults.every((result) => result.exitCode === 0),
+      verifyPassed,
     harness,
     parseError,
+    ...(verifyOverrideReason && verifyPassed ? { verifyOverrideReason } : {}),
     changedFiles,
     scopeViolations,
     verifyResults,

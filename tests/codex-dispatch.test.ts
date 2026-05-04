@@ -41,6 +41,7 @@ describe("codex dispatch preparation", () => {
     expect(prompt).toContain("src/lib/codex-dispatch.ts");
     expect(prompt).toContain("Setup commands already run by Samantha");
     expect(prompt).toContain("Samantha commit subject after gates pass");
+    expect(prompt).toContain("sandbox port bind");
     expect(prompt).toContain("HARNESS_RESULT");
   });
 

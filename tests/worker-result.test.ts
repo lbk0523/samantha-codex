@@ -130,6 +130,59 @@ describe("evaluateWorkerResult", () => {
     expect(result.verifyResults[0]?.exitCode).not.toBe(0);
   });
 
+  test("promotes sandbox port-bind blocked workers when Samantha verify passes", async () => {
+    const { root, baseCommit } = await makeRepo();
+    await writeFile(join(root, "allowed.txt"), "changed\n", "utf8");
+
+    const result = await evaluateWorkerResult({
+      task,
+      cwd: root,
+      baseCommit,
+      output:
+        'Error: listen EPERM: operation not permitted 0.0.0.0:3000\n' +
+        'HARNESS_RESULT: {"status":"blocked","note":"e2e blocked by sandbox port bind EPERM before spec ran","commit":""}',
+    });
+
+    expect(result.pass).toBe(true);
+    expect(result.harness?.status).toBe("blocked");
+    expect(result.verifyOverrideReason).toContain("worker sandbox blocked");
+    expect(result.verifyResults[0]?.exitCode).toBe(0);
+  });
+
+  test("does not promote ordinary blocked workers", async () => {
+    const { root, baseCommit } = await makeRepo();
+    await writeFile(join(root, "allowed.txt"), "changed\n", "utf8");
+
+    const result = await evaluateWorkerResult({
+      task,
+      cwd: root,
+      baseCommit,
+      output: 'HARNESS_RESULT: {"status":"blocked","note":"needs product decision","commit":""}',
+    });
+
+    expect(result.pass).toBe(false);
+    expect(result.verifyOverrideReason).toBeUndefined();
+    expect(result.verifyResults).toEqual([]);
+  });
+
+  test("keeps sandbox port-bind blocked workers failed when Samantha verify fails", async () => {
+    const { root, baseCommit } = await makeRepo();
+    await writeFile(join(root, "allowed.txt"), "changed\n", "utf8");
+
+    const result = await evaluateWorkerResult({
+      task: { ...task, verifyCommands: ["test -f missing.txt"] },
+      cwd: root,
+      baseCommit,
+      output:
+        'Error: listen EPERM: operation not permitted 0.0.0.0:3000\n' +
+        'HARNESS_RESULT: {"status":"blocked","note":"e2e blocked by sandbox port bind EPERM before spec ran","commit":""}',
+    });
+
+    expect(result.pass).toBe(false);
+    expect(result.verifyOverrideReason).toBeUndefined();
+    expect(result.verifyResults[0]?.exitCode).not.toBe(0);
+  });
+
   test("fails on missing structured result", async () => {
     const { root, baseCommit } = await makeRepo();
 
