@@ -325,7 +325,8 @@ export function nowReport(input: {
       `Title: ${oneLine(draft.title)}`,
       missing.length ? `Missing: ${missing.join(", ")}` : "Ready for local approval.",
       "",
-      `Next: ${code("/draft_next")}`,
+      "Remote next: none",
+      `Inspect: ${code("/draft_next")}`,
       `Local next: ${code(localNext)}`,
     ].join("\n");
   }
@@ -342,7 +343,8 @@ export function nowReport(input: {
       `Proposal: ${code(proposal.id)}`,
       `Text: ${oneLine(proposal.text)}`,
       "",
-      `Next: ${code("/proposal_next")}`,
+      "Remote next: review decision required",
+      `Inspect: ${code("/proposal_next")}`,
     ].join("\n");
   }
 

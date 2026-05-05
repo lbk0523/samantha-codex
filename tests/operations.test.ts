@@ -623,7 +623,8 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const report = await readFile(join(outbox, "002-now.md"), "utf8");
     expect(report).toContain("Draft is waiting for local preparation");
-    expect(report).toContain("Next: `/draft_next`");
+    expect(report).toContain("Remote next: none");
+    expect(report).toContain("Inspect: `/draft_next`");
     expect(report).not.toContain("No immediate remote action");
     const draftReport = await readFile(join(outbox, "003-draft-next.md"), "utf8");
     expect(draftReport).toContain("Draft: `draft-work-now`");
