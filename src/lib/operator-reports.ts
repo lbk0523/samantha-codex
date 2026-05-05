@@ -126,7 +126,7 @@ export function remoteHelpReport(): string {
     "- `/prepare-dispatch <task-id>`: create a pending dispatch action without executing it",
     "- `/actions`: show recent pending/finished actions",
     "- `/action <action-id>`: show one action",
-    "- `/approve-action <action-id>`: execute one pending dispatch action",
+    "- `/approve-action <action-id>`: approve one pending dispatch action for the runner",
     "",
     "Remote commands are safe-gated. They cannot dispatch workers directly, merge, push, clean worktrees, or run shell commands.",
   ].join("\n");
@@ -427,6 +427,7 @@ export function remoteActionShowReport(actionId: string, action: RemoteActionRec
     `Repo: ${code(action.repoRoot)}`,
     `Created: ${code(action.createdAt)}`,
     action.approvedAt ? `Approved: ${code(action.approvedAt)}` : "",
+    action.startedAt ? `Started: ${code(action.startedAt)}` : "",
     action.completedAt ? `Completed: ${code(action.completedAt)}` : "",
     "",
     "Command:",
@@ -454,6 +455,7 @@ export function remoteActionApprovedReport(action: RemoteActionRecord): string {
     result?.liveLogPath ? `Live log: ${code(result.liveLogPath)}` : "",
     result?.tmuxSession ? `Tmux: ${code(result.tmuxSession)}` : "",
     result?.failure ? `Failure: ${oneLine(result.failure)}` : "",
+    action.status === "approved" ? "Runner: waiting for `actions:watch` or `actions:run-pending`." : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -466,6 +468,7 @@ export function statusReport(input: {
   ops?: OpsSnapshot;
   proposals?: ProposalRecord[];
   drafts?: TaskDraftRecord[];
+  actions?: RemoteActionRecord[];
   lifecycles?: RunLifecycleRecord[];
 }): string {
   const latest = input.runs.at(-1);
@@ -483,6 +486,14 @@ export function statusReport(input: {
         drafted: input.drafts.filter((draft) => draft.status === "drafted").length,
         approved: input.drafts.filter((draft) => draft.status === "approved").length,
         discarded: input.drafts.filter((draft) => draft.status === "discarded").length,
+      }
+    : undefined;
+  const actionCounts = input.actions
+    ? {
+        pending: input.actions.filter((action) => action.status === "pending").length,
+        approved: input.actions.filter((action) => action.status === "approved").length,
+        running: input.actions.filter((action) => action.status === "running").length,
+        failed: input.actions.filter((action) => action.status === "failed").length,
       }
     : undefined;
   const heartbeat = input.heartbeat
@@ -535,6 +546,11 @@ export function statusReport(input: {
     "",
     "Drafts:",
     draftCounts ? `- drafted: ${draftCounts.drafted} approved: ${draftCounts.approved} discarded: ${draftCounts.discarded}` : "- unknown",
+    "",
+    "Actions:",
+    actionCounts
+      ? `- pending: ${actionCounts.pending} approved: ${actionCounts.approved} running: ${actionCounts.running} failed: ${actionCounts.failed}`
+      : "- unknown",
     "",
     "Runs:",
     `- total: ${input.runs.length}`,

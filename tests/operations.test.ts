@@ -8,7 +8,7 @@ import { renderDashboard, renderLaneViewDashboard, writeDashboard } from "../src
 import { processInbox } from "../src/lib/inbox";
 import type { RunSummary } from "../src/lib/ledger";
 import { buildPlanBatches, type LoadedPlanTask } from "../src/lib/plan-runner";
-import { RemoteActionStore } from "../src/lib/remote-action-store";
+import { createRemoteDispatchAction, RemoteActionStore } from "../src/lib/remote-action-store";
 import { commandFromRemoteInput, enqueueRemoteCommand } from "../src/lib/remote-command";
 
 let tmpRoots: string[] = [];
@@ -306,6 +306,64 @@ describe("inbox and remote commands", () => {
       allocate: true,
       execute: true,
       tmux: true,
+    });
+  });
+
+  test("approves remote dispatch actions without running workers in inbox processing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-approve-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    const store = new RemoteActionStore(join(state, "remote-actions.jsonl"));
+    const action = createRemoteDispatchAction({
+      task: { ...task, id: "task-pass" },
+      repoRoot: "/repo",
+      createdAt: "2026-05-03T10:07:00.000Z",
+      source: "remote",
+      commandId: "remote-prepare",
+    });
+    await store.append(action);
+    await writeFile(
+      join(inbox, "001.json"),
+      JSON.stringify({
+        id: "remote-approve",
+        type: "actions:approve",
+        args: { id: action.id, receivedAt: "2026-05-03T10:08:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const report = await readFile(join(outbox, "001.md"), "utf8");
+    const approved = await store.find(action.id);
+    expect(report).toContain("Status: `approved`");
+    expect(report).toContain("waiting for `actions:watch`");
+    expect(approved).toMatchObject({
+      status: "approved",
+      approvedAt: "2026-05-03T10:08:00.000Z",
     });
   });
 });

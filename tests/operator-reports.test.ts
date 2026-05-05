@@ -201,6 +201,15 @@ describe("operator reports", () => {
       ops,
       proposals: [proposal],
       drafts: [draft],
+      actions: [
+        createRemoteDispatchAction({
+          task,
+          repoRoot: "/repo",
+          createdAt: "2026-05-03T10:07:00.000Z",
+          source: "remote",
+          commandId: "remote-prepare",
+        }),
+      ],
       lifecycles: [{ ...lifecycle, cleanedAt: "2026-05-03T10:03:00.000Z" }],
     });
     expect(status).toContain("- pending inbox: 2");
@@ -214,6 +223,7 @@ describe("operator reports", () => {
     expect(status).toContain("- lifecycle: missing");
     expect(status).toContain("- pending_review: 1 accepted: 0 rejected: 0");
     expect(status).toContain("- drafted: 1 approved: 0 discarded: 0");
+    expect(status).toContain("- pending: 1 approved: 0 running: 0 failed: 0");
     expect(
       statusReport({
         runs: [passRun],
@@ -259,6 +269,7 @@ describe("operator reports", () => {
       ...action,
       status: "completed" as const,
       approvedAt: "2026-05-03T10:08:00.000Z",
+      startedAt: "2026-05-03T10:08:30.000Z",
       completedAt: "2026-05-03T10:09:00.000Z",
       result: {
         runId: "run-pass",
@@ -274,6 +285,7 @@ describe("operator reports", () => {
     expect(remoteActionPreparedReport(action)).toContain("No worker was dispatched yet.");
     expect(remoteActionsListReport([action])).toContain("dispatch_task");
     expect(remoteActionShowReport(action.id, action)).toContain("tasks:dispatch task-pass");
+    expect(remoteActionApprovedReport({ ...action, status: "approved" })).toContain("waiting for `actions:watch`");
     expect(remoteActionApprovedReport(completed)).toContain("Pass: yes");
     expect(remoteActionApprovedReport(completed)).toContain("Tmux: `samantha`");
   });

@@ -120,6 +120,10 @@ function remoteActionsPath(args: ParsedArgs): string {
   return join(stateDir(args), "remote-actions.jsonl");
 }
 
+function actionRunnerLockPath(args: ParsedArgs): string {
+  return resolve(flag(args, "actions-lock-file", join(stateDir(args), "actions.lock")));
+}
+
 function logDir(args: ParsedArgs): string {
   return resolve(flag(args, "log-dir", join(root, "runs")));
 }
@@ -466,6 +470,51 @@ async function executeTaskDispatch(input: {
   };
 }
 
+async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promise<{ actionId: string; status: string }[]> {
+  const store = new RemoteActionStore(remoteActionsPath(args));
+  const results: { actionId: string; status: string }[] = [];
+
+  while (results.length < limit) {
+    const action = (await store.list()).find((item) => item.status === "approved");
+    if (!action) break;
+    const running = await store.markRunning(action.id, new Date().toISOString());
+    if (running.kind !== "dispatch_task") throw new Error(`unsupported remote action kind: ${running.kind}`);
+
+    try {
+      const result = await executeTaskDispatch({
+        args,
+        taskId: running.taskId,
+        repoRoot: running.repoRoot,
+        allocate: true,
+        tmux: true,
+      });
+      const finished = await store.markFinished(running.id, {
+        status: result.runSummary.pass ? "completed" : "failed",
+        completedAt: new Date().toISOString(),
+        result: {
+          runId: result.runSummary.runId,
+          runLogPath: result.runLog.path,
+          liveLogPath: result.liveLog?.path,
+          tmuxSession: result.tmux?.sessionName,
+          pass: result.runSummary.pass,
+          outcome: result.runSummary.outcome,
+          failure: result.runSummary.failureReason,
+        },
+      });
+      results.push({ actionId: finished.id, status: finished.status });
+    } catch (err) {
+      const failed = await store.markFinished(running.id, {
+        status: "failed",
+        completedAt: new Date().toISOString(),
+        result: { failure: errorMessage(err) },
+      });
+      results.push({ actionId: failed.id, status: failed.status });
+    }
+  }
+
+  return results;
+}
+
 async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Promise<string> {
   if (command.type === "remote:help") {
     return remoteHelpReport();
@@ -480,6 +529,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       ops,
       proposals: await new ProposalStore(proposalsPath(args)).list(),
       drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
+      actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
       lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
     });
   }
@@ -629,39 +679,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const id = String(command.args?.id ?? "");
     if (!id) throw new Error("action id is required");
     const store = new RemoteActionStore(remoteActionsPath(args));
-    const running = await store.markRunning(id, String(command.args?.receivedAt ?? new Date().toISOString()));
-    if (running.kind !== "dispatch_task") throw new Error(`unsupported remote action kind: ${running.kind}`);
-
-    try {
-      const result = await executeTaskDispatch({
-        args,
-        taskId: running.taskId,
-        repoRoot: running.repoRoot,
-        allocate: true,
-        tmux: true,
-      });
-      const finished = await store.markFinished(id, {
-        status: result.runSummary.pass ? "completed" : "failed",
-        completedAt: new Date().toISOString(),
-        result: {
-          runId: result.runSummary.runId,
-          runLogPath: result.runLog.path,
-          liveLogPath: result.liveLog?.path,
-          tmuxSession: result.tmux?.sessionName,
-          pass: result.runSummary.pass,
-          outcome: result.runSummary.outcome,
-          failure: result.runSummary.failureReason,
-        },
-      });
-      return remoteActionApprovedReport(finished);
-    } catch (err) {
-      const failed = await store.markFinished(id, {
-        status: "failed",
-        completedAt: new Date().toISOString(),
-        result: { failure: errorMessage(err) },
-      });
-      return remoteActionApprovedReport(failed);
-    }
+    const approved = await store.markApproved(id, String(command.args?.receivedAt ?? new Date().toISOString()));
+    return remoteActionApprovedReport(approved);
   }
   if (command.type === "ops:next-action") {
     return nextActionReport({
@@ -732,6 +751,45 @@ async function main(): Promise<void> {
     const actionId = args.positionals[0];
     if (!actionId) throw new Error("usage: actions:show <action-id>");
     printJson((await new RemoteActionStore(remoteActionsPath(args)).find(actionId)) ?? null);
+    return;
+  }
+
+  if (args.command === "actions:run-pending") {
+    const limit = Math.max(1, Number(flag(args, "limit", "1")));
+    const lock = await acquireDaemonLock({
+      lockPath: actionRunnerLockPath(args),
+      command: "actions:run-pending",
+    });
+    try {
+      printJson({ processed: await runApprovedRemoteActions(args, limit) });
+    } finally {
+      await lock.release();
+    }
+    return;
+  }
+
+  if (args.command === "actions:watch") {
+    const intervalMs = Number(flag(args, "interval-ms", "1000"));
+    const limit = Math.max(1, Number(flag(args, "limit", "1")));
+    const lock = await acquireDaemonLock({
+      lockPath: actionRunnerLockPath(args),
+      command: "actions:watch",
+    });
+    let stopping = false;
+    const stop = () => {
+      stopping = true;
+    };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+
+    try {
+      while (!stopping) {
+        await runApprovedRemoteActions(args, limit);
+        await Bun.sleep(Number.isFinite(intervalMs) ? intervalMs : 1000);
+      }
+    } finally {
+      await lock.release();
+    }
     return;
   }
 
@@ -1364,6 +1422,8 @@ async function main(): Promise<void> {
       "  tasks:retry <task-id>",
       "  actions:list",
       "  actions:show <action-id>",
+      "  actions:run-pending [--limit=1]",
+      "  actions:watch [--interval-ms=1000] [--limit=1]",
       "  next-action",
       "  proposals:list",
       "  proposals:show <proposal-id>",

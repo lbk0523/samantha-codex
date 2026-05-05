@@ -75,7 +75,7 @@ Available command groups:
 - `inbox:*` processes local file-backed commands
 - `remote:enqueue` maps a narrow remote command JSON into the local inbox
 - `telegram:poll` maps allowlisted Telegram updates into the local inbox
-- `actions:*` records Telegram-approved dispatch actions in `state/remote-actions.jsonl`
+- `actions:*` records and runs Telegram-approved dispatch actions from `state/remote-actions.jsonl`
 - `dashboard:build` writes read-only `dashboard/index.html` and `dashboard/lane-view.html`
 - `dashboard:serve` serves Overview at `/`, `/index.html`, and `/overview`, and Lane View at `/lane-view` and `/lane-view.html`; each request rebuilds from local state
 
@@ -94,7 +94,7 @@ By default, worker worktrees are placed outside the target repo under `.samantha
 
 For live worker visibility, dispatch through `samantha tasks:dispatch` with `--execute --tmux` or `--execute --live-log`. The browser dashboard reads `runs/live/*.jsonl`: Overview separates current operational problems from historical run failures and shows the reverse-chronological live timeline, Lane View groups the same events by worker/run lane, and the tmux view attaches with `tmux attach -t samantha`.
 
-Telegram can prepare and approve one safe dispatch action at a time with `/prepare-dispatch <task-id>` followed by `/approve-action <action-id>`. The approved action always runs the prebuilt `tasks:dispatch <task-id> --allocate --execute --tmux` shape using the locally configured `SAMANTHA_REPO_ROOT` or `inbox:watch --repo-root=<repo>`; Telegram input cannot supply shell commands, repo paths, merge, push, or cleanup actions.
+Telegram can prepare and approve one safe dispatch action at a time with `/prepare-dispatch <task-id>` followed by `/approve-action <action-id>`. Approval does not run inside `inbox:watch`; `actions:watch` picks up approved actions and runs the prebuilt `tasks:dispatch <task-id> --allocate --execute --tmux` shape using the locally configured `SAMANTHA_REPO_ROOT`. Telegram input cannot supply shell commands, repo paths, merge, push, or cleanup actions.
 
 ## Design Notes
 

@@ -4,7 +4,7 @@ Last updated: 2026-05-05
 
 ## Policy
 
-Remote adapters are input adapters first. They may create inbox command files and may execute only a prebuilt dispatch action after explicit Telegram approval. They may not execute shell commands, dispatch workers directly, merge, push, or clean worktrees.
+Remote adapters are input adapters first. They may create inbox command files and may approve only a prebuilt dispatch action. A separate local action runner executes approved actions. Remote adapters may not execute shell commands, dispatch workers directly, merge, push, or clean worktrees.
 
 All remote input must pass through:
 
@@ -102,16 +102,19 @@ bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute --tmux
 
 Without `--execute`, `tasks:dispatch` only prepares and prints the Codex command. With `--execute`, it writes a run log under `runs/`, appends `state/runs.jsonl`, and updates the task to `completed` or `failed`.
 
-Remote dispatch uses an action gate instead of direct command execution:
+Remote dispatch uses an action gate plus a separate runner instead of direct command execution:
 
 ```text
 /prepare-dispatch <task-id> -> state/remote-actions.jsonl pending action
-/approve-action <action-id> -> tasks:dispatch <task-id> --allocate --execute --tmux
+/approve-action <action-id> -> approved action
+actions:watch -> tasks:dispatch <task-id> --allocate --execute --tmux
 ```
 
 `/prepare-dispatch` validates that the task is pending and that the target agent passes dispatch policy. It records the fixed repo root, task id, target agent, and dispatch flags in `state/remote-actions.jsonl`; no worker is started.
 
-`/approve-action` executes only an existing pending action id. Telegram cannot supply repo paths, shell commands, extra flags, merge, push, or cleanup instructions. The repo root must be configured locally on the watcher through `inbox:watch --repo-root=<repo>` or `SAMANTHA_REPO_ROOT`. If neither is set, action preparation fails with an explicit report.
+`/approve-action` only marks an existing pending action as approved. It does not run inside `inbox:watch`, so Telegram status and inspection commands can continue while the worker later runs.
+
+`actions:watch` or one-shot `actions:run-pending` executes only existing approved action ids. Telegram cannot supply repo paths, shell commands, extra flags, merge, push, or cleanup instructions. The repo root must be configured locally through `SAMANTHA_REPO_ROOT`. If it is not set, action preparation fails with an explicit report.
 
 Use `--tmux` for a read-only supervisor view while the worker runs. Samantha still owns the worker process, safety gates, merge, and push; tmux only tails `runs/live/<run-id>.jsonl` through a formatter. Attach with:
 
@@ -241,7 +244,9 @@ cp ops/systemd/samantha-telegram-poll.service ~/.config/systemd/user/
 cp ops/systemd/samantha-telegram-poll.timer ~/.config/systemd/user/
 cp ops/systemd/samantha-telegram-reply.service ~/.config/systemd/user/
 cp ops/systemd/samantha-telegram-reply.timer ~/.config/systemd/user/
+cp ops/systemd/samantha-actions-watch.service ~/.config/systemd/user/
 systemctl --user daemon-reload
+systemctl --user enable --now samantha-actions-watch.service
 systemctl --user enable --now samantha-telegram-poll.timer
 systemctl --user enable --now samantha-telegram-reply.timer
 ```
@@ -253,6 +258,7 @@ The timer templates favor interactive replies:
 - poll restarts 3 seconds after the prior `telegram:poll` exits
 - reply restarts 3 seconds after the prior `telegram:reply` exits
 - local inbox processing runs every 1 second in the service template
+- approved action processing runs every 1 second in the action service template
 
 ## Safety
 

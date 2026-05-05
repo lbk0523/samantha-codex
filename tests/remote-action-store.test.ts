@@ -62,14 +62,16 @@ describe("RemoteActionStore", () => {
 
     await store.append(action);
     await expect(store.append(action)).rejects.toThrow("already exists");
-    const running = await store.markRunning(action.id, "2026-05-05T10:01:00.000Z");
+    const approved = await store.markApproved(action.id, "2026-05-05T10:01:00.000Z");
+    const running = await store.markRunning(action.id, "2026-05-05T10:01:30.000Z");
     const completed = await store.markFinished(action.id, {
       status: "completed",
       completedAt: "2026-05-05T10:02:00.000Z",
       result: { runId: "run-1", pass: true, outcome: "pass" },
     });
 
-    expect(running).toMatchObject({ status: "running", approvedAt: "2026-05-05T10:01:00.000Z" });
+    expect(approved).toMatchObject({ status: "approved", approvedAt: "2026-05-05T10:01:00.000Z" });
+    expect(running).toMatchObject({ status: "running", startedAt: "2026-05-05T10:01:30.000Z" });
     expect(completed).toMatchObject({
       id: action.id,
       taskId: action.taskId,
@@ -77,7 +79,7 @@ describe("RemoteActionStore", () => {
       status: "completed",
       result: { runId: "run-1", pass: true },
     });
-    await expect(store.markRunning(action.id, "2026-05-05T10:03:00.000Z")).rejects.toThrow(
+    await expect(store.markApproved(action.id, "2026-05-05T10:03:00.000Z")).rejects.toThrow(
       "remote action must be pending",
     );
   });

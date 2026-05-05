@@ -63,6 +63,7 @@ export interface OpsSnapshot {
 
 const systemdFiles = [
   "samantha-inbox-watch.service",
+  "samantha-actions-watch.service",
   "samantha-telegram-poll.service",
   "samantha-telegram-poll.timer",
   "samantha-telegram-reply.service",

@@ -99,14 +99,16 @@ Remote task approval remains closed. Dispatch is available only through the expl
 Telegram can now run a worker only through this two-step gate:
 
 - `/prepare-dispatch <task-id>` records a pending dispatch action in `state/remote-actions.jsonl`
-- `/approve-action <action-id>` executes that exact pending action with fixed `--allocate --execute --tmux` flags
+- `/approve-action <action-id>` marks that exact pending action approved
+- `actions:watch` executes approved actions with fixed `--allocate --execute --tmux` flags
 
 Completed criteria:
 
 - Telegram cannot supply repo paths, shell commands, merge, push, cleanup, or extra dispatch flags.
-- the repo root is configured locally by `inbox:watch --repo-root=<repo>` or `SAMANTHA_REPO_ROOT`.
+- the repo root is configured locally by `SAMANTHA_REPO_ROOT`.
 - dispatch policy is checked before action creation.
 - action approval requires an existing pending action id.
+- worker execution does not block `inbox:watch` from processing later Telegram commands.
 
 ### Completed: Read-Only Dashboard Upgrade
 

@@ -14,12 +14,10 @@ Start manually:
 bun run samantha inbox:watch
 ```
 
-If Telegram-approved dispatch actions should run, configure the target repo locally:
+If Telegram-approved dispatch actions should run, configure the target repo locally and run the action watcher:
 
 ```bash
-SAMANTHA_REPO_ROOT=/home/lbk0523/projects/samantha-codex bun run samantha inbox:watch
-# or
-bun run samantha inbox:watch --repo-root=/home/lbk0523/projects/samantha-codex
+SAMANTHA_REPO_ROOT=/home/lbk0523/projects/samantha-codex bun run samantha actions:watch
 ```
 
 Check health:
@@ -48,7 +46,7 @@ The dashboard includes daemon, queue, Telegram, latest remote command/report, pr
 - `state/heartbeat.json`: last daemon heartbeat
 - `state/proposals.jsonl`: remote work proposals and review state
 - `state/task-drafts.jsonl`: task drafts created from accepted proposals
-- `state/remote-actions.jsonl`: pending/running/finished Telegram-approved dispatch actions
+- `state/remote-actions.jsonl`: pending/approved/running/finished Telegram-approved dispatch actions
 - `state/run-lifecycle.jsonl`: merge, push, and cleanup state for completed runs
 - `inbox/*.json`: queued local commands
 - `outbox/*.md`: command reports
@@ -63,6 +61,7 @@ Install the template:
 ```bash
 mkdir -p ~/.config/systemd/user
 cp ops/systemd/samantha-inbox-watch.service ~/.config/systemd/user/
+cp ops/systemd/samantha-actions-watch.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 ```
 
@@ -70,16 +69,20 @@ Start and enable:
 
 ```bash
 systemctl --user start samantha-inbox-watch
+systemctl --user start samantha-actions-watch
 systemctl --user enable samantha-inbox-watch
+systemctl --user enable samantha-actions-watch
 ```
 
-The service template reads `%h/projects/samantha-codex/.env`, so `SAMANTHA_REPO_ROOT` can be set there without committing local paths.
+The service templates read `%h/projects/samantha-codex/.env`, so `SAMANTHA_REPO_ROOT` can be set there without committing local paths.
 
 Inspect:
 
 ```bash
 systemctl --user status samantha-inbox-watch
+systemctl --user status samantha-actions-watch
 journalctl --user -u samantha-inbox-watch -n 100 --no-pager
+journalctl --user -u samantha-actions-watch -n 100 --no-pager
 bun run samantha health:check
 ```
 
@@ -87,6 +90,7 @@ Stop:
 
 ```bash
 systemctl --user stop samantha-inbox-watch
+systemctl --user stop samantha-actions-watch
 ```
 
 If the service should run after logout, enable lingering once:
@@ -110,7 +114,7 @@ Set local, uncommitted values:
 ```text
 TELEGRAM_BOT_TOKEN=<token>
 TELEGRAM_CHAT_ID=<telegram-chat-id>
-# Optional, required for /prepare-dispatch and /approve-action:
+# Optional, required for /prepare-dispatch:
 SAMANTHA_REPO_ROOT=/home/lbk0523/projects/samantha-codex
 ```
 

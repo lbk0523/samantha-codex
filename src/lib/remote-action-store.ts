@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import type { TaskSpec } from "./contracts";
 import { sanitizeTaskId } from "./worktree";
 
-export type RemoteActionStatus = "pending" | "running" | "completed" | "failed";
+export type RemoteActionStatus = "pending" | "approved" | "running" | "completed" | "failed";
 export type RemoteActionKind = "dispatch_task";
 
 export interface RemoteActionResult {
@@ -31,6 +31,7 @@ export interface RemoteActionRecord {
   execute: true;
   tmux: true;
   approvedAt?: string;
+  startedAt?: string;
   completedAt?: string;
   result?: RemoteActionResult;
 }
@@ -111,10 +112,17 @@ export class RemoteActionStore {
     await writeActions(this.path, [...actions, action]);
   }
 
-  async markRunning(id: string, approvedAt: string): Promise<RemoteActionRecord> {
+  async markApproved(id: string, approvedAt: string): Promise<RemoteActionRecord> {
     return this.update(id, (action) => {
       if (action.status !== "pending") throw new Error(`remote action must be pending: ${action.status}`);
-      return { ...action, status: "running", approvedAt };
+      return { ...action, status: "approved", approvedAt };
+    });
+  }
+
+  async markRunning(id: string, startedAt: string): Promise<RemoteActionRecord> {
+    return this.update(id, (action) => {
+      if (action.status !== "approved") throw new Error(`remote action must be approved: ${action.status}`);
+      return { ...action, status: "running", startedAt };
     });
   }
 

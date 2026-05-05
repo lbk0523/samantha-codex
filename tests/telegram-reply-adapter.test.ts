@@ -98,6 +98,7 @@ describe("sendOutboxReplies", () => {
       statePath: join(root, "state", "telegram-replies.json"),
       sendExisting: true,
       minAgeMs: 0,
+      now: new Date(Date.now() + 60_000),
       fetchImpl: (async () => ({
         statusText: "OK",
         json: async () => ({ ok: true }),
