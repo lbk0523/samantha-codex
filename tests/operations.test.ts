@@ -283,6 +283,18 @@ describe("dashboard", () => {
       proposals: [],
       drafts: [],
       tasks: [task],
+      liveRuns: [
+        {
+          runId: "run-live",
+          taskId: "dashboard-live-observer-dogfood",
+          agentId: "codex-reviewer",
+          phase: "execute",
+          lastEventType: "stdout",
+          lastAt: "2026-05-03T10:06:00.000Z",
+          liveLogPath: "/repo/runs/live/run-live.jsonl",
+          latestText: "<worker update>",
+        },
+      ],
       lifecycles: [
         {
           schemaVersion: 1,
@@ -307,6 +319,9 @@ describe("dashboard", () => {
     expect(html).toContain("Pending inbox commands");
     expect(html).toContain("status:show");
     expect(html).toContain("merged=yes pushed=yes cleaned=yes");
+    expect(html).toContain("dashboard-live-observer-dogfood");
+    expect(html).toContain("/repo/runs/live/run-live.jsonl");
+    expect(html).toContain("&lt;worker update&gt;");
     expect(html).toContain("&lt;task&gt;");
     expect(html).toContain("abc123");
   });

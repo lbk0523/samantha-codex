@@ -1,0 +1,13 @@
+{
+  "id": "dashboard-live-observer-dogfood",
+  "title": "Dogfood Samantha live worker dashboard visibility",
+  "targetAgent": "codex-reviewer",
+  "targetFiles": [],
+  "forbiddenChanges": ["**/*"],
+  "setupCommands": [
+    "for i in $(seq 1 12); do echo \"dashboard dogfood setup heartbeat $i/12\"; sleep 5; done"
+  ],
+  "verifyCommands": ["git status --short"],
+  "instructions": "Read the repository status without changing files. This is a dashboard visibility dogfood. Wait for setup to finish, inspect README.md and docs/REMOTE_ADAPTERS.md, then return HARNESS_RESULT with status pass, a note explaining whether the live observer was available, and an empty commit.",
+  "status": "pending"
+}

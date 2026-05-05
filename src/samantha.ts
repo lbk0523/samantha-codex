@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
-import { writeDashboard } from "./lib/dashboard";
+import { writeDashboard, type LiveRunStatus } from "./lib/dashboard";
 import { processInbox, type InboxCommand } from "./lib/inbox";
 import { RunIndex, summarizeWorkerRun } from "./lib/ledger";
 import { buildWorkerLiveLogPath, formatWorkerLiveLogLine, startTmuxObserver, type TmuxObserverResult } from "./lib/live-log";
@@ -110,6 +110,10 @@ function runLifecyclePath(args: ParsedArgs): string {
   return join(stateDir(args), "run-lifecycle.jsonl");
 }
 
+function logDir(args: ParsedArgs): string {
+  return resolve(flag(args, "log-dir", join(root, "runs")));
+}
+
 function agentProfilesDir(args: ParsedArgs): string {
   return resolve(flag(args, "agent-profiles-dir", join(root, "references/agent-profiles")));
 }
@@ -211,8 +215,74 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
     drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
     tasks: await new TaskStore(tasksPath(args)).list(),
     lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
+    liveRuns: await readLiveRuns(logDir(args)),
   });
   return runs.length;
+}
+
+async function readLiveRuns(baseLogDir: string): Promise<LiveRunStatus[]> {
+  const liveDir = join(baseLogDir, "live");
+  let files: string[];
+  try {
+    files = (await readdir(liveDir)).filter((file) => file.endsWith(".jsonl")).sort();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+
+  const liveRuns: LiveRunStatus[] = [];
+  for (const file of files) {
+    const liveLogPath = join(liveDir, file);
+    const lines = (await readFile(liveLogPath, "utf8")).split(/\r?\n/).filter(Boolean);
+    const events = lines.flatMap((line) => {
+      try {
+        return [JSON.parse(line) as Record<string, unknown>];
+      } catch {
+        return [];
+      }
+    });
+    const meta = events.find((event) => event.type === "meta");
+    const latest = events.at(-1);
+    if (!latest) continue;
+
+    const latestText = typeof latest.text === "string" ? latest.text : undefined;
+    liveRuns.push({
+      runId: String(latest.runId ?? meta?.runId ?? file.replace(/\.jsonl$/, "")),
+      taskId: String(latest.taskId ?? meta?.taskId ?? "unknown"),
+      agentId: typeof latest.agentId === "string" ? latest.agentId : typeof meta?.agentId === "string" ? meta.agentId : undefined,
+      phase: typeof latest.phase === "string" ? latest.phase : undefined,
+      lastEventType: typeof latest.type === "string" ? latest.type : undefined,
+      lastAt: String(latest.at ?? ""),
+      liveLogPath,
+      ...(latestText ? { latestText } : {}),
+    });
+  }
+  return liveRuns;
+}
+
+async function serveDashboard(args: ParsedArgs): Promise<void> {
+  const out = resolve(flag(args, "out", join(root, "dashboard/index.html")));
+  const hostname = flag(args, "host", "127.0.0.1");
+  const port = Number(flag(args, "port", "4173"));
+  const server = Bun.serve({
+    hostname,
+    port,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      if (url.pathname !== "/" && url.pathname !== "/index.html") return new Response("not found", { status: 404 });
+      await buildDashboard(args, out);
+      return new Response(await readFile(out, "utf8"), {
+        headers: {
+          "cache-control": "no-store",
+          "content-type": "text/html; charset=utf-8",
+        },
+      });
+    },
+  });
+
+  console.log(`Samantha dashboard listening on http://${server.hostname}:${server.port}/`);
+  console.log(`Rendering ${out} on each request`);
+  await new Promise(() => {});
 }
 
 async function collectOps(args: ParsedArgs) {
@@ -431,11 +501,11 @@ async function main(): Promise<void> {
     const execute = args.flags.get("execute") === true;
     const allocate = args.flags.get("allocate") === true || (execute && agent.worktreePolicy === "per-task");
     const worktreesDir = flag(args, "worktrees-dir", "");
-    const logDir = resolve(flag(args, "log-dir", join(root, "runs")));
+    const baseLogDir = logDir(args);
     const startedAt = new Date().toISOString();
     const runId = buildWorkerRunId({ startedAt, taskId: task.id });
     const liveLogPath = args.flags.get("tmux") === true || args.flags.get("live-log") === true
-      ? buildWorkerLiveLogPath(logDir, runId)
+      ? buildWorkerLiveLogPath(baseLogDir, runId)
       : undefined;
     const input = {
       task,
@@ -471,7 +541,7 @@ async function main(): Promise<void> {
       finishedAt,
       execution,
     };
-    const runLog = await writeWorkerRunLog(logDir, logInput);
+    const runLog = await writeWorkerRunLog(baseLogDir, logInput);
     const runSummary = summarizeWorkerRun({ ...logInput, runId: runLog.runId, logPath: runLog.path });
     await new RunIndex(runsPath(args)).append(runSummary);
     await taskStore.updateStatus(task.id, runSummary.pass ? "completed" : "failed");
@@ -1050,6 +1120,11 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "dashboard:serve") {
+    await serveDashboard(args);
+    return;
+  }
+
   console.log(
     [
       "usage: bun run samantha <command>",
@@ -1092,6 +1167,7 @@ async function main(): Promise<void> {
       "  telegram:poll [--allowed-sender-id=<id>] [--bot-token=<token>]",
       "  telegram:reply [--chat-id=<id>] [--mark-existing] [--send-existing]",
       "  dashboard:build",
+      "  dashboard:serve [--port=4173] [--host=127.0.0.1]",
       "  live:format",
     ].join("\n"),
   );

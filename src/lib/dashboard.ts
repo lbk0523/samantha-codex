@@ -16,6 +16,18 @@ export interface DashboardStatus {
   drafts?: TaskDraftRecord[];
   tasks?: TaskSpec[];
   lifecycles?: RunLifecycleRecord[];
+  liveRuns?: LiveRunStatus[];
+}
+
+export interface LiveRunStatus {
+  runId: string;
+  taskId: string;
+  agentId?: string;
+  phase?: string;
+  lastEventType?: string;
+  lastAt: string;
+  liveLogPath: string;
+  latestText?: string;
 }
 
 function escapeHtml(value: string): string {
@@ -45,6 +57,9 @@ export function renderDashboard(runs: RunSummary[], status: DashboardStatus = {}
   const latest = runs.at(-1);
   const latestLifecycle = latest ? status.lifecycles?.find((item) => item.runId === latest.runId) : undefined;
   const failures = runs.filter((run) => !run.pass);
+  const completedRunIds = new Set(runs.map((run) => run.runId));
+  const liveRuns = (status.liveRuns ?? []).slice().sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+  const activeLiveRuns = liveRuns.filter((run) => !completedRunIds.has(run.runId));
   const rows = runs
     .slice()
     .reverse()
@@ -56,6 +71,20 @@ export function renderDashboard(runs: RunSummary[], status: DashboardStatus = {}
   <td>${escapeHtml(run.outcome)}</td>
   <td>${escapeHtml(run.commit || "-")}</td>
   <td>${escapeHtml(run.failureReason ?? "")}</td>
+</tr>`,
+    )
+    .join("\n");
+  const liveRows = liveRuns
+    .map(
+      (run) => `<tr>
+  <td>${escapeHtml(run.lastAt)}</td>
+  <td>${escapeHtml(run.taskId)}</td>
+  <td>${escapeHtml(run.agentId ?? "-")}</td>
+  <td>${completedRunIds.has(run.runId) ? "completed" : "running"}</td>
+  <td>${escapeHtml(run.phase ?? "-")}</td>
+  <td>${escapeHtml(run.lastEventType ?? "-")}</td>
+  <td><code>${escapeHtml(run.liveLogPath)}</code></td>
+  <td>${escapeHtml((run.latestText ?? "").slice(0, 240))}</td>
 </tr>`,
     )
     .join("\n");
@@ -116,6 +145,13 @@ export function renderDashboard(runs: RunSummary[], status: DashboardStatus = {}
       <p>Outcome: <code>${escapeHtml(latest?.outcome ?? "none")}</code></p>
       <p>Lifecycle: <code>${escapeHtml(lifecycleText(latestLifecycle))}</code></p>
     </div>
+    <div class="panel">
+      <h2>Live Workers</h2>
+      <p>Live logs: <code>${String(liveRuns.length)}</code></p>
+      <p>Running: <code>${String(activeLiveRuns.length)}</code></p>
+      <p>Latest task: <code>${escapeHtml(liveRuns[0]?.taskId ?? "none")}</code></p>
+      <p>Latest phase: <code>${escapeHtml(liveRuns[0]?.phase ?? "none")}</code></p>
+    </div>
   </section>
   <section class="summary">
     <div class="panel">
@@ -148,6 +184,18 @@ export function renderDashboard(runs: RunSummary[], status: DashboardStatus = {}
     <ul>${(ops?.failures.length ? ops.failures : ["none"]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
     <p>Warnings</p>
     <ul>${(ops?.warnings.length ? ops.warnings : ["none"]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+  </section>
+  <section>
+    <h2>Live Workers</h2>
+    <p>These rows are read from <code>runs/live/*.jsonl</code>. Use <code>tmux attach -t samantha</code> for the live terminal observer.</p>
+    <table>
+      <thead>
+        <tr><th>Updated</th><th>Task</th><th>Agent</th><th>Status</th><th>Phase</th><th>Event</th><th>Live Log</th><th>Latest Text</th></tr>
+      </thead>
+      <tbody>
+${liveRows || '<tr><td colspan="8">No live worker logs found.</td></tr>'}
+      </tbody>
+    </table>
   </section>
   <section>
     <h2>Recent Runs</h2>

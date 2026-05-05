@@ -59,6 +59,7 @@ bun run samantha tasks:add references/tasks/fixture-reviewer-readonly.json
 bun run samantha tasks:list
 bun run samantha plan:run references/plans/fixture-review-write-plan.json
 bun run samantha dashboard:build
+bun run samantha dashboard:serve --port=4173
 ```
 
 Available command groups:
@@ -75,6 +76,7 @@ Available command groups:
 - `remote:enqueue` maps a narrow remote command JSON into the local inbox
 - `telegram:poll` maps allowlisted Telegram updates into the local inbox
 - `dashboard:build` writes a read-only static dashboard from run summaries
+- `dashboard:serve` serves the same read-only dashboard and rebuilds it on each browser request
 
 Run the first external read-only canary against `oh-my-health-trainer`:
 
@@ -89,6 +91,8 @@ bun run dispatch-worker \
 
 By default, worker worktrees are placed outside the target repo under `.samantha-worktrees` beside the repo parent directory. This prevents target-repo test commands from discovering worker worktree files.
 
+For live worker visibility, dispatch through `samantha tasks:dispatch` with `--execute --tmux` or `--execute --live-log`. The browser dashboard reads `runs/live/*.jsonl`; the tmux view attaches with `tmux attach -t samantha`.
+
 ## Design Notes
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md), [docs/DOGFOOD_SCENARIOS.md](docs/DOGFOOD_SCENARIOS.md), [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md), [docs/REMOTE_ADAPTERS.md](docs/REMOTE_ADAPTERS.md), and [docs/NEXT_PLAN.md](docs/NEXT_PLAN.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md), [docs/DASHBOARD_DOGFOOD.md](docs/DASHBOARD_DOGFOOD.md), [docs/DOGFOOD_SCENARIOS.md](docs/DOGFOOD_SCENARIOS.md), [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md), [docs/REMOTE_ADAPTERS.md](docs/REMOTE_ADAPTERS.md), and [docs/NEXT_PLAN.md](docs/NEXT_PLAN.md).
