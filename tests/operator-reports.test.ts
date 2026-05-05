@@ -125,15 +125,16 @@ describe("operator reports", () => {
 
     expect(report).toContain("/now");
     expect(report).toContain("/work <request>");
-    expect(report).toContain("/run-next");
+    expect(report).toContain("/run_next");
     expect(report).toContain("/yes");
-    expect(report).toContain("/help advanced");
-    expect(report).not.toContain("/prepare-dispatch <task-id>");
+    expect(report).toContain("/help_advanced");
+    expect(report).not.toContain("/run-next");
+    expect(report).not.toContain("/prepare-dispatch <task_id>");
 
     const advanced = remoteHelpReport("advanced");
-    expect(advanced).toContain("/run <run-id>");
-    expect(advanced).toContain("/prepare-dispatch <task-id>");
-    expect(advanced).toContain("/approve-action <action-id>");
+    expect(advanced).toContain("/run <run_id>");
+    expect(advanced).toContain("/prepare_dispatch <task_id>");
+    expect(advanced).toContain("/approve_action <action_id>");
     expect(advanced).toContain("cannot dispatch workers directly");
   });
 
@@ -286,7 +287,7 @@ describe("operator reports", () => {
     };
 
     expect(remoteActionPreparedReport(action)).toContain("Next: `/yes`");
-    expect(remoteActionPreparedReport(action)).toContain("/approve-action");
+    expect(remoteActionPreparedReport(action)).toContain("/approve_action");
     expect(remoteActionPreparedReport(action)).toContain("No worker was dispatched yet.");
     expect(remoteActionsListReport([action])).toContain("dispatch_task");
     expect(remoteActionShowReport(action.id, action)).toContain("tasks:dispatch task-pass");
@@ -306,7 +307,7 @@ describe("operator reports", () => {
     });
 
     expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).toContain("Next: `/yes`");
-    expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("Next: `/run-next`");
+    expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("Next: `/run_next`");
     expect(nowReport({ runs: [failRun], tasks: [], actions: [] })).toContain(`/run ${failRun.runId}`);
   });
 

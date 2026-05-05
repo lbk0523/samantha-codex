@@ -27,7 +27,7 @@ Current operating status:
 - `doctor` reports no failures or warnings.
 - pending inbox is `0`.
 - unsent remote outbox reports are `0`.
-- `/next-action` reports no immediate action for the latest completed OMHT run.
+- `/next_action` reports no immediate action for the latest completed OMHT run.
 - The latest OMHT writer run is merged, pushed, cleaned, and backfilled in `state/run-lifecycle.jsonl`.
 
 Runtime state under `state/`, `runs/`, `outbox/`, and `archive/` remains local and ignored by Git.
@@ -98,8 +98,8 @@ Remote task approval remains closed. Dispatch is available only through the expl
 
 Telegram can now run a worker only through this two-step gate:
 
-- `/prepare-dispatch <task-id>` records a pending dispatch action in `state/remote-actions.jsonl`
-- `/approve-action <action-id>` marks that exact pending action approved
+- `/prepare_dispatch <task_id>` records a pending dispatch action in `state/remote-actions.jsonl`
+- `/approve_action <action_id>` marks that exact pending action approved
 - `actions:watch` executes approved actions with fixed `--allocate --execute --tmux` flags
 
 Completed criteria:
@@ -115,15 +115,15 @@ Completed criteria:
 The normal Telegram flow is now:
 
 ```text
-/now -> /run-next -> /yes
+/now -> /run_next -> /yes
 ```
 
 Completed criteria:
 
 - `/help` shows the short practical flow, not the full command catalog.
-- `/help advanced` keeps the lower-level inspection and id-based commands discoverable.
+- `/help_advanced` keeps the lower-level inspection and id-based commands discoverable.
 - `/now` chooses one next command from action state, diagnostics, pending tasks, and latest run state.
-- `/run-next` prepares the next pending task without starting a worker.
+- `/run_next` prepares the next pending task without starting a worker.
 - `/yes` approves only the latest pending action.
 - `/work`, `/check`, and `/problems` provide plain-language aliases for proposal draft intake, status, and diagnostics.
 

@@ -94,7 +94,7 @@ By default, worker worktrees are placed outside the target repo under `.samantha
 
 For live worker visibility, dispatch through `samantha tasks:dispatch` with `--execute --tmux` or `--execute --live-log`. The browser dashboard reads `runs/live/*.jsonl`: Overview separates current operational problems from historical run failures and shows the reverse-chronological live timeline, Lane View groups the same events by worker/run lane, and the tmux view attaches with `tmux attach -t samantha`.
 
-Telegram's primary operating flow is `/now`, then `/run-next`, then `/yes`. `/now` reports the single next command to send, `/run-next` prepares the next pending task as a safe dispatch action, and `/yes` approves the latest prepared action. Approval does not run inside `inbox:watch`; `actions:watch` picks up approved actions and runs the prebuilt `tasks:dispatch <task-id> --allocate --execute --tmux` shape using the locally configured `SAMANTHA_REPO_ROOT`. Telegram input cannot supply shell commands, repo paths, merge, push, or cleanup actions. Use `/help advanced` for the explicit inspection and action-id commands.
+Telegram's primary operating flow is `/now`, then `/run_next`, then `/yes`. `/now` reports the single next command to send, `/run_next` prepares the next pending task as a safe dispatch action, and `/yes` approves the latest prepared action. Approval does not run inside `inbox:watch`; `actions:watch` picks up approved actions and runs the prebuilt `tasks:dispatch <task-id> --allocate --execute --tmux` shape using the locally configured `SAMANTHA_REPO_ROOT`. Telegram input cannot supply shell commands, repo paths, merge, push, or cleanup actions. Use `/help_advanced` for the explicit inspection and action-id commands.
 
 ## Design Notes
 

@@ -113,10 +113,11 @@ describe("inbox and remote commands", () => {
     expect(command.type).toBe("tasks:show");
     expect(command.args?.id).toBe("fixture");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/help" }, "bk").type).toBe("remote:help");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/help advanced" }, "bk")).toMatchObject({
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/help_advanced" }, "bk")).toMatchObject({
       type: "remote:help",
       args: { mode: "advanced" },
     });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/help advanced" }, "bk").type).toBe("remote:help");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/now" }, "bk").type).toBe("ops:now");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/check" }, "bk").type).toBe("status:show");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/problems" }, "bk").type).toBe("ops:doctor");
@@ -152,7 +153,7 @@ describe("inbox and remote commands", () => {
     expect(commandFromRemoteInput({ senderId: "bk", text: "/drafts" }, "bk").type).toBe("drafts:list");
     expect(
       commandFromRemoteInput(
-        { senderId: "bk", text: "/draft-propose Improve task flow", receivedAt: "2026-05-03T10:06:00.000Z" },
+        { senderId: "bk", text: "/draft_propose Improve task flow", receivedAt: "2026-05-03T10:06:00.000Z" },
         "bk",
       ),
     ).toMatchObject({
@@ -179,8 +180,10 @@ describe("inbox and remote commands", () => {
       type: "drafts:show",
       args: { id: "draft-1" },
     });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/next_action" }, "bk").type).toBe("ops:next-action");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/next-action" }, "bk").type).toBe("ops:next-action");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/actions" }, "bk").type).toBe("actions:list");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/run_next" }, "bk").type).toBe("actions:run-next");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/run-next" }, "bk").type).toBe("actions:run-next");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/yes" }, "bk").type).toBe("actions:approve-latest");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/action action-1" }, "bk")).toMatchObject({
@@ -189,7 +192,7 @@ describe("inbox and remote commands", () => {
     });
     expect(
       commandFromRemoteInput(
-        { senderId: "bk", text: "/prepare-dispatch task-pass", receivedAt: "2026-05-03T10:07:00.000Z" },
+        { senderId: "bk", text: "/prepare_dispatch task-pass", receivedAt: "2026-05-03T10:07:00.000Z" },
         "bk",
       ),
     ).toMatchObject({
@@ -199,10 +202,12 @@ describe("inbox and remote commands", () => {
         receivedAt: "2026-05-03T10:07:00.000Z",
       },
     });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/approve-action action-1" }, "bk")).toMatchObject({
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/prepare-dispatch task-pass" }, "bk").type).toBe("actions:prepare-dispatch");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/approve_action action-1" }, "bk")).toMatchObject({
       type: "actions:approve",
       args: { id: "action-1" },
     });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/approve-action action-1" }, "bk").type).toBe("actions:approve");
     expect(
       commandFromRemoteInput(
         { senderId: "bk", text: "/work Improve task flow", receivedAt: "2026-05-03T10:06:00.000Z" },
@@ -318,7 +323,7 @@ describe("inbox and remote commands", () => {
     const report = await readFile(join(outbox, "001.md"), "utf8");
     const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
     expect(report).toContain("No worker was dispatched yet.");
-    expect(report).toContain("/approve-action");
+    expect(report).toContain("/approve_action");
     expect(actions).toHaveLength(1);
     expect(actions[0]).toMatchObject({
       kind: "dispatch_task",

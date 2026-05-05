@@ -472,9 +472,10 @@ bun run samantha telegram:reply
 
 Pass criteria:
 
-- allowed practical commands `/help`, `/start`, `/now`, `/work <text>`, `/run-next`, `/yes`, `/check`, and `/problems` create inbox files
-- allowed advanced commands `/help advanced`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/draft-propose <text>`, `/proposals`, `/proposal <id>`, `/accept <id>`, `/reject <id>`, `/draft <proposal-id>`, `/drafts`, `/draft <draft-id>`, `/tasks`, `/dashboard`, `/task <id>`, `/prepare-dispatch <task-id>`, `/actions`, `/action <action-id>`, and `/approve-action <action-id>` create inbox files
-- `/help` shows the short `/now -> /run-next -> /yes` operating flow instead of a long command catalog
+- allowed practical commands `/help`, `/start`, `/now`, `/work <text>`, `/run_next`, `/yes`, `/check`, and `/problems` create inbox files
+- allowed advanced commands `/help_advanced`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/draft_propose <text>`, `/proposals`, `/proposal <id>`, `/accept <id>`, `/reject <id>`, `/draft <proposal_id>`, `/drafts`, `/draft <draft_id>`, `/tasks`, `/dashboard`, `/task <id>`, `/prepare_dispatch <task_id>`, `/actions`, `/action <action_id>`, and `/approve_action <action_id>` create inbox files
+- legacy hyphenated aliases still normalize, but Telegram reports and docs prefer underscore commands
+- `/help` shows the short `/now -> /run_next -> /yes` operating flow instead of a long command catalog
 - unsupported messages are ignored
 - messages from other sender ids are ignored
 - `state/telegram-offset.json` is updated after a successful poll
@@ -482,14 +483,14 @@ Pass criteria:
 - long remote outbox replies are split into multiple Telegram messages instead of truncated
 - reports that return proposal, draft, action, run, or task IDs also send each ID as a separate copy-only Telegram message
 - `/propose <text>` writes only to `state/proposals.jsonl` and does not dispatch a worker
-- `/work <text>` and `/draft-propose <text>` write only to `state/proposals.jsonl` and `state/task-drafts.jsonl` and do not dispatch a worker
+- `/work <text>` and `/draft_propose <text>` write only to `state/proposals.jsonl` and `state/task-drafts.jsonl` and do not dispatch a worker
 - `/accept <id>` and `/reject <id>` update proposal review state only and do not dispatch workers
 - `/draft <proposal-id>` writes only to `state/task-drafts.jsonl`; unaccepted proposals are rejected
 - `drafts:check`, `drafts:update`, and `drafts:approve` stay local-only
 - `drafts:approve` writes one pending task to `state/tasks.jsonl` only after `targetFiles`, `verifyCommands`, `instructions`, and `targetAgent` pass checks
 - direct `tasks:dispatch` stays local-only; dry-run prints the prepared Codex command, and `--execute` writes run logs and run index entries
-- `/run-next` and `/prepare-dispatch <task-id>` create only a pending action in `state/remote-actions.jsonl`
-- `/yes` and `/approve-action <action-id>` only mark an existing pending dispatch action approved
+- `/run_next` and `/prepare_dispatch <task_id>` create only a pending action in `state/remote-actions.jsonl`
+- `/yes` and `/approve_action <action_id>` only mark an existing pending dispatch action approved
 - `actions:watch` executes approved dispatch action ids with fixed `--allocate --execute --tmux` flags and locally configured repo root
 - no remote path executes shell, merge, push, cleanup, or direct worker dispatch
 - `inbox:watch` processes the created inbox commands later
@@ -512,7 +513,7 @@ Stop dogfood and fix Samantha before continuing if any of these happen:
 - Telegram reply resends the same outbox file repeatedly
 - Telegram reply sends status values, timestamps, or file paths as copy-only ID messages
 - `/propose` dispatches a worker, creates a commit, or changes project files
-- `/draft-propose` dispatches a worker, creates a commit, writes `state/tasks.jsonl`, or changes project files
+- `/draft_propose` dispatches a worker, creates a commit, writes `state/tasks.jsonl`, or changes project files
 - `/accept` or `/reject` dispatches a worker, creates a commit, or changes project files
 - `/draft` dispatches a worker, creates a commit, writes `state/tasks.jsonl`, or changes project files
 - any remote Telegram command can run `drafts:approve` or write `state/tasks.jsonl`

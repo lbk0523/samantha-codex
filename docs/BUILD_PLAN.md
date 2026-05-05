@@ -59,10 +59,10 @@ Already implemented:
 - local-only pending task dispatch into existing worker run logs and run index
 - task draft `setupCommands` promotion into worker setup
 - project profiles for repo-level setup and verify defaults
-- task archival so stale tasks do not pollute `/next-action`
+- task archival so stale tasks do not pollute `/next_action`
 - existing clean worktree reuse for same-task dispatch retries
 - local `tasks:retry` and `tasks:finalize-worktree` recovery commands
-- read-only `/next-action` Telegram command
+- read-only `/next_action` Telegram command
 - run lifecycle ledger for merge/push/cleanup completion state
 - systemd timer templates for Telegram polling and outbox replies
 - read-only static dashboard generation with operations summary
@@ -75,7 +75,7 @@ Important dogfood findings:
 - `setupCommands` must be set before task approval when the target repo needs dependencies in an isolated worktree.
 - Failed dispatch attempts may leave clean worktrees behind; Samantha can now reuse or finalize them instead of forcing manual branch cleanup.
 - Already-merged runs should report as already integrated, not as generic HEAD mismatch failures.
-- `/next-action` must use run lifecycle state, not just the latest pass run, or it will recommend already-completed merge/push/cleanup work.
+- `/next_action` must use run lifecycle state, not just the latest pass run, or it will recommend already-completed merge/push/cleanup work.
 - Once Telegram polling and replies work, `/status` and `/doctor` become the main operating surface and must show remote command/report and lifecycle state clearly.
 - Codex workers should not receive parent `.git` metadata write access.
 - Samantha should create commits itself after worker output passes scope and verify gates.
@@ -269,7 +269,7 @@ Do not prioritize these until the Telegram operating surface is stable:
 Use the shortened Telegram operating flow in real work:
 
 ```text
-/now -> /run-next -> /yes
+/now -> /run_next -> /yes
 ```
 
 The next implementation should be chosen from observed friction in that loop, not from adding more remote commands.

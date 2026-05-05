@@ -114,7 +114,7 @@ Set local, uncommitted values:
 ```text
 TELEGRAM_BOT_TOKEN=<token>
 TELEGRAM_CHAT_ID=<telegram-chat-id>
-# Optional, required for /prepare-dispatch:
+# Optional, required for /prepare_dispatch:
 SAMANTHA_REPO_ROOT=/home/lbk0523/projects/samantha-codex
 ```
 
@@ -152,7 +152,7 @@ The service templates are tuned for interactive latency:
 
 Normal reply latency should usually be a few seconds. It can be longer when Telegram network calls are slow or when the machine is sleeping.
 
-For routine operation, use Telegram `/now` first. It reports the one next command to send, usually `/run-next`, `/yes`, `/problems`, or `/check`. Use `/check` for compact status and `/problems` when `/check` or `/now` reports warnings or failures.
+For routine operation, use Telegram `/now` first. It reports the one next command to send, usually `/run_next`, `/yes`, `/problems`, or `/check`. Use `/check` for compact status and `/problems` when `/check` or `/now` reports warnings or failures.
 
 ## Safety Notes
 

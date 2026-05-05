@@ -103,21 +103,21 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
       "# remote:help advanced",
       "",
       "Inspection:",
-      "- `/runs`, `/run <run-id>`, `/failures`",
-      "- `/tasks`, `/task <task-id>`",
-      "- `/actions`, `/action <action-id>`",
-      "- `/proposals`, `/proposal <proposal-id>`",
-      "- `/drafts`, `/draft <draft-id>`",
+      "- `/runs`, `/run <run_id>`, `/failures`",
+      "- `/tasks`, `/task <task_id>`",
+      "- `/actions`, `/action <action_id>`",
+      "- `/proposals`, `/proposal <proposal_id>`",
+      "- `/drafts`, `/draft <draft_id>`",
       "",
       "Explicit workflow:",
       "- `/propose <text>`",
-      "- `/draft-propose <text>`",
-      "- `/accept <proposal-id>`, `/reject <proposal-id>`",
-      "- `/prepare-dispatch <task-id>`",
-      "- `/approve-action <action-id>`",
+      "- `/draft_propose <text>`",
+      "- `/accept <proposal_id>`, `/reject <proposal_id>`",
+      "- `/prepare_dispatch <task_id>`",
+      "- `/approve_action <action_id>`",
       "",
       "System:",
-      "- `/status`, `/doctor`, `/health`, `/dashboard`, `/next-action`",
+      "- `/status`, `/doctor`, `/health`, `/dashboard`, `/next_action`",
       "",
       "Remote commands are safe-gated. They cannot dispatch workers directly, merge, push, clean worktrees, or run shell commands.",
     ].join("\n");
@@ -130,15 +130,15 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "",
     "- `/now`: show the one next command to send",
     "- `/work <request>`: capture new work as a draft",
-    "- `/run-next`: prepare the next pending task for approval",
+    "- `/run_next`: prepare the next pending task for approval",
     "- `/yes`: approve the latest prepared action",
     "- `/check`: compact status",
     "- `/problems`: diagnostics when something looks wrong",
     "",
     "Typical execution:",
-    "`/now` -> `/run-next` -> `/yes`",
+    "`/now` -> `/run_next` -> `/yes`",
     "",
-    "More commands: `/help advanced`",
+    "More commands: `/help_advanced`",
   ].join("\n");
 }
 
@@ -298,7 +298,7 @@ export function nowReport(input: {
       "Pending task is ready to prepare.",
       `Task: ${code(pendingTask.id)} - ${oneLine(pendingTask.title)}`,
       "",
-      `Next: ${code("/run-next")}`,
+      `Next: ${code("/run_next")}`,
     ].join("\n");
   }
 
@@ -496,7 +496,7 @@ export function remoteActionPreparedReport(action: RemoteActionRecord): string {
     "No worker was dispatched yet.",
     "",
     `Next: ${code("/yes")}`,
-    `Explicit approval: ${code(`/approve-action ${action.id}`)}`,
+    `Explicit approval: ${code(`/approve_action ${action.id}`)}`,
   ].join("\n");
 }
 

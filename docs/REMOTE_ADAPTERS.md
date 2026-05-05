@@ -17,28 +17,28 @@ remote input -> allowlist -> command mapping -> inbox/*.json -> inbox:watch
 Use this as the normal Telegram operating path:
 
 ```text
-/now -> /run-next -> /yes
+/now -> /run_next -> /yes
 ```
 
 - `/now` shows the single next command to send.
-- `/run-next` prepares the next pending task as a safe dispatch action.
+- `/run_next` prepares the next pending task as a safe dispatch action.
 - `/yes` approves the latest pending dispatch action.
 - `/work <request>` captures new work as a proposal plus draft; it does not create a task or dispatch a worker.
 - `/check` is the compact status view.
 - `/problems` is the diagnostic view.
 
-`/help` shows only this short flow. `/help advanced` lists the lower-level inspection and explicit id-based commands.
+`/help` shows only this short flow. `/help_advanced` lists the lower-level inspection and explicit id-based commands. Telegram-visible slash commands use underscores instead of hyphens because Telegram breaks command links at hyphens. Legacy hyphenated spellings remain accepted for compatibility, but they should not be shown as the primary UX.
 
 ## Supported Commands
 
-The current remote command mapper supports only:
+The current primary Telegram spellings are:
 
 - `/help`
-- `/help advanced`
+- `/help_advanced`
 - `/start`
 - `/now`
 - `/work <text>`
-- `/run-next`
+- `/run_next`
 - `/yes`
 - `/check`
 - `/problems`
@@ -46,29 +46,29 @@ The current remote command mapper supports only:
 - `/doctor`
 - `/health`
 - `/runs`
-- `/run <run-id>`
+- `/run <run_id>`
 - `/failures`
 - `/propose <text>`
-- `/draft-propose <text>`
+- `/draft_propose <text>`
 - `/proposals`
-- `/proposal <proposal-id>`
-- `/accept <proposal-id>`
-- `/reject <proposal-id>`
-- `/draft <proposal-id>`
+- `/proposal <proposal_id>`
+- `/accept <proposal_id>`
+- `/reject <proposal_id>`
+- `/draft <proposal_id>`
 - `/drafts`
-- `/draft <draft-id>`
+- `/draft <draft_id>`
 - `/tasks`
-- `/next-action`
+- `/next_action`
 - `/dashboard`
-- `/task <task-id>`
-- `/prepare-dispatch <task-id>`
+- `/task <task_id>`
+- `/prepare_dispatch <task_id>`
 - `/actions`
-- `/action <action-id>`
-- `/approve-action <action-id>`
+- `/action <action_id>`
+- `/approve_action <action_id>`
 
 Unsupported commands are ignored or rejected.
 
-Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, conservative task draft creation, and explicit approval of a prebuilt dispatch action. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/work` and `/draft-propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal-id>` may write a draft to `state/task-drafts.jsonl`. Task ledger promotion, direct worker dispatch, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
+Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, conservative task draft creation, and explicit approval of a prebuilt dispatch action. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/work` and `/draft_propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal_id>` may write a draft to `state/task-drafts.jsonl`. Task ledger promotion, direct worker dispatch, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
 
 `/now` is the default operating command. It chooses one next remote command from current action state, diagnostics, pending tasks, and latest run state.
 
@@ -79,20 +79,20 @@ Supported remote commands are operational reports, a safe dashboard rebuild, pro
 Proposal commands are intake/review only:
 
 - `/propose <text>` writes a pending proposal to `state/proposals.jsonl`
-- `/work <text>` or `/draft-propose <text>` writes an accepted proposal to `state/proposals.jsonl` and a draft to `state/task-drafts.jsonl`
+- `/work <text>` or `/draft_propose <text>` writes an accepted proposal to `state/proposals.jsonl` and a draft to `state/task-drafts.jsonl`
 - `/proposals` lists recent proposals
-- `/proposal <proposal-id>` shows one proposal
-- `/accept <proposal-id>` marks one proposal accepted
-- `/reject <proposal-id>` marks one proposal rejected
+- `/proposal <proposal_id>` shows one proposal
+- `/accept <proposal_id>` marks one proposal accepted
+- `/reject <proposal_id>` marks one proposal rejected
 
 No proposal command dispatches workers or creates commits. Accepted proposals must still be converted into explicit tasks before execution.
 
 Task draft commands are draft-only:
 
-- `/draft <proposal-id>` creates one draft from an accepted proposal
-- `/draft-propose <text>` creates an accepted proposal and one draft in a single command
+- `/draft <proposal_id>` creates one draft from an accepted proposal
+- `/draft_propose <text>` creates an accepted proposal and one draft in a single command
 - `/drafts` lists recent task drafts
-- `/draft <draft-id>` shows one task draft
+- `/draft <draft_id>` shows one task draft
 
 Drafts use conservative defaults and empty `targetFiles` / `verifyCommands`. Draft creation does not add to `state/tasks.jsonl`, dispatch workers, or create commits.
 
@@ -132,20 +132,20 @@ Without `--execute`, `tasks:dispatch` only prepares and prints the Codex command
 Remote dispatch uses an action gate plus a separate runner instead of direct command execution:
 
 ```text
-/run-next -> state/remote-actions.jsonl pending action
+/run_next -> state/remote-actions.jsonl pending action
 /yes -> approved action
 actions:watch -> tasks:dispatch <task-id> --allocate --execute --tmux
 ```
 
-`/run-next` reuses an existing pending, approved, or running dispatch action if one exists; otherwise it validates the next pending task and records the fixed repo root, task id, target agent, and dispatch flags in `state/remote-actions.jsonl`. No worker is started.
+`/run_next` reuses an existing pending, approved, or running dispatch action if one exists; otherwise it validates the next pending task and records the fixed repo root, task id, target agent, and dispatch flags in `state/remote-actions.jsonl`. No worker is started.
 
 `/yes` only marks the latest existing pending action as approved. It does not run inside `inbox:watch`, so Telegram status and inspection commands can continue while the worker later runs.
 
 The explicit advanced equivalents remain available:
 
 ```text
-/prepare-dispatch <task-id> -> state/remote-actions.jsonl pending action
-/approve-action <action-id> -> approved action
+/prepare_dispatch <task_id> -> state/remote-actions.jsonl pending action
+/approve_action <action_id> -> approved action
 ```
 
 `actions:watch` or one-shot `actions:run-pending` executes only existing approved action ids. Telegram cannot supply repo paths, shell commands, extra flags, merge, push, or cleanup instructions. The repo root must be configured locally through `SAMANTHA_REPO_ROOT`. If it is not set, action preparation fails with an explicit report.
@@ -185,9 +185,9 @@ Stale or obsolete tasks should be archived locally:
 bun run samantha tasks:archive <task-id> --reason=<text>
 ```
 
-Archived tasks remain in `state/tasks.jsonl`, but `/tasks`, `tasks:list`, and `/next-action` exclude them by default. Use `tasks:list --include-archived` for audit/debugging.
+Archived tasks remain in `state/tasks.jsonl`, but `/tasks`, `tasks:list`, and `/next_action` exclude them by default. Use `tasks:list --include-archived` for audit/debugging.
 
-`/next-action` is read-only. It reports the safest next local command, such as dispatching a pending task, checking/applying a merge candidate, retrying a failed task, finalizing a blocked worktree, or cleaning up after merge/push.
+`/next_action` is read-only. It reports the safest next local command, such as dispatching a pending task, checking/applying a merge candidate, retrying a failed task, finalizing a blocked worktree, or cleaning up after merge/push.
 
 After a successful merge and push, clean the worker worktree locally:
 

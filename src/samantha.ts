@@ -652,7 +652,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       status: "accepted",
       createdAt: receivedAt,
       reviewedAt: receivedAt,
-      reviewNote: "accepted by /draft-propose",
+      reviewNote: "accepted by /draft_propose",
     };
     if (!proposal.id) throw new Error("proposal id is required");
     if (!proposal.text.trim()) throw new Error("proposal text is required");

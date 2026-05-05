@@ -11,6 +11,17 @@ export interface RemoteCommandInput {
   remoteId?: string | number;
 }
 
+function isCommand(text: string, ...commands: string[]): boolean {
+  return commands.includes(text);
+}
+
+function commandArgument(text: string, ...commands: string[]): string | undefined {
+  for (const command of commands) {
+    if (text.startsWith(`${command} `)) return text.slice(command.length + 1).trim();
+  }
+  return undefined;
+}
+
 export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderId?: string): InboxCommand {
   if (allowedSenderId && input.senderId !== allowedSenderId) {
     throw new Error("remote sender is not allowed");
@@ -20,10 +31,10 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   const receivedAt = input.receivedAt ?? new Date().toISOString();
   const commandToken = sanitizeTaskId(input.remoteId === undefined ? receivedAt : `${receivedAt}-${input.remoteId}`);
 
-  if (text === "/help" || text === "/start") {
+  if (isCommand(text, "/help", "/start")) {
     return { id: `remote-${commandToken}-help`, type: "remote:help", args: { source: "remote", mode: "basic" } };
   }
-  if (text === "/help advanced") {
+  if (isCommand(text, "/help_advanced", "/help advanced")) {
     return { id: `remote-${commandToken}-help-advanced`, type: "remote:help", args: { source: "remote", mode: "advanced" } };
   }
   if (text === "/now") {
@@ -92,8 +103,9 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   if (text === "/drafts") {
     return { id: `remote-${commandToken}-drafts`, type: "drafts:list", args: { source: "remote" } };
   }
-  if (text.startsWith("/draft-propose ")) {
-    const proposalText = text.slice("/draft-propose ".length).trim();
+  const draftProposeText = commandArgument(text, "/draft_propose", "/draft-propose");
+  if (draftProposeText !== undefined) {
+    const proposalText = draftProposeText;
     if (!proposalText) throw new Error("missing proposal text");
     return {
       id: `remote-${commandToken}-draft-propose`,
@@ -159,7 +171,7 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   if (text === "/tasks") {
     return { id: `remote-${commandToken}-tasks`, type: "tasks:list", args: { source: "remote" } };
   }
-  if (text === "/next-action") {
+  if (isCommand(text, "/next_action", "/next-action")) {
     return { id: `remote-${commandToken}-next-action`, type: "ops:next-action", args: { source: "remote" } };
   }
   if (text === "/dashboard") {
@@ -168,7 +180,7 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   if (text === "/actions") {
     return { id: `remote-${commandToken}-actions`, type: "actions:list", args: { source: "remote" } };
   }
-  if (text === "/run-next") {
+  if (isCommand(text, "/run_next", "/run-next")) {
     return { id: `remote-${commandToken}-run-next`, type: "actions:run-next", args: { source: "remote", receivedAt } };
   }
   if (text === "/yes") {
@@ -183,8 +195,9 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       args: { id, source: "remote" },
     };
   }
-  if (text.startsWith("/prepare-dispatch ")) {
-    const taskId = text.slice("/prepare-dispatch ".length).trim();
+  const prepareDispatchTaskId = commandArgument(text, "/prepare_dispatch", "/prepare-dispatch");
+  if (prepareDispatchTaskId !== undefined) {
+    const taskId = prepareDispatchTaskId;
     if (!taskId) throw new Error("missing task id");
     return {
       id: `remote-${commandToken}-prepare-dispatch`,
@@ -192,8 +205,9 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       args: { taskId, source: "remote", receivedAt },
     };
   }
-  if (text.startsWith("/approve-action ")) {
-    const id = text.slice("/approve-action ".length).trim();
+  const approveActionId = commandArgument(text, "/approve_action", "/approve-action");
+  if (approveActionId !== undefined) {
+    const id = approveActionId;
     if (!id) throw new Error("missing action id");
     return {
       id: `remote-${commandToken}-approve-action`,

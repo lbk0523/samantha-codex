@@ -31,7 +31,7 @@ describe("pollTelegramToInbox", () => {
               update_id: 10,
               message: {
                 date: 1770000000,
-                text: "/next-action",
+                text: "/next_action",
                 from: { id: 12345 },
                 chat: { id: 12345 },
               },
