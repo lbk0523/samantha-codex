@@ -592,6 +592,10 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const run = await new RunIndex(runsPath(args)).find(id);
     return runShowReport(id, run);
   }
+  if (command.type === "runs:show-latest") {
+    const run = (await new RunIndex(runsPath(args)).list()).at(-1);
+    return runShowReport(run?.runId ?? "latest", run);
+  }
   if (command.type === "runs:failures") {
     const runs = await new RunIndex(runsPath(args)).list();
     return failuresReport(runs);
@@ -619,6 +623,11 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const id = String(command.args?.id ?? "");
     const proposal = await new ProposalStore(proposalsPath(args)).find(id);
     return proposalShowReport(id, proposal);
+  }
+  if (command.type === "proposals:show-latest") {
+    const proposals = await new ProposalStore(proposalsPath(args)).list();
+    const proposal = proposals.slice().reverse().find((item) => item.status === "pending_review") ?? proposals.at(-1);
+    return proposalShowReport(proposal?.id ?? "latest", proposal);
   }
   if (command.type === "proposals:accept" || command.type === "proposals:reject") {
     const id = String(command.args?.id ?? "");
@@ -673,6 +682,11 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const draft = await new TaskDraftStore(taskDraftsPath(args)).find(id);
     return taskDraftShowReport(id, draft);
   }
+  if (command.type === "drafts:show-latest") {
+    const drafts = await new TaskDraftStore(taskDraftsPath(args)).list();
+    const draft = drafts.slice().reverse().find((item) => item.status === "drafted") ?? drafts.at(-1);
+    return taskDraftShowReport(draft?.id ?? "latest", draft);
+  }
   if (command.type === "tasks:list") {
     const tasks = await new TaskStore(tasksPath(args)).listActive();
     return tasksListReport(tasks);
@@ -690,6 +704,15 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const id = String(command.args?.id ?? "");
     const action = await new RemoteActionStore(remoteActionsPath(args)).find(id);
     return remoteActionShowReport(id, action);
+  }
+  if (command.type === "actions:show-current") {
+    const actions = await new RemoteActionStore(remoteActionsPath(args)).list();
+    const action =
+      actions
+        .slice()
+        .reverse()
+        .find((item) => item.status === "running" || item.status === "approved" || item.status === "pending") ?? actions.at(-1);
+    return remoteActionShowReport(action?.id ?? "current", action);
   }
   if (command.type === "actions:prepare-dispatch") {
     const taskId = String(command.args?.taskId ?? "");

@@ -46,16 +46,19 @@ The current primary Telegram spellings are:
 - `/doctor`
 - `/health`
 - `/runs`
+- `/run_latest`
 - `/run <run_id>`
 - `/failures`
 - `/propose <text>`
 - `/draft_propose <text>`
 - `/proposals`
+- `/proposal_next`
 - `/proposal <proposal_id>`
 - `/accept <proposal_id>`
 - `/reject <proposal_id>`
 - `/draft <proposal_id>`
 - `/drafts`
+- `/draft_next`
 - `/draft <draft_id>`
 - `/tasks`
 - `/next_action`
@@ -63,6 +66,7 @@ The current primary Telegram spellings are:
 - `/task <task_id>`
 - `/prepare_dispatch <task_id>`
 - `/actions`
+- `/action_current`
 - `/action <action_id>`
 - `/approve_action <action_id>`
 
@@ -70,7 +74,7 @@ Unsupported commands are ignored or rejected.
 
 Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, conservative task draft creation, and explicit approval of a prebuilt dispatch action. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/work` and `/draft_propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal_id>` may write a draft to `state/task-drafts.jsonl`. Task ledger promotion, direct worker dispatch, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
 
-`/now` is the default operating command. It chooses one next remote command from current action state, diagnostics, pending tasks, task drafts, proposals, and latest run state. After `/work <request>`, `/now` should show the created draft instead of reporting no immediate action.
+`/now` is the default operating command. It chooses one next remote command from current action state, diagnostics, pending tasks, task drafts, proposals, and latest run state. After `/work <request>`, `/now` should show `/draft_next` instead of reporting no immediate action.
 
 `/check` and `/status` are the quick operational view. They include daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
 

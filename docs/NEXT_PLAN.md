@@ -123,6 +123,7 @@ Completed criteria:
 - `/help` shows the short practical flow, not the full command catalog.
 - `/help_advanced` keeps the lower-level inspection and id-based commands discoverable.
 - `/now` chooses one next command from action state, diagnostics, pending tasks, task drafts, proposals, and latest run state.
+- `/now` avoids argument-bearing next commands; it uses no-arg commands such as `/draft_next`, `/proposal_next`, `/action_current`, and `/run_latest`.
 - `/run_next` prepares the next pending task without starting a worker.
 - `/yes` approves only the latest pending action.
 - `/work`, `/check`, and `/problems` provide plain-language aliases for proposal draft intake, status, and diagnostics.

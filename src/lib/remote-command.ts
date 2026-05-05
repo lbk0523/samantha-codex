@@ -67,6 +67,9 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       args: { id, source: "remote" },
     };
   }
+  if (text === "/run_latest") {
+    return { id: `remote-${commandToken}-run-latest`, type: "runs:show-latest", args: { source: "remote" } };
+  }
   if (text === "/failures") {
     return { id: `remote-${commandToken}-failures`, type: "runs:failures", args: { source: "remote" } };
   }
@@ -81,6 +84,9 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       type: "proposals:show",
       args: { id, source: "remote" },
     };
+  }
+  if (text === "/proposal_next") {
+    return { id: `remote-${commandToken}-proposal-next`, type: "proposals:show-latest", args: { source: "remote" } };
   }
   if (text.startsWith("/accept ")) {
     const id = text.slice("/accept ".length).trim();
@@ -102,6 +108,9 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   }
   if (text === "/drafts") {
     return { id: `remote-${commandToken}-drafts`, type: "drafts:list", args: { source: "remote" } };
+  }
+  if (text === "/draft_next") {
+    return { id: `remote-${commandToken}-draft-next`, type: "drafts:show-latest", args: { source: "remote" } };
   }
   const draftProposeText = commandArgument(text, "/draft_propose", "/draft-propose");
   if (draftProposeText !== undefined) {
@@ -194,6 +203,9 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       type: "actions:show",
       args: { id, source: "remote" },
     };
+  }
+  if (text === "/action_current") {
+    return { id: `remote-${commandToken}-action-current`, type: "actions:show-current", args: { source: "remote" } };
   }
   const prepareDispatchTaskId = commandArgument(text, "/prepare_dispatch", "/prepare-dispatch");
   if (prepareDispatchTaskId !== undefined) {

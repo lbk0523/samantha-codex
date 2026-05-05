@@ -124,6 +124,7 @@ describe("inbox and remote commands", () => {
     expect(commandFromRemoteInput({ senderId: "bk", text: "/status" }, "bk").type).toBe("status:show");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/doctor" }, "bk").type).toBe("ops:doctor");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/health" }, "bk").type).toBe("health:check");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/run_latest" }, "bk").type).toBe("runs:show-latest");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/run run-1" }, "bk")).toMatchObject({
       type: "runs:show",
       args: { id: "run-1" },
@@ -134,6 +135,7 @@ describe("inbox and remote commands", () => {
       type: "proposals:show",
       args: { id: "proposal-1" },
     });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/proposal_next" }, "bk").type).toBe("proposals:show-latest");
     expect(
       commandFromRemoteInput(
         { senderId: "bk", text: "/accept proposal-1", receivedAt: "2026-05-03T10:05:00.000Z" },
@@ -151,6 +153,7 @@ describe("inbox and remote commands", () => {
       args: { id: "proposal-1" },
     });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/drafts" }, "bk").type).toBe("drafts:list");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/draft_next" }, "bk").type).toBe("drafts:show-latest");
     expect(
       commandFromRemoteInput(
         { senderId: "bk", text: "/draft_propose Improve task flow", receivedAt: "2026-05-03T10:06:00.000Z" },
@@ -190,6 +193,7 @@ describe("inbox and remote commands", () => {
       type: "actions:show",
       args: { id: "action-1" },
     });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/action_current" }, "bk").type).toBe("actions:show-current");
     expect(
       commandFromRemoteInput(
         { senderId: "bk", text: "/prepare_dispatch task-pass", receivedAt: "2026-05-03T10:07:00.000Z" },
@@ -587,6 +591,15 @@ describe("inbox and remote commands", () => {
       }),
       "utf8",
     );
+    await writeFile(
+      join(inbox, "003-draft-next.json"),
+      JSON.stringify({
+        id: "remote-draft-next",
+        type: "drafts:show-latest",
+        args: { receivedAt: "2026-05-05T10:42:00.000Z" },
+      }),
+      "utf8",
+    );
 
     const proc = Bun.spawn(
       [
@@ -610,8 +623,11 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const report = await readFile(join(outbox, "002-now.md"), "utf8");
     expect(report).toContain("Draft is waiting for local preparation");
-    expect(report).toContain("Next: `/draft draft-work-now`");
+    expect(report).toContain("Next: `/draft_next`");
     expect(report).not.toContain("No immediate remote action");
+    const draftReport = await readFile(join(outbox, "003-draft-next.md"), "utf8");
+    expect(draftReport).toContain("Draft: `draft-work-now`");
+    expect(draftReport).toContain("Improve Telegram now flow");
   });
 });
 

@@ -103,11 +103,11 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
       "# remote:help advanced",
       "",
       "Inspection:",
-      "- `/runs`, `/run <run_id>`, `/failures`",
+      "- `/runs`, `/run_latest`, `/run <run_id>`, `/failures`",
       "- `/tasks`, `/task <task_id>`",
-      "- `/actions`, `/action <action_id>`",
-      "- `/proposals`, `/proposal <proposal_id>`",
-      "- `/drafts`, `/draft <draft_id>`",
+      "- `/actions`, `/action_current`, `/action <action_id>`",
+      "- `/proposals`, `/proposal_next`, `/proposal <proposal_id>`",
+      "- `/drafts`, `/draft_next`, `/draft <draft_id>`",
       "",
       "Explicit workflow:",
       "- `/propose <text>`",
@@ -257,7 +257,7 @@ export function nowReport(input: {
       `Action: ${code(running.id)}`,
       `Task: ${code(running.taskId)} - ${oneLine(running.taskTitle)}`,
       "",
-      `Next: ${code(`/action ${running.id}`)}`,
+      `Next: ${code("/action_current")}`,
     ].join("\n");
   }
 
@@ -270,7 +270,7 @@ export function nowReport(input: {
       `Action: ${code(approved.id)}`,
       `Task: ${code(approved.taskId)} - ${oneLine(approved.taskTitle)}`,
       "",
-      `Next: ${code(`/action ${approved.id}`)}`,
+      `Next: ${code("/action_current")}`,
     ].join("\n");
   }
 
@@ -325,7 +325,7 @@ export function nowReport(input: {
       `Title: ${oneLine(draft.title)}`,
       missing.length ? `Missing: ${missing.join(", ")}` : "Ready for local approval.",
       "",
-      `Next: ${code(`/draft ${draft.id}`)}`,
+      `Next: ${code("/draft_next")}`,
       `Local next: ${code(localNext)}`,
     ].join("\n");
   }
@@ -342,7 +342,7 @@ export function nowReport(input: {
       `Proposal: ${code(proposal.id)}`,
       `Text: ${oneLine(proposal.text)}`,
       "",
-      `Next: ${code(`/proposal ${proposal.id}`)}`,
+      `Next: ${code("/proposal_next")}`,
     ].join("\n");
   }
 
@@ -355,7 +355,7 @@ export function nowReport(input: {
       `Run: ${code(latest.runId)}`,
       latest.failureReason ? `Failure: ${oneLine(latest.failureReason)}` : "",
       "",
-      `Next: ${code(`/run ${latest.runId}`)}`,
+      `Next: ${code("/run_latest")}`,
     ]
       .filter(Boolean)
       .join("\n");

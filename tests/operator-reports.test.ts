@@ -307,11 +307,15 @@ describe("operator reports", () => {
     });
 
     expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).toContain("Next: `/yes`");
+    expect(nowReport({ runs: [], tasks: [], actions: [{ ...pendingAction, status: "approved" }] })).toContain(
+      "Next: `/action_current`",
+    );
     expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("Next: `/run_next`");
     expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("Draft is waiting for local preparation");
-    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("Next: `/draft draft-1`");
+    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("Next: `/draft_next`");
     expect(nowReport({ runs: [], tasks: [], actions: [], proposals: [proposal] })).toContain("Proposal is waiting for review");
-    expect(nowReport({ runs: [failRun], tasks: [], actions: [] })).toContain(`/run ${failRun.runId}`);
+    expect(nowReport({ runs: [], tasks: [], actions: [], proposals: [proposal] })).toContain("Next: `/proposal_next`");
+    expect(nowReport({ runs: [failRun], tasks: [], actions: [] })).toContain("Next: `/run_latest`");
   });
 
   test("renders next action reports", () => {
