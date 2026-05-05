@@ -14,6 +14,7 @@ export interface PrepareWorkerDispatchInput {
   worktreesDir?: string;
   liveLogPath?: string;
   runId?: string;
+  codexBin?: string;
 }
 
 export interface WorkerDispatchPreparation {
@@ -80,7 +81,7 @@ export async function prepareWorkerDispatch(
     agentId: input.agent.id,
     worktreePath,
     allocation,
-    codex: prepareCodexDispatch(input.task, input.agent, worktreePath),
+    codex: prepareCodexDispatch(input.task, input.agent, worktreePath, input.codexBin),
   };
 }
 

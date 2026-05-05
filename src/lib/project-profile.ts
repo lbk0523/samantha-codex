@@ -28,6 +28,8 @@ export function applyProjectDefaults(
 ): TaskDraftUpdatePatch {
   return {
     ...patch,
+    projectId: patch.projectId ?? profile.id,
+    repoRoot: patch.repoRoot ?? profile.repoRoot,
     forbiddenChanges: patch.forbiddenChanges ?? profile.forbiddenChanges,
     setupCommands: patch.setupCommands ?? profile.setupCommands,
     verifyCommands: patch.verifyCommands ?? profile.verifyCommands,

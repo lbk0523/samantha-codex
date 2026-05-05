@@ -661,7 +661,25 @@ describe("inbox and remote commands", () => {
     await mkdir(state, { recursive: true });
     await mkdir(agents, { recursive: true });
     await mkdir(projects, { recursive: true });
-    await writeFile(join(agents, "codex-worker.json"), `${JSON.stringify(writer, null, 2)}\n`, "utf8");
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      `${JSON.stringify(
+        {
+          ...writer,
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
     await writeFile(
       join(projects, "omht.json"),
       `${JSON.stringify(
@@ -714,6 +732,15 @@ describe("inbox and remote commands", () => {
       }),
       "utf8",
     );
+    await writeFile(
+      join(inbox, "004-run-next.json"),
+      JSON.stringify({
+        id: "remote-run-next",
+        type: "actions:run-next",
+        args: { receivedAt: "2026-05-05T10:43:00.000Z" },
+      }),
+      "utf8",
+    );
 
     const proc = Bun.spawn(
       [
@@ -743,6 +770,9 @@ describe("inbox and remote commands", () => {
     expect(approveReport).toContain("Created task: `task-remote-draft`");
     expect(approveReport).toContain("No worker was dispatched yet.");
     expect(approveReport).toContain("Telegram: `/run_next`");
+    const actionReport = await readFile(join(outbox, "004-run-next.md"), "utf8");
+    expect(actionReport).toContain("Repo: `/repo`");
+    expect(actionReport).toContain("--repo-root=/repo");
 
     const taskRecords = (await readFile(join(state, "tasks.jsonl"), "utf8"))
       .trim()
@@ -751,6 +781,8 @@ describe("inbox and remote commands", () => {
     expect(taskRecords).toMatchObject([
       {
         id: "task-remote-draft",
+        projectId: "omht",
+        repoRoot: "/repo",
         status: "pending",
         targetFiles: ["src/lib/operator-reports.ts", "tests/operator-reports.test.ts"],
         setupCommands: ["bun install"],
@@ -758,6 +790,10 @@ describe("inbox and remote commands", () => {
         forbiddenChanges: ["state/**"],
       },
     ]);
+    expect((await new RemoteActionStore(join(state, "remote-actions.jsonl")).list())[0]).toMatchObject({
+      taskId: "task-remote-draft",
+      repoRoot: "/repo",
+    });
   });
 });
 
@@ -805,6 +841,8 @@ describe("dashboard", () => {
           hasBotToken: true,
           hasPollChatId: true,
           hasReplyChatId: true,
+          codexCommand: "codex",
+          hasCodexExecutable: true,
         },
         health: { ok: true, heartbeat, ageMs: 1000, violations: [] },
         queues: {
@@ -940,6 +978,8 @@ describe("dashboard", () => {
           hasBotToken: true,
           hasPollChatId: true,
           hasReplyChatId: true,
+          codexCommand: "codex",
+          hasCodexExecutable: true,
         },
         health: { ok: true, ageMs: 1000, violations: [] },
         queues: {

@@ -549,6 +549,24 @@ export function taskDraftPreparedReport(input: {
     .join("\n");
 }
 
+export function taskDraftPrepareBlockedReport(input: {
+  draft: TaskDraftRecord;
+  projectId: string;
+  violations: string[];
+}): string {
+  return [
+    "# drafts:prepare-latest",
+    "",
+    "Draft was not prepared.",
+    `Draft: ${code(input.draft.id)}`,
+    `Project: ${code(input.projectId)}`,
+    "",
+    "Violations:",
+    ...input.violations.map((violation) => `- ${violation}`),
+    ...draftNextLines(input.draft),
+  ].join("\n");
+}
+
 export function taskDraftApprovalBlockedReport(input: {
   draft: TaskDraftRecord;
   violations: string[];
@@ -839,6 +857,7 @@ export function doctorReport(snapshot: OpsSnapshot): string {
     `- TELEGRAM_BOT_TOKEN: ${snapshot.env.hasBotToken ? "present" : "missing"}`,
     `- poll chat id: ${snapshot.env.hasPollChatId ? "present" : "missing"}`,
     `- reply chat id: ${snapshot.env.hasReplyChatId ? "present" : "missing"}`,
+    `- codex executable: ${snapshot.env.hasCodexExecutable ? "available" : "missing"} (${code(snapshot.env.codexCommand ?? "codex")})`,
     "",
     "Daemon:",
     `- health: ${snapshot.health.ok ? "ok" : "failed"}`,

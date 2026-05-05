@@ -31,6 +31,8 @@ export interface TaskSpec {
   id: string;
   title: string;
   targetAgent: string;
+  projectId?: string;
+  repoRoot?: string;
   targetFiles: string[];
   forbiddenChanges: string[];
   setupCommands?: string[];

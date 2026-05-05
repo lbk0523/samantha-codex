@@ -27,6 +27,7 @@ describe("collectOpsSnapshot", () => {
     const archiveInboxDir = join(root, "archive", "inbox");
     const stateDir = join(root, "state");
     const systemdDir = join(root, "systemd");
+    const binDir = join(root, "bin");
     const lockPath = join(stateDir, "daemon.lock");
     const heartbeatPath = join(stateDir, "heartbeat.json");
     await Promise.all([
@@ -34,8 +35,10 @@ describe("collectOpsSnapshot", () => {
       mkdir(outboxDir, { recursive: true }),
       mkdir(archiveInboxDir, { recursive: true }),
       mkdir(systemdDir, { recursive: true }),
+      mkdir(binDir, { recursive: true }),
     ]);
     await writeFile(envFilePath, "TELEGRAM_BOT_TOKEN=secret\nTELEGRAM_CHAT_ID=12345\n", "utf8");
+    await writeFile(join(binDir, "codex"), "", "utf8");
     await writeFile(join(inboxDir, "pending.json"), "{}", "utf8");
     await writeFile(join(outboxDir, "remote-a.md"), "# a\n", "utf8");
     await writeFile(join(outboxDir, "remote-b.md"), "# b\n", "utf8");
@@ -96,6 +99,7 @@ describe("collectOpsSnapshot", () => {
       telegramOffsetPath: join(stateDir, "telegram-offset.json"),
       telegramRepliesPath: join(stateDir, "telegram-replies.json"),
       systemdUserDir: systemdDir,
+      env: { PATH: binDir },
       now: new Date("2026-05-03T10:00:11.000Z"),
       isAlive: (pid) => pid === 101,
     });
@@ -103,6 +107,7 @@ describe("collectOpsSnapshot", () => {
     expect(snapshot.ok).toBe(true);
     expect(snapshot.env.hasBotToken).toBe(true);
     expect(snapshot.env.hasPollChatId).toBe(true);
+    expect(snapshot.env.hasCodexExecutable).toBe(true);
     expect(snapshot.queues.pendingInboxCount).toBe(1);
     expect(snapshot.queues.outboxCount).toBe(3);
     expect(snapshot.queues.remoteOutboxCount).toBe(2);
@@ -129,6 +134,7 @@ describe("collectOpsSnapshot", () => {
 
     expect(snapshot.ok).toBe(false);
     expect(snapshot.failures).toContain("TELEGRAM_BOT_TOKEN is missing");
+    expect(snapshot.failures).toContain("Codex executable is missing: codex");
     expect(snapshot.failures).toContain("daemon lock is missing");
     expect(snapshot.warnings).toContain("telegram offset state is missing");
   });
@@ -162,7 +168,7 @@ describe("collectOpsSnapshot", () => {
     const lockPath = join(stateDir, "daemon.lock");
     const heartbeatPath = join(stateDir, "heartbeat.json");
     await mkdir(stateDir, { recursive: true });
-    await writeFile(join(root, ".env"), "TELEGRAM_BOT_TOKEN=secret\nTELEGRAM_CHAT_ID=12345\n", "utf8");
+    await writeFile(join(root, ".env"), "TELEGRAM_BOT_TOKEN=secret\nTELEGRAM_CHAT_ID=12345\nSAMANTHA_CODEX_BIN=/bin/true\n", "utf8");
     await acquireDaemonLock({
       lockPath,
       command: "inbox:watch",

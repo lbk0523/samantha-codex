@@ -24,6 +24,7 @@ import {
   taskDraftAddedReport,
   taskDraftApprovalBlockedReport,
   taskDraftApprovedReport,
+  taskDraftPrepareBlockedReport,
   taskDraftPreparedReport,
   taskDraftShowReport,
   taskDraftsListReport,
@@ -166,6 +167,8 @@ describe("operator reports", () => {
         hasBotToken: true,
         hasPollChatId: true,
         hasReplyChatId: true,
+        codexCommand: "codex",
+        hasCodexExecutable: true,
       },
       health: { ok: true, heartbeat, ageMs: 1000, violations: [] },
       queues: {
@@ -370,6 +373,9 @@ describe("operator reports", () => {
     );
     expect(taskDraftPreparedReport({ draft, projectId: "omht", violations: ["targetFiles must not be empty"] })).toContain(
       "Prepared draft: `draft-1`",
+    );
+    expect(taskDraftPrepareBlockedReport({ draft, projectId: "omht", violations: ["targetFiles entry looks like an id"] })).toContain(
+      "Draft was not prepared.",
     );
     expect(taskDraftApprovalBlockedReport({ draft, violations: ["targetFiles must not be empty"] })).toContain(
       "Draft was not approved.",

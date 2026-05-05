@@ -13,6 +13,8 @@ const profile: ProjectProfile = {
 describe("project profiles", () => {
   test("apply default setup, verify, and forbidden changes to draft patches", () => {
     expect(applyProjectDefaults({ targetFiles: ["tests/unit/foo.test.ts"] }, profile)).toEqual({
+      projectId: "omht",
+      repoRoot: "/repo/omht",
       targetFiles: ["tests/unit/foo.test.ts"],
       forbiddenChanges: ["node_modules/**"],
       setupCommands: ["bun install"],

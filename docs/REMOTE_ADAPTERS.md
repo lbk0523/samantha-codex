@@ -116,7 +116,7 @@ bun run samantha drafts:approve <draft-id>
 
 `drafts:check` returns a readiness summary with missing fields and next commands. `drafts:template` prints an editable JSON patch, optionally filled with project defaults. `drafts:update` rejects unknown patch fields instead of silently ignoring them. `drafts:approve` and `/draft_approve` refuse drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker.
 
-`/draft_next` is read-only, but its report includes the next Telegram command to send. If target files are still missing, use `/draft_prepare <project_id> <target_file...>`.
+`/draft_next` is read-only, but its report includes the next Telegram command to send. If target files are still missing, use `/draft_prepare <project_id> <target_file...>`. Target files must be repo-relative file paths; draft/proposal/task ids, absolute paths, parent-directory paths, and project-forbidden paths are rejected.
 
 Telegram reports use a consistent next-action shape:
 
@@ -164,7 +164,7 @@ The explicit advanced equivalents remain available:
 /approve_action <action_id> -> approved action
 ```
 
-`actions:watch` or one-shot `actions:run-pending` executes only existing approved action ids. Telegram cannot supply repo paths, shell commands, extra flags, merge, push, or cleanup instructions. The repo root must be configured locally through `SAMANTHA_REPO_ROOT`. If it is not set, action preparation fails with an explicit report.
+`actions:watch` or one-shot `actions:run-pending` executes only existing approved action ids. Telegram cannot supply shell commands, extra flags, merge, push, or cleanup instructions. Drafts prepared with a project profile carry that profile's `repoRoot` into the promoted task and dispatch action; otherwise the repo root must be configured locally through `SAMANTHA_REPO_ROOT`. If neither is set, action preparation fails with an explicit report. If systemd cannot find Codex, set `SAMANTHA_CODEX_BIN` in `.env`.
 
 Use `--tmux` for a read-only supervisor view while the worker runs. Samantha still owns the worker process, safety gates, merge, and push; tmux only tails `runs/live/<run-id>.jsonl` through a formatter. Attach with:
 

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { TaskSpec } from "./contracts";
+import { matchesAnyGlob } from "./glob";
 import type { ProposalRecord } from "./proposal-store";
 import { sanitizeTaskId } from "./worktree";
 
@@ -13,6 +14,8 @@ export interface TaskDraftRecord {
   status: TaskDraftStatus;
   title: string;
   targetAgent: string;
+  projectId?: string;
+  repoRoot?: string;
   targetFiles: string[];
   forbiddenChanges: string[];
   setupCommands?: string[];
@@ -49,6 +52,8 @@ export interface TaskDraftReadiness {
 export interface TaskDraftUpdatePatch {
   title?: string;
   targetAgent?: string;
+  projectId?: string;
+  repoRoot?: string;
   targetFiles?: string[];
   forbiddenChanges?: string[];
   setupCommands?: string[];
@@ -78,6 +83,8 @@ export function parseTaskDraftUpdatePatch(raw: unknown): TaskDraftUpdatePatch {
   const allowed = new Set([
     "title",
     "targetAgent",
+    "projectId",
+    "repoRoot",
     "targetFiles",
     "forbiddenChanges",
     "setupCommands",
@@ -90,6 +97,8 @@ export function parseTaskDraftUpdatePatch(raw: unknown): TaskDraftUpdatePatch {
   return {
     title: optionalString(value.title, "title"),
     targetAgent: optionalString(value.targetAgent, "targetAgent"),
+    projectId: optionalString(value.projectId, "projectId"),
+    repoRoot: optionalString(value.repoRoot, "repoRoot"),
     targetFiles: optionalStringArray(value.targetFiles, "targetFiles"),
     forbiddenChanges: optionalStringArray(value.forbiddenChanges, "forbiddenChanges"),
     setupCommands: optionalStringArray(value.setupCommands, "setupCommands"),
@@ -154,6 +163,34 @@ export function buildTaskIdFromDraft(draftId: string): string {
   return `task-${sanitizeTaskId(draftId.replace(/^draft-/, ""))}`;
 }
 
+export function validateTaskTargetFiles(files: string[], forbiddenChanges: string[] = []): string[] {
+  const violations: string[] = [];
+  for (const file of files) {
+    const trimmed = file.trim();
+    if (!trimmed) {
+      violations.push("targetFiles must not contain empty paths");
+      continue;
+    }
+    if (/^(draft|proposal|task)-/.test(trimmed)) {
+      violations.push(`targetFiles entry looks like an id, not a file path: ${trimmed}`);
+      continue;
+    }
+    if (trimmed.startsWith("/") || /^[A-Za-z]:[\\/]/.test(trimmed)) {
+      violations.push(`targetFiles must be repo-relative paths: ${trimmed}`);
+      continue;
+    }
+    if (trimmed.split(/[\\/]+/).includes("..")) {
+      violations.push(`targetFiles must not contain parent directory segments: ${trimmed}`);
+      continue;
+    }
+    const forbidden = forbiddenChanges.find((glob) => matchesAnyGlob(trimmed, [glob]));
+    if (forbidden) {
+      violations.push(`targetFiles entry is forbidden: ${trimmed} matches ${forbidden}`);
+    }
+  }
+  return violations;
+}
+
 export function checkTaskDraft(draft: TaskDraftRecord | undefined, input: { knownAgentIds?: string[] } = {}): TaskDraftCheckResult {
   if (!draft) {
     return { ok: false, draftId: "", violations: ["draft not found"] };
@@ -168,6 +205,7 @@ export function checkTaskDraft(draft: TaskDraftRecord | undefined, input: { know
     violations.push(`targetAgent is unknown: ${draft.targetAgent}`);
   }
   if (draft.targetFiles.length === 0) violations.push("targetFiles must not be empty");
+  violations.push(...validateTaskTargetFiles(draft.targetFiles, draft.forbiddenChanges));
   if (draft.verifyCommands.length === 0) violations.push("verifyCommands must not be empty");
 
   return {
@@ -261,6 +299,8 @@ export function taskSpecFromDraft(draft: TaskDraftRecord): TaskSpec {
     id: buildTaskIdFromDraft(draft.id),
     title: draft.title,
     targetAgent: draft.targetAgent,
+    ...(draft.projectId ? { projectId: draft.projectId } : {}),
+    ...(draft.repoRoot ? { repoRoot: draft.repoRoot } : {}),
     targetFiles: draft.targetFiles,
     forbiddenChanges: draft.forbiddenChanges,
     setupCommands: draft.setupCommands && draft.setupCommands.length > 0 ? draft.setupCommands : undefined,
@@ -306,6 +346,8 @@ export class TaskDraftStore {
     };
     if (patch.title !== undefined) updated.title = patch.title;
     if (patch.targetAgent !== undefined) updated.targetAgent = patch.targetAgent;
+    if (patch.projectId !== undefined) updated.projectId = patch.projectId;
+    if (patch.repoRoot !== undefined) updated.repoRoot = patch.repoRoot;
     if (patch.targetFiles !== undefined) updated.targetFiles = patch.targetFiles;
     if (patch.forbiddenChanges !== undefined) updated.forbiddenChanges = patch.forbiddenChanges;
     if (patch.setupCommands !== undefined) updated.setupCommands = patch.setupCommands;

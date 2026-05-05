@@ -12,6 +12,7 @@ import {
   taskDraftReadiness,
   taskDraftFromProposal,
   taskSpecFromDraft,
+  validateTaskTargetFiles,
   type TaskDraftRecord,
 } from "../src/lib/task-draft-store";
 
@@ -85,6 +86,15 @@ describe("TaskDraftStore", () => {
     });
     expect(checkTaskDraft({ ...ready, targetAgent: "missing-agent" }, { knownAgentIds: ["codex-worker"] }).violations).toContain(
       "targetAgent is unknown: missing-agent",
+    );
+  });
+
+  test("rejects unsafe target file entries", () => {
+    expect(validateTaskTargetFiles(["draft-123"], [])).toContain("targetFiles entry looks like an id, not a file path: draft-123");
+    expect(validateTaskTargetFiles(["/tmp/file.ts"], [])).toContain("targetFiles must be repo-relative paths: /tmp/file.ts");
+    expect(validateTaskTargetFiles(["../file.ts"], [])).toContain("targetFiles must not contain parent directory segments: ../file.ts");
+    expect(validateTaskTargetFiles(["state/tasks.jsonl"], ["state/**"])).toContain(
+      "targetFiles entry is forbidden: state/tasks.jsonl matches state/**",
     );
   });
 
@@ -192,6 +202,8 @@ describe("TaskDraftStore", () => {
     expect(patch).toEqual({
       title: "Updated title",
       targetAgent: undefined,
+      projectId: undefined,
+      repoRoot: undefined,
       targetFiles: ["src/lib/task-draft-store.ts"],
       forbiddenChanges: undefined,
       setupCommands: ["bun install"],

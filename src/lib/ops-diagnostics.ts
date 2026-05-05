@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { checkDaemonHealth, type DaemonHealthResult } from "./daemon";
 import type { TelegramReplyState } from "./telegram-reply-adapter";
 
@@ -14,6 +14,8 @@ export interface EnvDiagnostics {
   hasBotToken: boolean;
   hasPollChatId: boolean;
   hasReplyChatId: boolean;
+  codexCommand: string;
+  hasCodexExecutable: boolean;
 }
 
 export interface QueueDiagnostics {
@@ -89,10 +91,10 @@ async function readOptionalJson<T>(path: string): Promise<T | undefined> {
   }
 }
 
-async function nonEmptyEnvNames(path: string): Promise<Set<string>> {
+async function envFileValues(path: string): Promise<Map<string, string>> {
   try {
     const raw = await readFile(path, "utf8");
-    const names = new Set<string>();
+    const values = new Map<string, string>();
     for (const line of raw.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) continue;
@@ -100,17 +102,29 @@ async function nonEmptyEnvNames(path: string): Promise<Set<string>> {
       if (eq <= 0) continue;
       const name = trimmed.slice(0, eq).trim();
       const value = trimmed.slice(eq + 1).trim();
-      if (name && value) names.add(name);
+      if (name && value) values.set(name, value.replace(/^['"]|['"]$/g, ""));
     }
-    return names;
+    return values;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return new Set();
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return new Map();
     throw err;
   }
 }
 
 function hasEnvValue(name: string, env: NodeJS.ProcessEnv, envFileNames: Set<string>): boolean {
   return Boolean(env[name]?.trim()) || envFileNames.has(name);
+}
+
+async function hasExecutable(command: string, env: NodeJS.ProcessEnv): Promise<boolean> {
+  if (!command.trim()) return false;
+  if (command.includes("/") || /^[A-Za-z]:[\\/]/.test(command)) {
+    return exists(command);
+  }
+  const pathDirs = (env.PATH ?? "").split(delimiter).filter(Boolean);
+  for (const dir of pathDirs) {
+    if (await exists(join(dir, command))) return true;
+  }
+  return false;
 }
 
 async function countFiles(path: string, predicate: (file: string) => boolean): Promise<number> {
@@ -182,7 +196,8 @@ export async function collectOpsSnapshot(input: {
 }): Promise<OpsSnapshot> {
   const now = input.now ?? new Date();
   const env = input.env ?? process.env;
-  const envFileNames = await nonEmptyEnvNames(input.envFilePath);
+  const envValues = await envFileValues(input.envFilePath);
+  const envFileNames = new Set(envValues.keys());
   const hasBotToken = hasEnvValue("TELEGRAM_BOT_TOKEN", env, envFileNames);
   const hasPollChatId =
     hasEnvValue("TELEGRAM_ALLOWED_SENDER_ID", env, envFileNames) ||
@@ -191,6 +206,8 @@ export async function collectOpsSnapshot(input: {
     hasEnvValue("TELEGRAM_REPLY_CHAT_ID", env, envFileNames) ||
     hasEnvValue("TELEGRAM_CHAT_ID", env, envFileNames) ||
     hasEnvValue("TELEGRAM_ALLOWED_SENDER_ID", env, envFileNames);
+  const codexCommand = env.SAMANTHA_CODEX_BIN?.trim() || envValues.get("SAMANTHA_CODEX_BIN") || "codex";
+  const hasCodexExecutable = await hasExecutable(codexCommand, env);
   const remoteOutbox = await remoteOutboxFiles(input.outboxDir);
   const replyState = await readOptionalJson<TelegramReplyState>(input.telegramRepliesPath);
   const sentFiles = new Set(replyState?.sentFiles ?? []);
@@ -242,11 +259,14 @@ export async function collectOpsSnapshot(input: {
     hasBotToken,
     hasPollChatId,
     hasReplyChatId,
+    codexCommand,
+    hasCodexExecutable,
   };
   const failures = [
     ...(!hasBotToken ? ["TELEGRAM_BOT_TOKEN is missing"] : []),
     ...(!hasPollChatId ? ["Telegram poll chat id is missing"] : []),
     ...(!hasReplyChatId ? ["Telegram reply chat id is missing"] : []),
+    ...(!hasCodexExecutable ? [`Codex executable is missing: ${codexCommand}`] : []),
     ...(!effectiveHealth.ok ? effectiveHealth.violations : []),
   ];
   const warnings = [

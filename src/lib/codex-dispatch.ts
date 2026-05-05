@@ -67,9 +67,10 @@ export function buildCodexExecCommand(input: {
   agent: AgentProfile;
   worktreePath: string;
   prompt: string;
+  codexBin?: string;
 }): string[] {
   const command = [
-    "codex",
+    input.codexBin ?? "codex",
     "exec",
     "--cd",
     input.worktreePath,
@@ -94,6 +95,7 @@ export function prepareCodexDispatch(
   task: TaskSpec,
   agent: AgentProfile,
   worktreePath: string,
+  codexBin?: string,
 ): PreparedCodexDispatch {
   const prompt = buildCodexWorkerPrompt(task, agent);
   return {
@@ -102,6 +104,7 @@ export function prepareCodexDispatch(
       agent,
       worktreePath,
       prompt,
+      codexBin,
     }),
   };
 }

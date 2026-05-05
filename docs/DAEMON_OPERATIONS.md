@@ -74,7 +74,7 @@ systemctl --user enable samantha-inbox-watch
 systemctl --user enable samantha-actions-watch
 ```
 
-The service templates read `%h/projects/samantha-codex/.env`, so `SAMANTHA_REPO_ROOT` can be set there without committing local paths.
+The service templates read `%h/projects/samantha-codex/.env`, so `SAMANTHA_REPO_ROOT` and `SAMANTHA_CODEX_BIN` can be set there without committing local paths.
 
 Inspect:
 
@@ -116,6 +116,8 @@ TELEGRAM_BOT_TOKEN=<token>
 TELEGRAM_CHAT_ID=<telegram-chat-id>
 # Optional, required for /prepare_dispatch:
 SAMANTHA_REPO_ROOT=/home/lbk0523/projects/samantha-codex
+# Optional, required when systemd cannot find codex in PATH:
+SAMANTHA_CODEX_BIN=/home/lbk0523/.nvm/versions/node/v24.15.0/bin/codex
 ```
 
 Install and enable:

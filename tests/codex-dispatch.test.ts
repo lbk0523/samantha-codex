@@ -90,4 +90,10 @@ describe("codex dispatch preparation", () => {
     expect(prepared.command).toContain("--model");
     expect(prepared.command).toContain("gpt-5.5");
   });
+
+  test("can use an explicit codex executable path", () => {
+    const prepared = prepareCodexDispatch(task, agent, "/tmp/samantha-worktree", "/opt/codex/bin/codex");
+
+    expect(prepared.command[0]).toBe("/opt/codex/bin/codex");
+  });
 });

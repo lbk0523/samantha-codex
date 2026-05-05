@@ -29,6 +29,7 @@ import {
   taskDraftAddedReport,
   taskDraftApprovalBlockedReport,
   taskDraftApprovedReport,
+  taskDraftPrepareBlockedReport,
   taskDraftPreparedReport,
   taskDraftShowReport,
   taskDraftsListReport,
@@ -52,6 +53,7 @@ import {
   taskDraftReadiness,
   taskDraftFromProposal,
   taskSpecFromDraft,
+  validateTaskTargetFiles,
 } from "./lib/task-draft-store";
 import { TaskStore } from "./lib/task-store";
 import { pollTelegramToInbox } from "./lib/telegram-adapter";
@@ -410,6 +412,10 @@ function remoteDispatchRepoRoot(args: ParsedArgs): string {
   return resolve(repoRoot);
 }
 
+function codexBin(args: ParsedArgs): string {
+  return flag(args, "codex-bin", process.env.SAMANTHA_CODEX_BIN ?? "codex");
+}
+
 async function executeTaskDispatch(input: {
   args: ParsedArgs;
   taskId: string;
@@ -419,6 +425,7 @@ async function executeTaskDispatch(input: {
   tmux?: boolean;
   worktreesDir?: string;
   tmuxSession?: string;
+  codexBin?: string;
 }) {
   const taskStore = new TaskStore(tasksPath(input.args));
   const task = await taskStore.find(input.taskId);
@@ -439,6 +446,7 @@ async function executeTaskDispatch(input: {
     repoRoot: resolve(input.repoRoot),
     allocate,
     worktreesDir: input.worktreesDir || undefined,
+    codexBin: input.codexBin ?? codexBin(input.args),
     ...(liveLogPath ? { liveLogPath, runId } : {}),
   };
 
@@ -536,7 +544,7 @@ async function prepareDispatchActionForTask(input: {
 
   const action = createRemoteDispatchAction({
     task,
-    repoRoot: remoteDispatchRepoRoot(input.args),
+    repoRoot: task.repoRoot ? resolve(task.repoRoot) : remoteDispatchRepoRoot(input.args),
     createdAt: input.receivedAt ?? new Date().toISOString(),
     source: "remote",
     commandId: input.commandId,
@@ -707,6 +715,10 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     if (!draft) return taskDraftShowReport("latest", undefined);
 
     const project = await loadProjectProfile(projectProfilesDir(args), projectId);
+    const targetFileViolations = validateTaskTargetFiles(targetFiles, project.forbiddenChanges);
+    if (targetFileViolations.length) {
+      return taskDraftPrepareBlockedReport({ draft, projectId, violations: targetFileViolations });
+    }
     const updated = await draftStore.update(
       draft.id,
       applyProjectDefaults(targetFiles.length ? { targetFiles } : {}, project),
@@ -944,6 +956,7 @@ async function main(): Promise<void> {
     const execute = args.flags.get("execute") === true;
     const allocate = args.flags.get("allocate") === true || (execute && agent.worktreePolicy === "per-task");
     const worktreesDir = flag(args, "worktrees-dir", "");
+    const workerCodexBin = codexBin(args);
 
     if (!execute) {
       printJson(await prepareWorkerDispatch({
@@ -952,6 +965,7 @@ async function main(): Promise<void> {
         repoRoot: resolve(repoRoot),
         allocate,
         worktreesDir: worktreesDir || undefined,
+        codexBin: workerCodexBin,
       }));
       return;
     }
@@ -965,6 +979,7 @@ async function main(): Promise<void> {
       liveLog: args.flags.get("live-log") === true,
       tmux: args.flags.get("tmux") === true,
       tmuxSession: flag(args, "tmux-session", "samantha"),
+      codexBin: workerCodexBin,
     });
     printJson(result);
     if (!result.runSummary.pass) process.exitCode = 1;
