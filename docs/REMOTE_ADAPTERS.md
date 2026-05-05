@@ -1,10 +1,10 @@
 # Samantha Remote Adapters
 
-Last updated: 2026-05-03
+Last updated: 2026-05-05
 
 ## Policy
 
-Remote adapters are input adapters only. They may create inbox command files, but they may not execute shell commands, dispatch workers directly, merge, push, or clean worktrees.
+Remote adapters are input adapters first. They may create inbox command files and may execute only a prebuilt dispatch action after explicit Telegram approval. They may not execute shell commands, dispatch workers directly, merge, push, or clean worktrees.
 
 All remote input must pass through:
 
@@ -36,10 +36,14 @@ The current remote command mapper supports only:
 - `/next-action`
 - `/dashboard`
 - `/task <task-id>`
+- `/prepare-dispatch <task-id>`
+- `/actions`
+- `/action <action-id>`
+- `/approve-action <action-id>`
 
 Unsupported commands are ignored or rejected.
 
-Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, and conservative task draft creation. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/draft-propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal-id>` may write a draft to `state/task-drafts.jsonl`. Worker dispatch, task ledger promotion, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
+Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, conservative task draft creation, and explicit approval of a prebuilt dispatch action. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/draft-propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal-id>` may write a draft to `state/task-drafts.jsonl`. Task ledger promotion, direct worker dispatch, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
 
 `/status` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
 
@@ -88,7 +92,7 @@ Draft patches may include `setupCommands`. Use this for fresh worktree dependenc
 
 Project profiles can provide these defaults. The first bundled profile is `omht`, which supplies the local OMHT repo root, `bun install`, and a conservative default typecheck command. Use `drafts:prepare` when converting a rough draft into an executable task draft for a known project.
 
-Worker dispatch is local-only:
+Direct worker dispatch is local-only:
 
 ```bash
 bun run samantha tasks:dispatch <task-id> --repo-root=<repo>
@@ -96,7 +100,18 @@ bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute
 bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute --tmux
 ```
 
-Without `--execute`, `tasks:dispatch` only prepares and prints the Codex command. With `--execute`, it writes a run log under `runs/`, appends `state/runs.jsonl`, and updates the task to `completed` or `failed`. Remote adapters cannot call this command.
+Without `--execute`, `tasks:dispatch` only prepares and prints the Codex command. With `--execute`, it writes a run log under `runs/`, appends `state/runs.jsonl`, and updates the task to `completed` or `failed`.
+
+Remote dispatch uses an action gate instead of direct command execution:
+
+```text
+/prepare-dispatch <task-id> -> state/remote-actions.jsonl pending action
+/approve-action <action-id> -> tasks:dispatch <task-id> --allocate --execute --tmux
+```
+
+`/prepare-dispatch` validates that the task is pending and that the target agent passes dispatch policy. It records the fixed repo root, task id, target agent, and dispatch flags in `state/remote-actions.jsonl`; no worker is started.
+
+`/approve-action` executes only an existing pending action id. Telegram cannot supply repo paths, shell commands, extra flags, merge, push, or cleanup instructions. The repo root must be configured locally on the watcher through `inbox:watch --repo-root=<repo>` or `SAMANTHA_REPO_ROOT`. If neither is set, action preparation fails with an explicit report.
 
 Use `--tmux` for a read-only supervisor view while the worker runs. Samantha still owns the worker process, safety gates, merge, and push; tmux only tails `runs/live/<run-id>.jsonl` through a formatter. Attach with:
 
@@ -203,7 +218,7 @@ The adapter only reads `outbox/remote-*.md` by default. It does not execute comm
 
 Long outbox reports are split into multiple Telegram messages instead of truncated.
 
-Reports that return proposal, draft, run, or task IDs also send each detected ID as its own follow-up message. This keeps iPhone Telegram copy/paste practical; status values, timestamps, and paths are not sent as copy-only messages.
+Reports that return proposal, draft, action, run, or task IDs also send each detected ID as its own follow-up message. This keeps iPhone Telegram copy/paste practical; status values, timestamps, and paths are not sent as copy-only messages.
 
 Sent state is stored in:
 

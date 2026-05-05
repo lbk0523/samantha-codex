@@ -5,6 +5,7 @@ Documentation=https://github.com/lbk0523/samantha-codex
 [Service]
 Type=simple
 WorkingDirectory=%h/projects/samantha-codex
+EnvironmentFile=-%h/projects/samantha-codex/.env
 ExecStart=%h/.bun/bin/bun run samantha inbox:watch --interval-ms=1000
 Restart=on-failure
 RestartSec=5

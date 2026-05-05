@@ -138,6 +138,36 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   if (text === "/dashboard") {
     return { id: `remote-${commandToken}-dashboard`, type: "dashboard:build", args: { source: "remote" } };
   }
+  if (text === "/actions") {
+    return { id: `remote-${commandToken}-actions`, type: "actions:list", args: { source: "remote" } };
+  }
+  if (text.startsWith("/action ")) {
+    const id = text.slice("/action ".length).trim();
+    if (!id) throw new Error("missing action id");
+    return {
+      id: `remote-${commandToken}-action`,
+      type: "actions:show",
+      args: { id, source: "remote" },
+    };
+  }
+  if (text.startsWith("/prepare-dispatch ")) {
+    const taskId = text.slice("/prepare-dispatch ".length).trim();
+    if (!taskId) throw new Error("missing task id");
+    return {
+      id: `remote-${commandToken}-prepare-dispatch`,
+      type: "actions:prepare-dispatch",
+      args: { taskId, source: "remote", receivedAt },
+    };
+  }
+  if (text.startsWith("/approve-action ")) {
+    const id = text.slice("/approve-action ".length).trim();
+    if (!id) throw new Error("missing action id");
+    return {
+      id: `remote-${commandToken}-approve-action`,
+      type: "actions:approve",
+      args: { id, source: "remote", receivedAt },
+    };
+  }
   if (text.startsWith("/task ")) {
     return {
       id: `remote-${commandToken}-task`,

@@ -3,6 +3,7 @@ import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import type { ProposalRecord } from "./proposal-store";
+import { remoteActionCommand, type RemoteActionRecord } from "./remote-action-store";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
 import type { TaskDraftRecord } from "./task-draft-store";
 
@@ -48,6 +49,10 @@ function proposalLine(proposal: ProposalRecord): string {
 
 function draftLine(draft: TaskDraftRecord): string {
   return `- ${code(draft.id)} status=${code(draft.status)} source=${code(draft.sourceProposalId)} created=${code(draft.createdAt)} title=${oneLine(draft.title)}`;
+}
+
+function remoteActionLine(action: RemoteActionRecord): string {
+  return `- ${code(action.id)} status=${code(action.status)} kind=${code(action.kind)} task=${code(action.taskId)} created=${code(action.createdAt)}`;
 }
 
 function lifecycleText(lifecycle: RunLifecycleRecord | undefined): string {
@@ -118,8 +123,12 @@ export function remoteHelpReport(): string {
     "- `/task <task-id>`: show one task",
     "- `/next-action`: show the safest local next action",
     "- `/dashboard`: rebuild the read-only dashboard",
+    "- `/prepare-dispatch <task-id>`: create a pending dispatch action without executing it",
+    "- `/actions`: show recent pending/finished actions",
+    "- `/action <action-id>`: show one action",
+    "- `/approve-action <action-id>`: execute one pending dispatch action",
     "",
-    "Remote commands are safe-gated. They cannot dispatch workers, merge, push, clean worktrees, or run shell commands.",
+    "Remote commands are safe-gated. They cannot dispatch workers directly, merge, push, clean worktrees, or run shell commands.",
   ].join("\n");
 }
 
@@ -376,6 +385,78 @@ export function taskDraftShowReport(draftId: string, draft: TaskDraftRecord | un
     "Instructions:",
     draft.instructions.trim(),
   ].join("\n");
+}
+
+export function remoteActionPreparedReport(action: RemoteActionRecord): string {
+  return [
+    "# actions:prepare-dispatch",
+    "",
+    `Action: ${code(action.id)}`,
+    `Status: ${code(action.status)}`,
+    `Task: ${code(action.taskId)} - ${oneLine(action.taskTitle)}`,
+    `Agent: ${code(action.targetAgent)}`,
+    `Repo: ${code(action.repoRoot)}`,
+    "",
+    "Planned command:",
+    code(remoteActionCommand(action)),
+    "",
+    "No worker was dispatched yet.",
+    "Approve from Telegram:",
+    code(`/approve-action ${action.id}`),
+  ].join("\n");
+}
+
+export function remoteActionsListReport(actions: RemoteActionRecord[], limit = 10): string {
+  const lines = recent(actions, limit).map(remoteActionLine);
+  return ["# actions:list", "", `Total actions: ${actions.length}`, "", ...(lines.length ? lines : ["No actions recorded."])].join("\n");
+}
+
+export function remoteActionShowReport(actionId: string, action: RemoteActionRecord | undefined): string {
+  if (!action) {
+    return ["# actions:show", "", `Action not found: ${code(actionId)}`].join("\n");
+  }
+
+  return [
+    "# actions:show",
+    "",
+    `Action: ${code(action.id)}`,
+    `Kind: ${code(action.kind)}`,
+    `Status: ${code(action.status)}`,
+    `Task: ${code(action.taskId)} - ${oneLine(action.taskTitle)}`,
+    `Agent: ${code(action.targetAgent)}`,
+    `Repo: ${code(action.repoRoot)}`,
+    `Created: ${code(action.createdAt)}`,
+    action.approvedAt ? `Approved: ${code(action.approvedAt)}` : "",
+    action.completedAt ? `Completed: ${code(action.completedAt)}` : "",
+    "",
+    "Command:",
+    code(remoteActionCommand(action)),
+    action.result?.runId ? `Run: ${code(action.result.runId)}` : "",
+    action.result?.outcome ? `Outcome: ${code(action.result.outcome)}` : "",
+    action.result?.failure ? `Failure: ${oneLine(action.result.failure)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function remoteActionApprovedReport(action: RemoteActionRecord): string {
+  const result = action.result;
+  return [
+    "# actions:approve",
+    "",
+    `Action: ${code(action.id)}`,
+    `Status: ${code(action.status)}`,
+    `Task: ${code(action.taskId)}`,
+    result?.runId ? `Run: ${code(result.runId)}` : "",
+    result?.outcome ? `Outcome: ${code(result.outcome)}` : "",
+    result?.pass !== undefined ? `Pass: ${result.pass ? "yes" : "no"}` : "",
+    result?.runLogPath ? `Run log: ${code(result.runLogPath)}` : "",
+    result?.liveLogPath ? `Live log: ${code(result.liveLogPath)}` : "",
+    result?.tmuxSession ? `Tmux: ${code(result.tmuxSession)}` : "",
+    result?.failure ? `Failure: ${oneLine(result.failure)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function statusReport(input: {

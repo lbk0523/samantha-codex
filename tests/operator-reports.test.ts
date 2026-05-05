@@ -12,6 +12,10 @@ import {
   proposalsListReport,
   proposalReviewedReport,
   proposalShowReport,
+  remoteActionApprovedReport,
+  remoteActionPreparedReport,
+  remoteActionShowReport,
+  remoteActionsListReport,
   remoteHelpReport,
   runsListReport,
   runShowReport,
@@ -24,6 +28,7 @@ import {
 } from "../src/lib/operator-reports";
 import type { OpsSnapshot } from "../src/lib/ops-diagnostics";
 import type { ProposalRecord } from "../src/lib/proposal-store";
+import { createRemoteDispatchAction } from "../src/lib/remote-action-store";
 import type { RunLifecycleRecord } from "../src/lib/run-lifecycle-store";
 import type { TaskDraftRecord } from "../src/lib/task-draft-store";
 
@@ -123,7 +128,9 @@ describe("operator reports", () => {
     expect(report).toContain("/draft <proposal-id>");
     expect(report).toContain("/run <run-id>");
     expect(report).toContain("/next-action");
-    expect(report).toContain("cannot dispatch workers");
+    expect(report).toContain("/prepare-dispatch <task-id>");
+    expect(report).toContain("/approve-action <action-id>");
+    expect(report).toContain("cannot dispatch workers directly");
   });
 
   test("renders compact run and failure summaries", () => {
@@ -238,6 +245,37 @@ describe("operator reports", () => {
     expect(taskShowReport("task-pass", { ...task, status: "archived", archiveReason: "stale", archivedAt: "2026-05-04T10:00:00.000Z" })).toContain(
       "Archive reason: stale",
     );
+  });
+
+  test("renders remote action reports", () => {
+    const action = createRemoteDispatchAction({
+      task,
+      repoRoot: "/repo",
+      createdAt: "2026-05-03T10:07:00.000Z",
+      source: "remote",
+      commandId: "remote-prepare",
+    });
+    const completed = {
+      ...action,
+      status: "completed" as const,
+      approvedAt: "2026-05-03T10:08:00.000Z",
+      completedAt: "2026-05-03T10:09:00.000Z",
+      result: {
+        runId: "run-pass",
+        runLogPath: "/runs/run-pass.json",
+        liveLogPath: "/runs/live/run-pass.jsonl",
+        tmuxSession: "samantha",
+        pass: true,
+        outcome: "pass",
+      },
+    };
+
+    expect(remoteActionPreparedReport(action)).toContain("/approve-action");
+    expect(remoteActionPreparedReport(action)).toContain("No worker was dispatched yet.");
+    expect(remoteActionsListReport([action])).toContain("dispatch_task");
+    expect(remoteActionShowReport(action.id, action)).toContain("tasks:dispatch task-pass");
+    expect(remoteActionApprovedReport(completed)).toContain("Pass: yes");
+    expect(remoteActionApprovedReport(completed)).toContain("Tmux: `samantha`");
   });
 
   test("renders next action reports", () => {

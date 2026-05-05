@@ -1,6 +1,6 @@
 # Samantha-Codex Next Plan
 
-Last updated: 2026-05-04
+Last updated: 2026-05-05
 
 ## Current Baseline
 
@@ -17,6 +17,7 @@ The Phase 1-7 MVP exists and has passed the first real dogfood loop:
 - Telegram outbox replies
 - proposal intake/review and accepted-proposal task drafts
 - project profiles and local-only task approval/dispatch
+- Telegram-approved dispatch action gate
 - task draft readiness summaries and patch templates
 - read-only static operations dashboard
 
@@ -39,7 +40,7 @@ The immediate implementation focus is now:
 
 1. dogfood the improved draft-to-task path on a small OMHT task
 2. verify the read-only dashboard gives enough context without Telegram
-3. keep worker dispatch, merge, push, cleanup, task approval, and arbitrary shell execution local-only
+3. keep direct worker dispatch, merge, push, cleanup, task approval, and arbitrary shell execution local-only
 
 ## Next Implementation Slice
 
@@ -91,7 +92,21 @@ The local draft-to-task path now includes:
 - `drafts:update` and `drafts:prepare` readiness output after changes
 - `drafts:approve` failure output with readiness context
 
-Remote task approval and dispatch remain closed.
+Remote task approval remains closed. Dispatch is available only through the explicit action gate.
+
+### Completed: Remote Dispatch Action Gate
+
+Telegram can now run a worker only through this two-step gate:
+
+- `/prepare-dispatch <task-id>` records a pending dispatch action in `state/remote-actions.jsonl`
+- `/approve-action <action-id>` executes that exact pending action with fixed `--allocate --execute --tmux` flags
+
+Completed criteria:
+
+- Telegram cannot supply repo paths, shell commands, merge, push, cleanup, or extra dispatch flags.
+- the repo root is configured locally by `inbox:watch --repo-root=<repo>` or `SAMANTHA_REPO_ROOT`.
+- dispatch policy is checked before action creation.
+- action approval requires an existing pending action id.
 
 ### Completed: Read-Only Dashboard Upgrade
 
@@ -128,8 +143,8 @@ Completed criteria:
 
 Do not implement these yet:
 
-- remote worker dispatch
 - remote task approval
+- direct remote worker dispatch
 - remote merge/push/cleanup
 - multi-writer parallelism
 - dashboard write controls

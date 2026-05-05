@@ -8,6 +8,7 @@ import { renderDashboard, renderLaneViewDashboard, writeDashboard } from "../src
 import { processInbox } from "../src/lib/inbox";
 import type { RunSummary } from "../src/lib/ledger";
 import { buildPlanBatches, type LoadedPlanTask } from "../src/lib/plan-runner";
+import { RemoteActionStore } from "../src/lib/remote-action-store";
 import { commandFromRemoteInput, enqueueRemoteCommand } from "../src/lib/remote-command";
 
 let tmpRoots: string[] = [];
@@ -172,6 +173,27 @@ describe("inbox and remote commands", () => {
       args: { id: "draft-1" },
     });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/next-action" }, "bk").type).toBe("ops:next-action");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/actions" }, "bk").type).toBe("actions:list");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/action action-1" }, "bk")).toMatchObject({
+      type: "actions:show",
+      args: { id: "action-1" },
+    });
+    expect(
+      commandFromRemoteInput(
+        { senderId: "bk", text: "/prepare-dispatch task-pass", receivedAt: "2026-05-03T10:07:00.000Z" },
+        "bk",
+      ),
+    ).toMatchObject({
+      type: "actions:prepare-dispatch",
+      args: {
+        taskId: "task-pass",
+        receivedAt: "2026-05-03T10:07:00.000Z",
+      },
+    });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/approve-action action-1" }, "bk")).toMatchObject({
+      type: "actions:approve",
+      args: { id: "action-1" },
+    });
     expect(
       commandFromRemoteInput(
         { senderId: "bk", text: "/propose Improve status reports", receivedAt: "2026-05-03T10:00:00.000Z" },
@@ -206,6 +228,85 @@ describe("inbox and remote commands", () => {
 
     expect(enqueued.command.type).toBe("runs:list");
     expect(await readFile(enqueued.path, "utf8")).toContain("runs:list");
+  });
+
+  test("processes remote dispatch preparation into a pending action without executing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-action-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const agents = join(root, "agents");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      `${JSON.stringify(
+        {
+          ...writer,
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(join(state, "tasks.jsonl"), `${JSON.stringify({ ...task, id: "task-pass" })}\n`, "utf8");
+    await writeFile(
+      join(inbox, "001.json"),
+      JSON.stringify({
+        id: "remote-prepare",
+        type: "actions:prepare-dispatch",
+        args: { taskId: "task-pass", receivedAt: "2026-05-03T10:07:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        "--repo-root=/repo",
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const report = await readFile(join(outbox, "001.md"), "utf8");
+    const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
+    expect(report).toContain("No worker was dispatched yet.");
+    expect(report).toContain("/approve-action");
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({
+      kind: "dispatch_task",
+      status: "pending",
+      taskId: "task-pass",
+      repoRoot: "/repo",
+      allocate: true,
+      execute: true,
+      tmux: true,
+    });
   });
 });
 

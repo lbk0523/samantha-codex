@@ -18,6 +18,10 @@ import {
   proposalShowReport,
   nextActionReport,
   remoteHelpReport,
+  remoteActionApprovedReport,
+  remoteActionPreparedReport,
+  remoteActionShowReport,
+  remoteActionsListReport,
   runsListReport,
   runShowReport,
   statusReport,
@@ -29,8 +33,10 @@ import {
 } from "./lib/operator-reports";
 import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnostics";
 import { runPlan } from "./lib/plan-runner";
+import { validateDispatch } from "./lib/policy";
 import { applyProjectDefaults, loadProjectProfile } from "./lib/project-profile";
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
+import { createRemoteDispatchAction, RemoteActionStore } from "./lib/remote-action-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { lifecycleBaseFromRunLog, RunLifecycleStore } from "./lib/run-lifecycle-store";
 import { buildWorkerRunId, writeWorkerRunLog } from "./lib/run-log";
@@ -110,6 +116,10 @@ function runLifecyclePath(args: ParsedArgs): string {
   return join(stateDir(args), "run-lifecycle.jsonl");
 }
 
+function remoteActionsPath(args: ParsedArgs): string {
+  return join(stateDir(args), "remote-actions.jsonl");
+}
+
 function logDir(args: ParsedArgs): string {
   return resolve(flag(args, "log-dir", join(root, "runs")));
 }
@@ -153,6 +163,10 @@ async function readOptionalJson<T>(path: string): Promise<T | undefined> {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw err;
   }
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function printJson(value: unknown): void {
@@ -380,6 +394,78 @@ async function collectOps(args: ParsedArgs) {
   });
 }
 
+function remoteDispatchRepoRoot(args: ParsedArgs): string {
+  const repoRoot = flag(args, "repo-root", process.env.SAMANTHA_REPO_ROOT ?? "");
+  if (!repoRoot) {
+    throw new Error("remote dispatch actions require inbox:watch --repo-root=<repo> or SAMANTHA_REPO_ROOT");
+  }
+  return resolve(repoRoot);
+}
+
+async function executeTaskDispatch(input: {
+  args: ParsedArgs;
+  taskId: string;
+  repoRoot: string;
+  allocate?: boolean;
+  liveLog?: boolean;
+  tmux?: boolean;
+  worktreesDir?: string;
+  tmuxSession?: string;
+}) {
+  const taskStore = new TaskStore(tasksPath(input.args));
+  const task = await taskStore.find(input.taskId);
+  if (!task) throw new Error(`task not found: ${input.taskId}`);
+  if (task.status !== "pending") throw new Error(`task must be pending to dispatch: ${task.status}`);
+
+  const agent = await loadAgentProfile(input.args, task.targetAgent);
+  const allocate = input.allocate === true || agent.worktreePolicy === "per-task";
+  const baseLogDir = logDir(input.args);
+  const startedAt = new Date().toISOString();
+  const runId = buildWorkerRunId({ startedAt, taskId: task.id });
+  const liveLogPath = input.tmux === true || input.liveLog === true
+    ? buildWorkerLiveLogPath(baseLogDir, runId)
+    : undefined;
+  const dispatchInput = {
+    task,
+    agent,
+    repoRoot: resolve(input.repoRoot),
+    allocate,
+    worktreesDir: input.worktreesDir || undefined,
+    ...(liveLogPath ? { liveLogPath, runId } : {}),
+  };
+
+  let tmux: TmuxObserverResult | undefined;
+  if (input.tmux === true && liveLogPath) {
+    tmux = await startTmuxObserver({
+      sessionName: input.tmuxSession ?? flag(input.args, "tmux-session", "samantha"),
+      taskId: task.id,
+      runId,
+      liveLogPath,
+      cwd: root,
+      formatterCommand: "bun run src/samantha.ts live:format",
+    });
+  }
+  const execution = await executeWorkerDispatch(dispatchInput);
+  const finishedAt = new Date().toISOString();
+  const logInput = {
+    ...dispatchInput,
+    execute: true,
+    startedAt,
+    finishedAt,
+    execution,
+  };
+  const runLog = await writeWorkerRunLog(baseLogDir, logInput);
+  const runSummary = summarizeWorkerRun({ ...logInput, runId: runLog.runId, logPath: runLog.path });
+  await new RunIndex(runsPath(input.args)).append(runSummary);
+  await taskStore.updateStatus(task.id, runSummary.pass ? "completed" : "failed");
+  return {
+    runLog,
+    runSummary,
+    ...(liveLogPath ? { liveLog: { path: liveLogPath } } : {}),
+    ...(tmux ? { tmux } : {}),
+  };
+}
+
 async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Promise<string> {
   if (command.type === "remote:help") {
     return remoteHelpReport();
@@ -508,6 +594,75 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const task = (await new TaskStore(tasksPath(args)).list()).find((item) => item.id === id);
     return taskShowReport(id, task);
   }
+  if (command.type === "actions:list") {
+    const actions = await new RemoteActionStore(remoteActionsPath(args)).list();
+    return remoteActionsListReport(actions);
+  }
+  if (command.type === "actions:show") {
+    const id = String(command.args?.id ?? "");
+    const action = await new RemoteActionStore(remoteActionsPath(args)).find(id);
+    return remoteActionShowReport(id, action);
+  }
+  if (command.type === "actions:prepare-dispatch") {
+    const taskId = String(command.args?.taskId ?? "");
+    if (!taskId) throw new Error("task id is required");
+    const task = await new TaskStore(tasksPath(args)).find(taskId);
+    if (!task) throw new Error(`task not found: ${taskId}`);
+    if (task.status !== "pending") throw new Error(`task must be pending to dispatch: ${task.status}`);
+    const agent = await loadAgentProfile(args, task.targetAgent);
+    const plan = validateDispatch(task, agent);
+    if (!plan.mayDispatch) {
+      throw new Error(`dispatch blocked:\n${plan.violations.join("\n")}`);
+    }
+
+    const action = createRemoteDispatchAction({
+      task,
+      repoRoot: remoteDispatchRepoRoot(args),
+      createdAt: String(command.args?.receivedAt ?? new Date().toISOString()),
+      source: "remote",
+      commandId: command.id,
+    });
+    await new RemoteActionStore(remoteActionsPath(args)).append(action);
+    return remoteActionPreparedReport(action);
+  }
+  if (command.type === "actions:approve") {
+    const id = String(command.args?.id ?? "");
+    if (!id) throw new Error("action id is required");
+    const store = new RemoteActionStore(remoteActionsPath(args));
+    const running = await store.markRunning(id, String(command.args?.receivedAt ?? new Date().toISOString()));
+    if (running.kind !== "dispatch_task") throw new Error(`unsupported remote action kind: ${running.kind}`);
+
+    try {
+      const result = await executeTaskDispatch({
+        args,
+        taskId: running.taskId,
+        repoRoot: running.repoRoot,
+        allocate: true,
+        tmux: true,
+      });
+      const finished = await store.markFinished(id, {
+        status: result.runSummary.pass ? "completed" : "failed",
+        completedAt: new Date().toISOString(),
+        result: {
+          runId: result.runSummary.runId,
+          runLogPath: result.runLog.path,
+          liveLogPath: result.liveLog?.path,
+          tmuxSession: result.tmux?.sessionName,
+          pass: result.runSummary.pass,
+          outcome: result.runSummary.outcome,
+          failure: result.runSummary.failureReason,
+        },
+      });
+      return remoteActionApprovedReport(finished);
+    } catch (err) {
+      const failed = await store.markFinished(id, {
+        status: "failed",
+        completedAt: new Date().toISOString(),
+        result: { failure: errorMessage(err) },
+      });
+      return remoteActionApprovedReport(failed);
+    }
+  }
   if (command.type === "ops:next-action") {
     return nextActionReport({
       runs: await new RunIndex(runsPath(args)).list(),
@@ -568,6 +723,18 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "actions:list") {
+    printJson(await new RemoteActionStore(remoteActionsPath(args)).list());
+    return;
+  }
+
+  if (args.command === "actions:show") {
+    const actionId = args.positionals[0];
+    if (!actionId) throw new Error("usage: actions:show <action-id>");
+    printJson((await new RemoteActionStore(remoteActionsPath(args)).find(actionId)) ?? null);
+    return;
+  }
+
   if (args.command === "tasks:dispatch") {
     const taskId = args.positionals[0];
     const repoRoot = flag(args, "repo-root", "");
@@ -582,57 +749,30 @@ async function main(): Promise<void> {
     const execute = args.flags.get("execute") === true;
     const allocate = args.flags.get("allocate") === true || (execute && agent.worktreePolicy === "per-task");
     const worktreesDir = flag(args, "worktrees-dir", "");
-    const baseLogDir = logDir(args);
-    const startedAt = new Date().toISOString();
-    const runId = buildWorkerRunId({ startedAt, taskId: task.id });
-    const liveLogPath = args.flags.get("tmux") === true || args.flags.get("live-log") === true
-      ? buildWorkerLiveLogPath(baseLogDir, runId)
-      : undefined;
-    const input = {
-      task,
-      agent,
-      repoRoot: resolve(repoRoot),
-      allocate,
-      worktreesDir: worktreesDir || undefined,
-      ...(liveLogPath ? { liveLogPath, runId } : {}),
-    };
 
     if (!execute) {
-      printJson(await prepareWorkerDispatch(input));
+      printJson(await prepareWorkerDispatch({
+        task,
+        agent,
+        repoRoot: resolve(repoRoot),
+        allocate,
+        worktreesDir: worktreesDir || undefined,
+      }));
       return;
     }
 
-    let tmux: TmuxObserverResult | undefined;
-    if (args.flags.get("tmux") === true && liveLogPath) {
-      tmux = await startTmuxObserver({
-        sessionName: flag(args, "tmux-session", "samantha"),
-        taskId: task.id,
-        runId,
-        liveLogPath,
-        cwd: root,
-        formatterCommand: "bun run src/samantha.ts live:format",
-      });
-    }
-    const execution = await executeWorkerDispatch(input);
-    const finishedAt = new Date().toISOString();
-    const logInput = {
-      ...input,
-      execute: true,
-      startedAt,
-      finishedAt,
-      execution,
-    };
-    const runLog = await writeWorkerRunLog(baseLogDir, logInput);
-    const runSummary = summarizeWorkerRun({ ...logInput, runId: runLog.runId, logPath: runLog.path });
-    await new RunIndex(runsPath(args)).append(runSummary);
-    await taskStore.updateStatus(task.id, runSummary.pass ? "completed" : "failed");
-    printJson({
-      runLog,
-      runSummary,
-      ...(liveLogPath ? { liveLog: { path: liveLogPath } } : {}),
-      ...(tmux ? { tmux } : {}),
+    const result = await executeTaskDispatch({
+      args,
+      taskId,
+      repoRoot,
+      allocate,
+      worktreesDir,
+      liveLog: args.flags.get("live-log") === true,
+      tmux: args.flags.get("tmux") === true,
+      tmuxSession: flag(args, "tmux-session", "samantha"),
     });
-    if (!runSummary.pass) process.exitCode = 1;
+    printJson(result);
+    if (!result.runSummary.pass) process.exitCode = 1;
     return;
   }
 
@@ -1222,6 +1362,8 @@ async function main(): Promise<void> {
       "  tasks:dispatch <task-id> --repo-root=<repo> [--execute] [--tmux] [--live-log]",
       "  tasks:finalize-worktree <task-id> --repo-root=<repo> [--worktree=<path>] [--note=<text>]",
       "  tasks:retry <task-id>",
+      "  actions:list",
+      "  actions:show <action-id>",
       "  next-action",
       "  proposals:list",
       "  proposals:show <proposal-id>",

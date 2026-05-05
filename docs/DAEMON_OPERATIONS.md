@@ -1,6 +1,6 @@
 # Samantha Daemon Operations
 
-Last updated: 2026-05-03
+Last updated: 2026-05-05
 
 ## Purpose
 
@@ -12,6 +12,14 @@ Start manually:
 
 ```bash
 bun run samantha inbox:watch
+```
+
+If Telegram-approved dispatch actions should run, configure the target repo locally:
+
+```bash
+SAMANTHA_REPO_ROOT=/home/lbk0523/projects/samantha-codex bun run samantha inbox:watch
+# or
+bun run samantha inbox:watch --repo-root=/home/lbk0523/projects/samantha-codex
 ```
 
 Check health:
@@ -40,6 +48,7 @@ The dashboard includes daemon, queue, Telegram, latest remote command/report, pr
 - `state/heartbeat.json`: last daemon heartbeat
 - `state/proposals.jsonl`: remote work proposals and review state
 - `state/task-drafts.jsonl`: task drafts created from accepted proposals
+- `state/remote-actions.jsonl`: pending/running/finished Telegram-approved dispatch actions
 - `state/run-lifecycle.jsonl`: merge, push, and cleanup state for completed runs
 - `inbox/*.json`: queued local commands
 - `outbox/*.md`: command reports
@@ -63,6 +72,8 @@ Start and enable:
 systemctl --user start samantha-inbox-watch
 systemctl --user enable samantha-inbox-watch
 ```
+
+The service template reads `%h/projects/samantha-codex/.env`, so `SAMANTHA_REPO_ROOT` can be set there without committing local paths.
 
 Inspect:
 
@@ -99,6 +110,8 @@ Set local, uncommitted values:
 ```text
 TELEGRAM_BOT_TOKEN=<token>
 TELEGRAM_CHAT_ID=<telegram-chat-id>
+# Optional, required for /prepare-dispatch and /approve-action:
+SAMANTHA_REPO_ROOT=/home/lbk0523/projects/samantha-codex
 ```
 
 Install and enable:

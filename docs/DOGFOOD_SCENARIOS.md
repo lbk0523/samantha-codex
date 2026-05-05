@@ -472,21 +472,23 @@ bun run samantha telegram:reply
 
 Pass criteria:
 
-- allowed `/help`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/draft-propose <text>`, `/proposals`, `/proposal <id>`, `/accept <id>`, `/reject <id>`, `/draft <proposal-id>`, `/drafts`, `/draft <draft-id>`, `/tasks`, `/dashboard`, and `/task <id>` messages create inbox files
+- allowed `/help`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/draft-propose <text>`, `/proposals`, `/proposal <id>`, `/accept <id>`, `/reject <id>`, `/draft <proposal-id>`, `/drafts`, `/draft <draft-id>`, `/tasks`, `/dashboard`, `/task <id>`, `/prepare-dispatch <task-id>`, `/actions`, `/action <action-id>`, and `/approve-action <action-id>` messages create inbox files
 - unsupported messages are ignored
 - messages from other sender ids are ignored
 - `state/telegram-offset.json` is updated after a successful poll
 - `state/telegram-replies.json` prevents duplicate Telegram replies
 - long remote outbox replies are split into multiple Telegram messages instead of truncated
-- reports that return proposal, draft, run, or task IDs also send each ID as a separate copy-only Telegram message
+- reports that return proposal, draft, action, run, or task IDs also send each ID as a separate copy-only Telegram message
 - `/propose <text>` writes only to `state/proposals.jsonl` and does not dispatch a worker
 - `/draft-propose <text>` writes only to `state/proposals.jsonl` and `state/task-drafts.jsonl` and does not dispatch a worker
 - `/accept <id>` and `/reject <id>` update proposal review state only and do not dispatch workers
 - `/draft <proposal-id>` writes only to `state/task-drafts.jsonl`; unaccepted proposals are rejected
 - `drafts:check`, `drafts:update`, and `drafts:approve` stay local-only
 - `drafts:approve` writes one pending task to `state/tasks.jsonl` only after `targetFiles`, `verifyCommands`, `instructions`, and `targetAgent` pass checks
-- `tasks:dispatch` stays local-only; dry-run prints the prepared Codex command, and `--execute` writes run logs and run index entries
-- no remote path executes shell, merge, push, cleanup, or worker dispatch directly
+- direct `tasks:dispatch` stays local-only; dry-run prints the prepared Codex command, and `--execute` writes run logs and run index entries
+- `/prepare-dispatch <task-id>` creates only a pending action in `state/remote-actions.jsonl`
+- `/approve-action <action-id>` executes only an existing pending dispatch action id with fixed `--allocate --execute --tmux` flags and locally configured repo root
+- no remote path executes shell, merge, push, cleanup, or direct worker dispatch
 - `inbox:watch` processes the created inbox commands later
 - `telegram:reply` sends only `outbox/remote-*.md` report text to Telegram
 - the systemd timer can be enabled after one manual real-token poll passes
@@ -511,7 +513,7 @@ Stop dogfood and fix Samantha before continuing if any of these happen:
 - `/accept` or `/reject` dispatches a worker, creates a commit, or changes project files
 - `/draft` dispatches a worker, creates a commit, writes `state/tasks.jsonl`, or changes project files
 - any remote Telegram command can run `drafts:approve` or write `state/tasks.jsonl`
-- any remote Telegram command can run `tasks:dispatch`
+- any remote Telegram command can run `tasks:dispatch` directly or change the repo root/flags for an approved action
 - remote command can create arbitrary shell execution
 - writer task modifies files outside `targetFiles`
 - target repo main worktree becomes dirty unexpectedly

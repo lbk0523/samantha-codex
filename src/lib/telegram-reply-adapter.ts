@@ -105,6 +105,7 @@ export function copyableIdsFromReport(report: string): string[] {
     const line = rawLine.trim();
     push(matchFirst(/^Saved proposal:\s+`([^`]+)`$/, line));
     push(matchFirst(/^Saved draft:\s+`([^`]+)`$/, line));
+    push(matchFirst(/^Action:\s+`([^`]+)`$/, line));
     push(matchFirst(/^Proposal:\s+`([^`]+)`$/, line));
     push(matchFirst(/^Draft:\s+`([^`]+)`$/, line));
     push(matchFirst(/^Source proposal:\s+`([^`]+)`$/, line));

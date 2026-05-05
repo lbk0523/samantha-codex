@@ -173,13 +173,14 @@ describe("sendOutboxReplies", () => {
         "- `proposal-2` status=`accepted` created=`2026-05-04T10:01:00.000Z` text=Add retries",
         "- `draft-1` status=`drafted` source=`proposal-1` created=`2026-05-04T10:02:00.000Z` title=Improve UX",
         "Saved draft: `draft-2`",
+        "Action: `action-1`",
         "Source proposal: `proposal-2`",
         "Status: `accepted`",
         "Created: `2026-05-04T10:00:00.000Z`",
       ].join("\n"),
     );
 
-    expect(ids).toEqual(["proposal-1", "proposal-2", "draft-1", "draft-2"]);
+    expect(ids).toEqual(["proposal-1", "proposal-2", "draft-1", "draft-2", "action-1"]);
   });
 
   test("sends id-only Telegram messages after reports that return ids", () => {
