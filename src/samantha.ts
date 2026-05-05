@@ -27,6 +27,9 @@ import {
   runShowReport,
   statusReport,
   taskDraftAddedReport,
+  taskDraftApprovalBlockedReport,
+  taskDraftApprovedReport,
+  taskDraftPreparedReport,
   taskDraftShowReport,
   taskDraftsListReport,
   tasksListReport,
@@ -686,6 +689,44 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const drafts = await new TaskDraftStore(taskDraftsPath(args)).list();
     const draft = drafts.slice().reverse().find((item) => item.status === "drafted") ?? drafts.at(-1);
     return taskDraftShowReport(draft?.id ?? "latest", draft);
+  }
+  if (command.type === "drafts:prepare-latest") {
+    const projectId = String(command.args?.projectId ?? "");
+    if (!projectId) throw new Error("project id is required");
+    const rawTargetFiles = command.args?.targetFiles;
+    const targetFiles =
+      rawTargetFiles === undefined
+        ? []
+        : Array.isArray(rawTargetFiles) && rawTargetFiles.every((item) => typeof item === "string")
+          ? (rawTargetFiles as string[])
+          : undefined;
+    if (!targetFiles) throw new Error("targetFiles must be a string array");
+
+    const draftStore = new TaskDraftStore(taskDraftsPath(args));
+    const draft = (await draftStore.list()).slice().reverse().find((item) => item.status === "drafted");
+    if (!draft) return taskDraftShowReport("latest", undefined);
+
+    const project = await loadProjectProfile(projectProfilesDir(args), projectId);
+    const updated = await draftStore.update(
+      draft.id,
+      applyProjectDefaults(targetFiles.length ? { targetFiles } : {}, project),
+      String(command.args?.receivedAt ?? new Date().toISOString()),
+    );
+    const check = checkTaskDraft(updated, { knownAgentIds: await knownAgentIds(args) });
+    return taskDraftPreparedReport({ draft: updated, projectId, violations: check.violations });
+  }
+  if (command.type === "drafts:approve-latest") {
+    const draftStore = new TaskDraftStore(taskDraftsPath(args));
+    const draft = (await draftStore.list()).slice().reverse().find((item) => item.status === "drafted");
+    if (!draft) return taskDraftShowReport("latest", undefined);
+
+    const check = checkTaskDraft(draft, { knownAgentIds: await knownAgentIds(args) });
+    if (!check.ok) return taskDraftApprovalBlockedReport({ draft, violations: check.violations });
+
+    const task = taskSpecFromDraft(draft);
+    await new TaskStore(tasksPath(args)).append(task);
+    const approved = await draftStore.markApproved(draft.id, String(command.args?.receivedAt ?? new Date().toISOString()));
+    return taskDraftApprovedReport({ draft: approved, task });
   }
   if (command.type === "tasks:list") {
     const tasks = await new TaskStore(tasksPath(args)).listActive();

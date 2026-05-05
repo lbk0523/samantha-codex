@@ -74,9 +74,10 @@ function draftNextLines(draft: TaskDraftRecord): string[] {
     "",
     "Next:",
     missing.length
-      ? `- Local: ${code(`bun run samantha drafts:prepare ${draft.id} --project=<project-id>`)}`
-      : `- Local: ${code(`bun run samantha drafts:approve ${draft.id}`)}`,
-    `- Telegram after local step: ${code("/now")}`,
+      ? `- Telegram: ${code(
+          draft.targetFiles.length === 0 ? "/draft_prepare <project-id> <target_file...>" : "/draft_prepare <project-id>",
+        )}`
+      : `- Telegram: ${code("/draft_approve")}`,
     `- Inspect again: ${code("/draft_next")}`,
   ];
 }
@@ -161,6 +162,7 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
       "- `/propose <text>`",
       "- `/draft_propose <text>`",
       "- `/accept <proposal_id>`, `/reject <proposal_id>`",
+      "- `/draft_prepare <project_id> [target_file...]`, `/draft_approve`",
       "- `/prepare_dispatch <task_id>`",
       "- `/approve_action <action_id>`",
       "",
@@ -178,13 +180,15 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "",
     "- `/now`: show the one next command to send",
     "- `/work <request>`: capture new work as a draft",
+    "- `/draft_prepare <project_id> [target_file...]`: prepare the latest draft",
+    "- `/draft_approve`: promote the latest ready draft to a pending task",
     "- `/run_next`: prepare the next pending task for approval",
     "- `/yes`: approve the latest prepared action",
     "- `/check`: compact status",
     "- `/problems`: diagnostics when something looks wrong",
     "",
     "Typical execution:",
-    "`/work <request>` -> `/draft_next` -> local prepare/approve -> `/now` -> `/run_next` -> `/yes` -> `/action_current`",
+    "`/work <request>` -> `/draft_next` -> `/draft_prepare <project_id> [target_file...]` -> `/draft_approve` -> `/run_next` -> `/yes` -> `/action_current`",
     "",
     "More commands: `/help_advanced`",
   ].join("\n");
@@ -362,7 +366,7 @@ export function nowReport(input: {
     return [
       "# now",
       "",
-      "Draft is waiting for local preparation.",
+      "Draft is waiting for preparation.",
       `Draft: ${code(draft.id)}`,
       `Title: ${oneLine(draft.title)}`,
       missing.length ? `Missing: ${missing.join(", ")}` : "Ready for local approval.",
@@ -522,6 +526,58 @@ export function taskDraftAddedReport(draft: TaskDraftRecord): string {
     "",
     "No worker was dispatched. Fill targetFiles and verifyCommands before promoting this draft to a task.",
     ...draftNextLines(draft),
+  ].join("\n");
+}
+
+export function taskDraftPreparedReport(input: {
+  draft: TaskDraftRecord;
+  projectId: string;
+  violations: string[];
+}): string {
+  return [
+    "# drafts:prepare-latest",
+    "",
+    `Prepared draft: ${code(input.draft.id)}`,
+    `Project: ${code(input.projectId)}`,
+    `Ready: ${input.violations.length === 0 ? "yes" : "no"}`,
+    input.violations.length ? `Missing: ${input.violations.join(", ")}` : "",
+    "",
+    "No worker was dispatched. No task was created yet.",
+    ...draftNextLines(input.draft),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function taskDraftApprovalBlockedReport(input: {
+  draft: TaskDraftRecord;
+  violations: string[];
+}): string {
+  return [
+    "# drafts:approve-latest",
+    "",
+    "Draft was not approved.",
+    `Draft: ${code(input.draft.id)}`,
+    "",
+    "Violations:",
+    ...input.violations.map((violation) => `- ${violation}`),
+    ...draftNextLines(input.draft),
+  ].join("\n");
+}
+
+export function taskDraftApprovedReport(input: { draft: TaskDraftRecord; task: TaskSpec }): string {
+  return [
+    "# drafts:approve-latest",
+    "",
+    `Approved draft: ${code(input.draft.id)}`,
+    `Created task: ${code(input.task.id)}`,
+    `Title: ${oneLine(input.task.title)}`,
+    "",
+    "No worker was dispatched yet.",
+    "",
+    "Next:",
+    `- Telegram: ${code("/run_next")}`,
+    `- Then: ${code("/yes")}`,
   ].join("\n");
 }
 

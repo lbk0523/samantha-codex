@@ -154,6 +154,22 @@ describe("inbox and remote commands", () => {
     });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/drafts" }, "bk").type).toBe("drafts:list");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/draft_next" }, "bk").type).toBe("drafts:show-latest");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/draft_prepare omht src/app.ts tests/app.test.ts" }, "bk")).toMatchObject({
+      type: "drafts:prepare-latest",
+      args: {
+        projectId: "omht",
+        targetFiles: ["src/app.ts", "tests/app.test.ts"],
+      },
+    });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/draft-prepare omht" }, "bk")).toMatchObject({
+      type: "drafts:prepare-latest",
+      args: {
+        projectId: "omht",
+        targetFiles: [],
+      },
+    });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/draft_approve" }, "bk").type).toBe("drafts:approve-latest");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/draft-approve" }, "bk").type).toBe("drafts:approve-latest");
     expect(
       commandFromRemoteInput(
         { senderId: "bk", text: "/draft_propose Improve task flow", receivedAt: "2026-05-03T10:06:00.000Z" },
@@ -622,15 +638,126 @@ describe("inbox and remote commands", () => {
 
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const report = await readFile(join(outbox, "002-now.md"), "utf8");
-    expect(report).toContain("Draft is waiting for local preparation");
-    expect(report).toContain("Local: `bun run samantha drafts:prepare draft-work-now --project=<project-id>`");
+    expect(report).toContain("Draft is waiting for preparation");
+    expect(report).toContain("Telegram: `/draft_prepare <project-id> <target_file...>`");
     expect(report).toContain("Inspect again: `/draft_next`");
     expect(report).not.toContain("No immediate remote action");
     const draftReport = await readFile(join(outbox, "003-draft-next.md"), "utf8");
     expect(draftReport).toContain("Draft: `draft-work-now`");
     expect(draftReport).toContain("Improve Telegram now flow");
-    expect(draftReport).toContain("Local: `bun run samantha drafts:prepare draft-work-now --project=<project-id>`");
-    expect(draftReport).toContain("Telegram after local step: `/now`");
+    expect(draftReport).toContain("Telegram: `/draft_prepare <project-id> <target_file...>`");
+  });
+
+  test("prepares and approves the latest draft from remote commands without dispatching a worker", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-draft-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const agents = join(root, "agents");
+    const projects = join(root, "projects");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await writeFile(join(agents, "codex-worker.json"), `${JSON.stringify(writer, null, 2)}\n`, "utf8");
+    await writeFile(
+      join(projects, "omht.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "omht",
+          repoRoot: "/repo",
+          setupCommands: ["bun install"],
+          verifyCommands: ["bun typecheck"],
+          forbiddenChanges: ["state/**"],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-work.json"),
+      JSON.stringify({
+        id: "remote-work",
+        type: "drafts:add-from-proposal-text",
+        args: {
+          proposalId: "proposal-remote-draft",
+          text: "Improve Telegram draft promotion",
+          senderId: "bk",
+          receivedAt: "2026-05-05T10:40:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "002-prepare.json"),
+      JSON.stringify({
+        id: "remote-draft-prepare",
+        type: "drafts:prepare-latest",
+        args: {
+          projectId: "omht",
+          targetFiles: ["src/lib/operator-reports.ts", "tests/operator-reports.test.ts"],
+          receivedAt: "2026-05-05T10:41:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "003-approve.json"),
+      JSON.stringify({
+        id: "remote-draft-approve",
+        type: "drafts:approve-latest",
+        args: { receivedAt: "2026-05-05T10:42:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(await readFile(join(outbox, "002-prepare.md"), "utf8")).toContain("Ready: yes");
+    expect(await readFile(join(outbox, "002-prepare.md"), "utf8")).toContain("Telegram: `/draft_approve`");
+    const approveReport = await readFile(join(outbox, "003-approve.md"), "utf8");
+    expect(approveReport).toContain("Created task: `task-remote-draft`");
+    expect(approveReport).toContain("No worker was dispatched yet.");
+    expect(approveReport).toContain("Telegram: `/run_next`");
+
+    const taskRecords = (await readFile(join(state, "tasks.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as TaskSpec);
+    expect(taskRecords).toMatchObject([
+      {
+        id: "task-remote-draft",
+        status: "pending",
+        targetFiles: ["src/lib/operator-reports.ts", "tests/operator-reports.test.ts"],
+        setupCommands: ["bun install"],
+        verifyCommands: ["bun typecheck"],
+        forbiddenChanges: ["state/**"],
+      },
+    ]);
   });
 });
 

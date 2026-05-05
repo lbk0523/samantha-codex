@@ -22,6 +22,10 @@ function commandArgument(text: string, ...commands: string[]): string | undefine
   return undefined;
 }
 
+function commandParts(value: string): string[] {
+  return value.split(/[,\s]+/).filter(Boolean);
+}
+
 export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderId?: string): InboxCommand {
   if (allowedSenderId && input.senderId !== allowedSenderId) {
     throw new Error("remote sender is not allowed");
@@ -111,6 +115,19 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   }
   if (text === "/draft_next") {
     return { id: `remote-${commandToken}-draft-next`, type: "drafts:show-latest", args: { source: "remote" } };
+  }
+  const draftPrepareArgs = commandArgument(text, "/draft_prepare", "/draft-prepare");
+  if (draftPrepareArgs !== undefined) {
+    const [projectId = "", ...targetFiles] = commandParts(draftPrepareArgs);
+    if (!projectId) throw new Error("missing project id");
+    return {
+      id: `remote-${commandToken}-draft-prepare`,
+      type: "drafts:prepare-latest",
+      args: { projectId, targetFiles, source: "remote", receivedAt },
+    };
+  }
+  if (isCommand(text, "/draft_approve", "/draft-approve")) {
+    return { id: `remote-${commandToken}-draft-approve`, type: "drafts:approve-latest", args: { source: "remote", receivedAt } };
   }
   const draftProposeText = commandArgument(text, "/draft_propose", "/draft-propose");
   if (draftProposeText !== undefined) {
