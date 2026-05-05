@@ -21,7 +21,19 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   const commandToken = sanitizeTaskId(input.remoteId === undefined ? receivedAt : `${receivedAt}-${input.remoteId}`);
 
   if (text === "/help" || text === "/start") {
-    return { id: `remote-${commandToken}-help`, type: "remote:help", args: { source: "remote" } };
+    return { id: `remote-${commandToken}-help`, type: "remote:help", args: { source: "remote", mode: "basic" } };
+  }
+  if (text === "/help advanced") {
+    return { id: `remote-${commandToken}-help-advanced`, type: "remote:help", args: { source: "remote", mode: "advanced" } };
+  }
+  if (text === "/now") {
+    return { id: `remote-${commandToken}-now`, type: "ops:now", args: { source: "remote" } };
+  }
+  if (text === "/check") {
+    return { id: `remote-${commandToken}-check`, type: "status:show", args: { source: "remote" } };
+  }
+  if (text === "/problems") {
+    return { id: `remote-${commandToken}-problems`, type: "ops:doctor", args: { source: "remote" } };
   }
   if (text === "/status") {
     return { id: `remote-${commandToken}-status`, type: "status:show", args: { source: "remote" } };
@@ -95,6 +107,21 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       },
     };
   }
+  if (text.startsWith("/work ")) {
+    const proposalText = text.slice("/work ".length).trim();
+    if (!proposalText) throw new Error("missing work text");
+    return {
+      id: `remote-${commandToken}-work`,
+      type: "drafts:add-from-proposal-text",
+      args: {
+        proposalId: buildProposalId(receivedAt, input.remoteId),
+        text: proposalText,
+        senderId: input.senderId,
+        source: "remote",
+        receivedAt,
+      },
+    };
+  }
   if (text.startsWith("/draft ")) {
     const id = text.slice("/draft ".length).trim();
     if (!id) throw new Error("missing draft or proposal id");
@@ -140,6 +167,12 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   }
   if (text === "/actions") {
     return { id: `remote-${commandToken}-actions`, type: "actions:list", args: { source: "remote" } };
+  }
+  if (text === "/run-next") {
+    return { id: `remote-${commandToken}-run-next`, type: "actions:run-next", args: { source: "remote", receivedAt } };
+  }
+  if (text === "/yes") {
+    return { id: `remote-${commandToken}-yes`, type: "actions:approve-latest", args: { source: "remote", receivedAt } };
   }
   if (text.startsWith("/action ")) {
     const id = text.slice("/action ".length).trim();

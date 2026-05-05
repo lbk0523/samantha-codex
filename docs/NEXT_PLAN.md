@@ -110,6 +110,23 @@ Completed criteria:
 - action approval requires an existing pending action id.
 - worker execution does not block `inbox:watch` from processing later Telegram commands.
 
+### Completed: Telegram Operating UX
+
+The normal Telegram flow is now:
+
+```text
+/now -> /run-next -> /yes
+```
+
+Completed criteria:
+
+- `/help` shows the short practical flow, not the full command catalog.
+- `/help advanced` keeps the lower-level inspection and id-based commands discoverable.
+- `/now` chooses one next command from action state, diagnostics, pending tasks, and latest run state.
+- `/run-next` prepares the next pending task without starting a worker.
+- `/yes` approves only the latest pending action.
+- `/work`, `/check`, and `/problems` provide plain-language aliases for proposal draft intake, status, and diagnostics.
+
 ### Completed: Read-Only Dashboard Upgrade
 
 The dashboard now includes:

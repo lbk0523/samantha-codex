@@ -97,38 +97,48 @@ function nextActionLinesForRun(run: RunSummary): string[] {
   return ["Suggested local next action: none"];
 }
 
-export function remoteHelpReport(): string {
+export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
+  if (mode === "advanced") {
+    return [
+      "# remote:help advanced",
+      "",
+      "Inspection:",
+      "- `/runs`, `/run <run-id>`, `/failures`",
+      "- `/tasks`, `/task <task-id>`",
+      "- `/actions`, `/action <action-id>`",
+      "- `/proposals`, `/proposal <proposal-id>`",
+      "- `/drafts`, `/draft <draft-id>`",
+      "",
+      "Explicit workflow:",
+      "- `/propose <text>`",
+      "- `/draft-propose <text>`",
+      "- `/accept <proposal-id>`, `/reject <proposal-id>`",
+      "- `/prepare-dispatch <task-id>`",
+      "- `/approve-action <action-id>`",
+      "",
+      "System:",
+      "- `/status`, `/doctor`, `/health`, `/dashboard`, `/next-action`",
+      "",
+      "Remote commands are safe-gated. They cannot dispatch workers directly, merge, push, clean worktrees, or run shell commands.",
+    ].join("\n");
+  }
+
   return [
     "# remote:help",
     "",
-    "Supported Telegram commands:",
+    "Main flow:",
     "",
-    "- `/help`: show this help",
-    "- `/status`: show daemon and latest run summary",
-    "- `/doctor`: show local operation diagnostics",
-    "- `/health`: show daemon health check",
-    "- `/runs`: show recent run summaries",
-    "- `/run <run-id>`: show one run summary",
-    "- `/failures`: show recent non-passing runs",
-    "- `/propose <text>`: save a pending work proposal without executing it",
-    "- `/proposals`: show recent proposals",
-    "- `/proposal <proposal-id>`: show one proposal",
-    "- `/accept <proposal-id>`: mark one proposal accepted without executing it",
-    "- `/reject <proposal-id>`: mark one proposal rejected without executing it",
-    "- `/draft-propose <text>`: save, accept, and draft a work proposal without executing it",
-    "- `/draft <proposal-id>`: create a task draft from an accepted proposal",
-    "- `/drafts`: show recent task drafts",
-    "- `/draft <draft-id>`: show one task draft",
-    "- `/tasks`: show known tasks",
-    "- `/task <task-id>`: show one task",
-    "- `/next-action`: show the safest local next action",
-    "- `/dashboard`: rebuild the read-only dashboard",
-    "- `/prepare-dispatch <task-id>`: create a pending dispatch action without executing it",
-    "- `/actions`: show recent pending/finished actions",
-    "- `/action <action-id>`: show one action",
-    "- `/approve-action <action-id>`: approve one pending dispatch action for the runner",
+    "- `/now`: show the one next command to send",
+    "- `/work <request>`: capture new work as a draft",
+    "- `/run-next`: prepare the next pending task for approval",
+    "- `/yes`: approve the latest prepared action",
+    "- `/check`: compact status",
+    "- `/problems`: diagnostics when something looks wrong",
     "",
-    "Remote commands are safe-gated. They cannot dispatch workers directly, merge, push, clean worktrees, or run shell commands.",
+    "Typical execution:",
+    "`/now` -> `/run-next` -> `/yes`",
+    "",
+    "More commands: `/help advanced`",
   ].join("\n");
 }
 
@@ -225,6 +235,89 @@ export function nextActionReport(input: { runs: RunSummary[]; tasks: TaskSpec[];
   }
 
   return ["# next-action", "", "No tasks or runs recorded.", "", "Suggested local next action: create a proposal or task draft."].join("\n");
+}
+
+export function nowReport(input: {
+  runs: RunSummary[];
+  tasks: TaskSpec[];
+  actions: RemoteActionRecord[];
+  ops?: OpsSnapshot;
+  lifecycles?: RunLifecycleRecord[];
+}): string {
+  const latestByStatus = (status: RemoteActionRecord["status"]) =>
+    input.actions.slice().reverse().find((action) => action.status === status);
+  const running = latestByStatus("running");
+  if (running) {
+    return [
+      "# now",
+      "",
+      "Worker is running.",
+      `Action: ${code(running.id)}`,
+      `Task: ${code(running.taskId)} - ${oneLine(running.taskTitle)}`,
+      "",
+      `Next: ${code(`/action ${running.id}`)}`,
+    ].join("\n");
+  }
+
+  const approved = latestByStatus("approved");
+  if (approved) {
+    return [
+      "# now",
+      "",
+      "Action is approved. Waiting for the runner.",
+      `Action: ${code(approved.id)}`,
+      `Task: ${code(approved.taskId)} - ${oneLine(approved.taskTitle)}`,
+      "",
+      `Next: ${code(`/action ${approved.id}`)}`,
+    ].join("\n");
+  }
+
+  const pendingAction = latestByStatus("pending");
+  if (pendingAction) {
+    return [
+      "# now",
+      "",
+      "Action is ready for approval.",
+      `Action: ${code(pendingAction.id)}`,
+      `Task: ${code(pendingAction.taskId)} - ${oneLine(pendingAction.taskTitle)}`,
+      "",
+      `Next: ${code("/yes")}`,
+    ].join("\n");
+  }
+
+  if (input.ops?.failures.length || input.ops?.warnings.length) {
+    const issue = input.ops.failures[0] ?? input.ops.warnings[0] ?? "operation needs attention";
+    return ["# now", "", "Operation needs attention.", oneLine(issue), "", `Next: ${code("/problems")}`].join("\n");
+  }
+
+  const pendingTask = input.tasks.find((task) => task.status === "pending");
+  if (pendingTask) {
+    return [
+      "# now",
+      "",
+      "Pending task is ready to prepare.",
+      `Task: ${code(pendingTask.id)} - ${oneLine(pendingTask.title)}`,
+      "",
+      `Next: ${code("/run-next")}`,
+    ].join("\n");
+  }
+
+  const latest = input.runs.at(-1);
+  if (latest && !latest.pass) {
+    return [
+      "# now",
+      "",
+      "Latest run did not pass.",
+      `Run: ${code(latest.runId)}`,
+      latest.failureReason ? `Failure: ${oneLine(latest.failureReason)}` : "",
+      "",
+      `Next: ${code(`/run ${latest.runId}`)}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  return ["# now", "", "No immediate remote action.", "", `Next: ${code("/check")}`].join("\n");
 }
 
 export function failuresReport(runs: RunSummary[], limit = 10): string {
@@ -401,8 +494,9 @@ export function remoteActionPreparedReport(action: RemoteActionRecord): string {
     code(remoteActionCommand(action)),
     "",
     "No worker was dispatched yet.",
-    "Approve from Telegram:",
-    code(`/approve-action ${action.id}`),
+    "",
+    `Next: ${code("/yes")}`,
+    `Explicit approval: ${code(`/approve-action ${action.id}`)}`,
   ].join("\n");
 }
 
@@ -435,6 +529,8 @@ export function remoteActionShowReport(actionId: string, action: RemoteActionRec
     action.result?.runId ? `Run: ${code(action.result.runId)}` : "",
     action.result?.outcome ? `Outcome: ${code(action.result.outcome)}` : "",
     action.result?.failure ? `Failure: ${oneLine(action.result.failure)}` : "",
+    action.status === "pending" ? `Next: ${code("/yes")}` : "",
+    action.status === "approved" || action.status === "running" ? `Next: ${code(`/action ${action.id}`)}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -456,6 +552,7 @@ export function remoteActionApprovedReport(action: RemoteActionRecord): string {
     result?.tmuxSession ? `Tmux: ${code(result.tmuxSession)}` : "",
     result?.failure ? `Failure: ${oneLine(result.failure)}` : "",
     action.status === "approved" ? "Runner: waiting for `actions:watch` or `actions:run-pending`." : "",
+    action.status === "approved" || action.status === "running" ? `Next: ${code(`/action ${action.id}`)}` : "",
   ]
     .filter(Boolean)
     .join("\n");

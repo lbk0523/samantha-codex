@@ -12,11 +12,36 @@ All remote input must pass through:
 remote input -> allowlist -> command mapping -> inbox/*.json -> inbox:watch
 ```
 
+## Practical Telegram Flow
+
+Use this as the normal Telegram operating path:
+
+```text
+/now -> /run-next -> /yes
+```
+
+- `/now` shows the single next command to send.
+- `/run-next` prepares the next pending task as a safe dispatch action.
+- `/yes` approves the latest pending dispatch action.
+- `/work <request>` captures new work as a proposal plus draft; it does not create a task or dispatch a worker.
+- `/check` is the compact status view.
+- `/problems` is the diagnostic view.
+
+`/help` shows only this short flow. `/help advanced` lists the lower-level inspection and explicit id-based commands.
+
 ## Supported Commands
 
 The current remote command mapper supports only:
 
 - `/help`
+- `/help advanced`
+- `/start`
+- `/now`
+- `/work <text>`
+- `/run-next`
+- `/yes`
+- `/check`
+- `/problems`
 - `/status`
 - `/doctor`
 - `/health`
@@ -43,16 +68,18 @@ The current remote command mapper supports only:
 
 Unsupported commands are ignored or rejected.
 
-Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, conservative task draft creation, and explicit approval of a prebuilt dispatch action. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/draft-propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal-id>` may write a draft to `state/task-drafts.jsonl`. Task ledger promotion, direct worker dispatch, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
+Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, conservative task draft creation, and explicit approval of a prebuilt dispatch action. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/work` and `/draft-propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal-id>` may write a draft to `state/task-drafts.jsonl`. Task ledger promotion, direct worker dispatch, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
 
-`/status` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
+`/now` is the default operating command. It chooses one next remote command from current action state, diagnostics, pending tasks, and latest run state.
 
-`/doctor` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, latest remote command/report context, reply failures, and expected systemd template installation without printing secret values.
+`/check` and `/status` are the quick operational view. They include daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
+
+`/problems` and `/doctor` are the deeper diagnostic view. They check local env readiness, daemon health, queue state, Telegram poll/reply state, latest remote command/report context, reply failures, and expected systemd template installation without printing secret values.
 
 Proposal commands are intake/review only:
 
 - `/propose <text>` writes a pending proposal to `state/proposals.jsonl`
-- `/draft-propose <text>` writes an accepted proposal to `state/proposals.jsonl` and a draft to `state/task-drafts.jsonl`
+- `/work <text>` or `/draft-propose <text>` writes an accepted proposal to `state/proposals.jsonl` and a draft to `state/task-drafts.jsonl`
 - `/proposals` lists recent proposals
 - `/proposal <proposal-id>` shows one proposal
 - `/accept <proposal-id>` marks one proposal accepted
@@ -105,14 +132,21 @@ Without `--execute`, `tasks:dispatch` only prepares and prints the Codex command
 Remote dispatch uses an action gate plus a separate runner instead of direct command execution:
 
 ```text
-/prepare-dispatch <task-id> -> state/remote-actions.jsonl pending action
-/approve-action <action-id> -> approved action
+/run-next -> state/remote-actions.jsonl pending action
+/yes -> approved action
 actions:watch -> tasks:dispatch <task-id> --allocate --execute --tmux
 ```
 
-`/prepare-dispatch` validates that the task is pending and that the target agent passes dispatch policy. It records the fixed repo root, task id, target agent, and dispatch flags in `state/remote-actions.jsonl`; no worker is started.
+`/run-next` reuses an existing pending, approved, or running dispatch action if one exists; otherwise it validates the next pending task and records the fixed repo root, task id, target agent, and dispatch flags in `state/remote-actions.jsonl`. No worker is started.
 
-`/approve-action` only marks an existing pending action as approved. It does not run inside `inbox:watch`, so Telegram status and inspection commands can continue while the worker later runs.
+`/yes` only marks the latest existing pending action as approved. It does not run inside `inbox:watch`, so Telegram status and inspection commands can continue while the worker later runs.
+
+The explicit advanced equivalents remain available:
+
+```text
+/prepare-dispatch <task-id> -> state/remote-actions.jsonl pending action
+/approve-action <action-id> -> approved action
+```
 
 `actions:watch` or one-shot `actions:run-pending` executes only existing approved action ids. Telegram cannot supply repo paths, shell commands, extra flags, merge, push, or cleanup instructions. The repo root must be configured locally through `SAMANTHA_REPO_ROOT`. If it is not set, action preparation fails with an explicit report.
 

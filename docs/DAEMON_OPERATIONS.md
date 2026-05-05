@@ -152,7 +152,7 @@ The service templates are tuned for interactive latency:
 
 Normal reply latency should usually be a few seconds. It can be longer when Telegram network calls are slow or when the machine is sleeping.
 
-For routine operation, use Telegram `/status` first and `/doctor` when `/status` reports warnings or failures. `/status` is the compact operating view; `/doctor` is the diagnostic view.
+For routine operation, use Telegram `/now` first. It reports the one next command to send, usually `/run-next`, `/yes`, `/problems`, or `/check`. Use `/check` for compact status and `/problems` when `/check` or `/now` reports warnings or failures.
 
 ## Safety Notes
 

@@ -7,6 +7,7 @@ import {
   draftProposeAddedReport,
   failuresReport,
   healthReport,
+  nowReport,
   nextActionReport,
   proposalAddedReport,
   proposalsListReport,
@@ -122,15 +123,18 @@ describe("operator reports", () => {
   test("documents safe-gated remote commands", () => {
     const report = remoteHelpReport();
 
-    expect(report).toContain("/status");
-    expect(report).toContain("/propose <text>");
-    expect(report).toContain("/draft-propose <text>");
-    expect(report).toContain("/draft <proposal-id>");
-    expect(report).toContain("/run <run-id>");
-    expect(report).toContain("/next-action");
-    expect(report).toContain("/prepare-dispatch <task-id>");
-    expect(report).toContain("/approve-action <action-id>");
-    expect(report).toContain("cannot dispatch workers directly");
+    expect(report).toContain("/now");
+    expect(report).toContain("/work <request>");
+    expect(report).toContain("/run-next");
+    expect(report).toContain("/yes");
+    expect(report).toContain("/help advanced");
+    expect(report).not.toContain("/prepare-dispatch <task-id>");
+
+    const advanced = remoteHelpReport("advanced");
+    expect(advanced).toContain("/run <run-id>");
+    expect(advanced).toContain("/prepare-dispatch <task-id>");
+    expect(advanced).toContain("/approve-action <action-id>");
+    expect(advanced).toContain("cannot dispatch workers directly");
   });
 
   test("renders compact run and failure summaries", () => {
@@ -281,13 +285,29 @@ describe("operator reports", () => {
       },
     };
 
+    expect(remoteActionPreparedReport(action)).toContain("Next: `/yes`");
     expect(remoteActionPreparedReport(action)).toContain("/approve-action");
     expect(remoteActionPreparedReport(action)).toContain("No worker was dispatched yet.");
     expect(remoteActionsListReport([action])).toContain("dispatch_task");
     expect(remoteActionShowReport(action.id, action)).toContain("tasks:dispatch task-pass");
+    expect(remoteActionShowReport(action.id, action)).toContain("Next: `/yes`");
     expect(remoteActionApprovedReport({ ...action, status: "approved" })).toContain("waiting for `actions:watch`");
     expect(remoteActionApprovedReport(completed)).toContain("Pass: yes");
     expect(remoteActionApprovedReport(completed)).toContain("Tmux: `samantha`");
+  });
+
+  test("renders a one-command Telegram now report", () => {
+    const pendingAction = createRemoteDispatchAction({
+      task,
+      repoRoot: "/repo",
+      createdAt: "2026-05-03T10:07:00.000Z",
+      source: "remote",
+      commandId: "remote-prepare",
+    });
+
+    expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).toContain("Next: `/yes`");
+    expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("Next: `/run-next`");
+    expect(nowReport({ runs: [failRun], tasks: [], actions: [] })).toContain(`/run ${failRun.runId}`);
   });
 
   test("renders next action reports", () => {

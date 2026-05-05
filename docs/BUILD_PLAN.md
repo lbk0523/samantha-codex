@@ -266,14 +266,12 @@ Do not prioritize these until the Telegram operating surface is stable:
 
 ## Immediate Next Step
 
-Harden the Telegram operating UX.
+Use the shortened Telegram operating flow in real work:
 
-The practical next implementation should:
+```text
+/now -> /run-next -> /yes
+```
 
-1. keep `/status` compact but operationally useful
-2. show latest remote command/report context
-3. show Telegram reply failures clearly
-4. show latest run lifecycle state
-5. keep all execution gates local-only
+The next implementation should be chosen from observed friction in that loop, not from adding more remote commands.
 
 The detailed next plan is in [NEXT_PLAN.md](NEXT_PLAN.md).

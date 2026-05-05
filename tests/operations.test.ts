@@ -113,6 +113,13 @@ describe("inbox and remote commands", () => {
     expect(command.type).toBe("tasks:show");
     expect(command.args?.id).toBe("fixture");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/help" }, "bk").type).toBe("remote:help");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/help advanced" }, "bk")).toMatchObject({
+      type: "remote:help",
+      args: { mode: "advanced" },
+    });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/now" }, "bk").type).toBe("ops:now");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/check" }, "bk").type).toBe("status:show");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/problems" }, "bk").type).toBe("ops:doctor");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/status" }, "bk").type).toBe("status:show");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/doctor" }, "bk").type).toBe("ops:doctor");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/health" }, "bk").type).toBe("health:check");
@@ -174,6 +181,8 @@ describe("inbox and remote commands", () => {
     });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/next-action" }, "bk").type).toBe("ops:next-action");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/actions" }, "bk").type).toBe("actions:list");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/run-next" }, "bk").type).toBe("actions:run-next");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/yes" }, "bk").type).toBe("actions:approve-latest");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/action action-1" }, "bk")).toMatchObject({
       type: "actions:show",
       args: { id: "action-1" },
@@ -193,6 +202,19 @@ describe("inbox and remote commands", () => {
     expect(commandFromRemoteInput({ senderId: "bk", text: "/approve-action action-1" }, "bk")).toMatchObject({
       type: "actions:approve",
       args: { id: "action-1" },
+    });
+    expect(
+      commandFromRemoteInput(
+        { senderId: "bk", text: "/work Improve task flow", receivedAt: "2026-05-03T10:06:00.000Z" },
+        "bk",
+      ),
+    ).toMatchObject({
+      type: "drafts:add-from-proposal-text",
+      args: {
+        proposalId: "proposal-2026-05-03t10-06-00.000z",
+        text: "Improve task flow",
+        senderId: "bk",
+      },
     });
     expect(
       commandFromRemoteInput(
@@ -309,6 +331,78 @@ describe("inbox and remote commands", () => {
     });
   });
 
+  test("processes run-next into a pending action for the first pending task", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-run-next-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const agents = join(root, "agents");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      `${JSON.stringify(
+        {
+          ...writer,
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(join(state, "tasks.jsonl"), `${JSON.stringify({ ...task, id: "task-pass" })}\n`, "utf8");
+    await writeFile(
+      join(inbox, "001.json"),
+      JSON.stringify({
+        id: "remote-run-next",
+        type: "actions:run-next",
+        args: { receivedAt: "2026-05-03T10:07:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        "--repo-root=/repo",
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const report = await readFile(join(outbox, "001.md"), "utf8");
+    const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
+    expect(report).toContain("Next: `/yes`");
+    expect(actions[0]).toMatchObject({
+      status: "pending",
+      taskId: "task-pass",
+    });
+  });
+
   test("approves remote dispatch actions without running workers in inbox processing", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-approve-"));
     tmpRoots.push(root);
@@ -365,6 +459,58 @@ describe("inbox and remote commands", () => {
       status: "approved",
       approvedAt: "2026-05-03T10:08:00.000Z",
     });
+  });
+
+  test("approves the latest pending action with yes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-yes-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    const store = new RemoteActionStore(join(state, "remote-actions.jsonl"));
+    const action = createRemoteDispatchAction({
+      task: { ...task, id: "task-pass" },
+      repoRoot: "/repo",
+      createdAt: "2026-05-03T10:07:00.000Z",
+      source: "remote",
+      commandId: "remote-prepare",
+    });
+    await store.append(action);
+    await writeFile(
+      join(inbox, "001.json"),
+      JSON.stringify({
+        id: "remote-yes",
+        type: "actions:approve-latest",
+        args: { receivedAt: "2026-05-03T10:08:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(await readFile(join(outbox, "001.md"), "utf8")).toContain("Status: `approved`");
+    expect(await store.find(action.id)).toMatchObject({ status: "approved" });
   });
 });
 

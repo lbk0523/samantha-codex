@@ -16,6 +16,7 @@ import {
   proposalsListReport,
   proposalReviewedReport,
   proposalShowReport,
+  nowReport,
   nextActionReport,
   remoteHelpReport,
   remoteActionApprovedReport,
@@ -515,9 +516,35 @@ async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promis
   return results;
 }
 
+async function prepareDispatchActionForTask(input: {
+  args: ParsedArgs;
+  taskId: string;
+  commandId?: string;
+  receivedAt?: string;
+}) {
+  const task = await new TaskStore(tasksPath(input.args)).find(input.taskId);
+  if (!task) throw new Error(`task not found: ${input.taskId}`);
+  if (task.status !== "pending") throw new Error(`task must be pending to dispatch: ${task.status}`);
+  const agent = await loadAgentProfile(input.args, task.targetAgent);
+  const plan = validateDispatch(task, agent);
+  if (!plan.mayDispatch) {
+    throw new Error(`dispatch blocked:\n${plan.violations.join("\n")}`);
+  }
+
+  const action = createRemoteDispatchAction({
+    task,
+    repoRoot: remoteDispatchRepoRoot(input.args),
+    createdAt: input.receivedAt ?? new Date().toISOString(),
+    source: "remote",
+    commandId: input.commandId,
+  });
+  await new RemoteActionStore(remoteActionsPath(input.args)).append(action);
+  return action;
+}
+
 async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Promise<string> {
   if (command.type === "remote:help") {
-    return remoteHelpReport();
+    return remoteHelpReport(command.args?.mode === "advanced" ? "advanced" : "basic");
   }
   if (command.type === "status:show") {
     const runs = await new RunIndex(runsPath(args)).list();
@@ -530,6 +557,15 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       proposals: await new ProposalStore(proposalsPath(args)).list(),
       drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
       actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
+      lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
+    });
+  }
+  if (command.type === "ops:now") {
+    return nowReport({
+      runs: await new RunIndex(runsPath(args)).list(),
+      tasks: await new TaskStore(tasksPath(args)).listActive(),
+      actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
+      ops: withoutActiveInboxCommand(await collectOps(args)),
       lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
     });
   }
@@ -656,23 +692,36 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
   if (command.type === "actions:prepare-dispatch") {
     const taskId = String(command.args?.taskId ?? "");
     if (!taskId) throw new Error("task id is required");
-    const task = await new TaskStore(tasksPath(args)).find(taskId);
-    if (!task) throw new Error(`task not found: ${taskId}`);
-    if (task.status !== "pending") throw new Error(`task must be pending to dispatch: ${task.status}`);
-    const agent = await loadAgentProfile(args, task.targetAgent);
-    const plan = validateDispatch(task, agent);
-    if (!plan.mayDispatch) {
-      throw new Error(`dispatch blocked:\n${plan.violations.join("\n")}`);
-    }
-
-    const action = createRemoteDispatchAction({
-      task,
-      repoRoot: remoteDispatchRepoRoot(args),
-      createdAt: String(command.args?.receivedAt ?? new Date().toISOString()),
-      source: "remote",
+    const action = await prepareDispatchActionForTask({
+      args,
+      taskId,
+      receivedAt: String(command.args?.receivedAt ?? new Date().toISOString()),
       commandId: command.id,
     });
-    await new RemoteActionStore(remoteActionsPath(args)).append(action);
+    return remoteActionPreparedReport(action);
+  }
+  if (command.type === "actions:run-next") {
+    const existing = (await new RemoteActionStore(remoteActionsPath(args)).list())
+      .slice()
+      .reverse()
+      .find((action) => action.status === "pending" || action.status === "approved" || action.status === "running");
+    if (existing?.status === "pending") return remoteActionPreparedReport(existing);
+    if (existing) return remoteActionShowReport(existing.id, existing);
+
+    const task = (await new TaskStore(tasksPath(args)).listActive()).find((item) => item.status === "pending");
+    if (!task) return nowReport({
+      runs: await new RunIndex(runsPath(args)).list(),
+      tasks: await new TaskStore(tasksPath(args)).listActive(),
+      actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
+      ops: withoutActiveInboxCommand(await collectOps(args)),
+      lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
+    });
+    const action = await prepareDispatchActionForTask({
+      args,
+      taskId: task.id,
+      receivedAt: String(command.args?.receivedAt ?? new Date().toISOString()),
+      commandId: command.id,
+    });
     return remoteActionPreparedReport(action);
   }
   if (command.type === "actions:approve") {
@@ -680,6 +729,24 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     if (!id) throw new Error("action id is required");
     const store = new RemoteActionStore(remoteActionsPath(args));
     const approved = await store.markApproved(id, String(command.args?.receivedAt ?? new Date().toISOString()));
+    return remoteActionApprovedReport(approved);
+  }
+  if (command.type === "actions:approve-latest") {
+    const action = (await new RemoteActionStore(remoteActionsPath(args)).list())
+      .slice()
+      .reverse()
+      .find((item) => item.status === "pending");
+    if (!action) return nowReport({
+      runs: await new RunIndex(runsPath(args)).list(),
+      tasks: await new TaskStore(tasksPath(args)).listActive(),
+      actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
+      ops: withoutActiveInboxCommand(await collectOps(args)),
+      lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
+    });
+    const approved = await new RemoteActionStore(remoteActionsPath(args)).markApproved(
+      action.id,
+      String(command.args?.receivedAt ?? new Date().toISOString()),
+    );
     return remoteActionApprovedReport(approved);
   }
   if (command.type === "ops:next-action") {

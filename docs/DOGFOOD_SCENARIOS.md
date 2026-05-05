@@ -1,6 +1,6 @@
 # Samantha-Codex Dogfood Scenarios
 
-Last updated: 2026-05-03
+Last updated: 2026-05-05
 
 ## Purpose
 
@@ -450,7 +450,7 @@ Pass criteria:
 
 ## Scenario 16: Telegram Poll Adapter
 
-Goal: confirm Telegram input can only create allowlisted inbox commands and Telegram replies only send outbox reports.
+Goal: confirm Telegram input can only create allowlisted inbox commands, the practical Telegram flow stays short, and Telegram replies only send outbox reports.
 
 Command:
 
@@ -472,7 +472,9 @@ bun run samantha telegram:reply
 
 Pass criteria:
 
-- allowed `/help`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/draft-propose <text>`, `/proposals`, `/proposal <id>`, `/accept <id>`, `/reject <id>`, `/draft <proposal-id>`, `/drafts`, `/draft <draft-id>`, `/tasks`, `/dashboard`, `/task <id>`, `/prepare-dispatch <task-id>`, `/actions`, `/action <action-id>`, and `/approve-action <action-id>` messages create inbox files
+- allowed practical commands `/help`, `/start`, `/now`, `/work <text>`, `/run-next`, `/yes`, `/check`, and `/problems` create inbox files
+- allowed advanced commands `/help advanced`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/draft-propose <text>`, `/proposals`, `/proposal <id>`, `/accept <id>`, `/reject <id>`, `/draft <proposal-id>`, `/drafts`, `/draft <draft-id>`, `/tasks`, `/dashboard`, `/task <id>`, `/prepare-dispatch <task-id>`, `/actions`, `/action <action-id>`, and `/approve-action <action-id>` create inbox files
+- `/help` shows the short `/now -> /run-next -> /yes` operating flow instead of a long command catalog
 - unsupported messages are ignored
 - messages from other sender ids are ignored
 - `state/telegram-offset.json` is updated after a successful poll
@@ -480,14 +482,14 @@ Pass criteria:
 - long remote outbox replies are split into multiple Telegram messages instead of truncated
 - reports that return proposal, draft, action, run, or task IDs also send each ID as a separate copy-only Telegram message
 - `/propose <text>` writes only to `state/proposals.jsonl` and does not dispatch a worker
-- `/draft-propose <text>` writes only to `state/proposals.jsonl` and `state/task-drafts.jsonl` and does not dispatch a worker
+- `/work <text>` and `/draft-propose <text>` write only to `state/proposals.jsonl` and `state/task-drafts.jsonl` and do not dispatch a worker
 - `/accept <id>` and `/reject <id>` update proposal review state only and do not dispatch workers
 - `/draft <proposal-id>` writes only to `state/task-drafts.jsonl`; unaccepted proposals are rejected
 - `drafts:check`, `drafts:update`, and `drafts:approve` stay local-only
 - `drafts:approve` writes one pending task to `state/tasks.jsonl` only after `targetFiles`, `verifyCommands`, `instructions`, and `targetAgent` pass checks
 - direct `tasks:dispatch` stays local-only; dry-run prints the prepared Codex command, and `--execute` writes run logs and run index entries
-- `/prepare-dispatch <task-id>` creates only a pending action in `state/remote-actions.jsonl`
-- `/approve-action <action-id>` only marks an existing pending dispatch action approved
+- `/run-next` and `/prepare-dispatch <task-id>` create only a pending action in `state/remote-actions.jsonl`
+- `/yes` and `/approve-action <action-id>` only mark an existing pending dispatch action approved
 - `actions:watch` executes approved dispatch action ids with fixed `--allocate --execute --tmux` flags and locally configured repo root
 - no remote path executes shell, merge, push, cleanup, or direct worker dispatch
 - `inbox:watch` processes the created inbox commands later
