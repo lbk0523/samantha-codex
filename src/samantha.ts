@@ -245,7 +245,11 @@ async function readLiveRuns(baseLogDir: string): Promise<LiveRunStatus[]> {
     const latest = events.at(-1);
     if (!latest) continue;
 
-    const latestText = typeof latest.text === "string" ? latest.text : undefined;
+    const latestTextEvent = events
+      .slice()
+      .reverse()
+      .find((event) => typeof event.text === "string" && event.text.trim() && !event.text.includes('"type":"turn.completed"'));
+    const latestText = typeof latestTextEvent?.text === "string" ? latestTextEvent.text : undefined;
     liveRuns.push({
       runId: String(latest.runId ?? meta?.runId ?? file.replace(/\.jsonl$/, "")),
       taskId: String(latest.taskId ?? meta?.taskId ?? "unknown"),
