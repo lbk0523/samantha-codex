@@ -75,8 +75,8 @@ Available command groups:
 - `inbox:*` processes local file-backed commands
 - `remote:enqueue` maps a narrow remote command JSON into the local inbox
 - `telegram:poll` maps allowlisted Telegram updates into the local inbox
-- `dashboard:build` writes a read-only static dashboard from run summaries
-- `dashboard:serve` serves the same read-only dashboard and rebuilds it on each browser request
+- `dashboard:build` writes read-only `dashboard/index.html` and `dashboard/lane-view.html`
+- `dashboard:serve` serves Overview at `/`, `/index.html`, and `/overview`, and Lane View at `/lane-view` and `/lane-view.html`; each request rebuilds from local state
 
 Run the first external read-only canary against `oh-my-health-trainer`:
 
@@ -91,7 +91,7 @@ bun run dispatch-worker \
 
 By default, worker worktrees are placed outside the target repo under `.samantha-worktrees` beside the repo parent directory. This prevents target-repo test commands from discovering worker worktree files.
 
-For live worker visibility, dispatch through `samantha tasks:dispatch` with `--execute --tmux` or `--execute --live-log`. The browser dashboard reads `runs/live/*.jsonl`; the tmux view attaches with `tmux attach -t samantha`.
+For live worker visibility, dispatch through `samantha tasks:dispatch` with `--execute --tmux` or `--execute --live-log`. The browser dashboard reads `runs/live/*.jsonl`: Overview separates current operational problems from historical run failures and shows the reverse-chronological live timeline, Lane View groups the same events by worker/run lane, and the tmux view attaches with `tmux attach -t samantha`.
 
 ## Design Notes
 

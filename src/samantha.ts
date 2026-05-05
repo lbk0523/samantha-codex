@@ -1,8 +1,8 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
-import { writeDashboard, type LiveRunStatus } from "./lib/dashboard";
+import { writeDashboard, type LiveRunEvent, type LiveRunStatus } from "./lib/dashboard";
 import { processInbox, type InboxCommand } from "./lib/inbox";
 import { RunIndex, summarizeWorkerRun } from "./lib/ledger";
 import { buildWorkerLiveLogPath, formatWorkerLiveLogLine, startTmuxObserver, type TmuxObserverResult } from "./lib/live-log";
@@ -234,34 +234,103 @@ async function readLiveRuns(baseLogDir: string): Promise<LiveRunStatus[]> {
   for (const file of files) {
     const liveLogPath = join(liveDir, file);
     const lines = (await readFile(liveLogPath, "utf8")).split(/\r?\n/).filter(Boolean);
-    const events = lines.flatMap((line) => {
+    const rawEvents = lines.flatMap((line) => {
       try {
         return [JSON.parse(line) as Record<string, unknown>];
       } catch {
         return [];
       }
     });
-    const meta = events.find((event) => event.type === "meta");
+    const events = rawEvents.flatMap(summarizeLiveRunEvent);
+    const meta = rawEvents.find((event) => event.type === "meta");
+    const latestRaw = rawEvents.at(-1);
     const latest = events.at(-1);
-    if (!latest) continue;
+    if (!latest || !latestRaw) continue;
 
     const latestTextEvent = events
       .slice()
       .reverse()
-      .find((event) => typeof event.text === "string" && event.text.trim() && !event.text.includes('"type":"turn.completed"'));
-    const latestText = typeof latestTextEvent?.text === "string" ? latestTextEvent.text : undefined;
+      .find((event) => typeof event.text === "string" && event.text.trim());
+    const latestText = latestTextEvent?.text;
     liveRuns.push({
-      runId: String(latest.runId ?? meta?.runId ?? file.replace(/\.jsonl$/, "")),
-      taskId: String(latest.taskId ?? meta?.taskId ?? "unknown"),
-      agentId: typeof latest.agentId === "string" ? latest.agentId : typeof meta?.agentId === "string" ? meta.agentId : undefined,
-      phase: typeof latest.phase === "string" ? latest.phase : undefined,
-      lastEventType: typeof latest.type === "string" ? latest.type : undefined,
-      lastAt: String(latest.at ?? ""),
+      runId: String(latestRaw.runId ?? meta?.runId ?? file.replace(/\.jsonl$/, "")),
+      taskId: String(latestRaw.taskId ?? meta?.taskId ?? "unknown"),
+      agentId: typeof latestRaw.agentId === "string" ? latestRaw.agentId : typeof meta?.agentId === "string" ? meta.agentId : undefined,
+      phase: latest.phase,
+      lastEventType: latest.type,
+      lastAt: latest.at,
       liveLogPath,
       ...(latestText ? { latestText } : {}),
+      events,
     });
   }
   return liveRuns;
+}
+
+function summarizeLiveRunEvent(event: Record<string, unknown>): LiveRunEvent[] {
+  const type = typeof event.type === "string" ? event.type : "event";
+  const text = typeof event.text === "string" ? summarizeLiveText(event.text) : undefined;
+  if ((type === "stdout" || type === "stderr") && typeof event.text === "string" && event.text.trim() && !text) {
+    return [];
+  }
+  return [
+    {
+      at: typeof event.at === "string" ? event.at : "",
+      type,
+      phase: typeof event.phase === "string" ? event.phase : undefined,
+      text,
+      command: commandText(event.command),
+      exitCode: typeof event.exitCode === "number" ? event.exitCode : undefined,
+    },
+  ];
+}
+
+function summarizeLiveText(text: string): string | undefined {
+  const summary = text
+    .split(/\r?\n/)
+    .flatMap((line) => summarizeNestedCodexLine(line))
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  return summary || undefined;
+}
+
+function summarizeNestedCodexLine(line: string): string[] {
+  const trimmed = line.trim();
+  if (!trimmed) return [];
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      type?: string;
+      item?: {
+        type?: string;
+        text?: string;
+        command?: string;
+        aggregated_output?: string;
+        exit_code?: number | null;
+      };
+    };
+    if (parsed.type === "turn.completed") return [];
+    if (parsed.type === "thread.started") return ["[thread] started"];
+    if (parsed.type === "turn.started") return ["[turn] started"];
+    if (parsed.type === "item.started" && parsed.item?.type === "command_execution") {
+      return [`[cmd:start] ${parsed.item.command ?? ""}`.trim()];
+    }
+    if (parsed.type === "item.completed" && parsed.item?.type === "agent_message") {
+      return [parsed.item.text ?? ""];
+    }
+    if (parsed.type === "item.completed" && parsed.item?.type === "command_execution") {
+      const output = parsed.item.aggregated_output ? `\n${parsed.item.aggregated_output}` : "";
+      return [`[cmd:exit ${String(parsed.item.exit_code ?? "?")}] ${parsed.item.command ?? ""}${output}`.trimEnd()];
+    }
+  } catch {
+    return [line];
+  }
+  return [line];
+}
+
+function commandText(command: unknown): string | undefined {
+  if (Array.isArray(command)) return command.map(String).join(" ");
+  return typeof command === "string" ? command : undefined;
 }
 
 async function serveDashboard(args: ParsedArgs): Promise<void> {
@@ -273,9 +342,11 @@ async function serveDashboard(args: ParsedArgs): Promise<void> {
     port,
     fetch: async (request) => {
       const url = new URL(request.url);
-      if (url.pathname !== "/" && url.pathname !== "/index.html") return new Response("not found", { status: 404 });
+      const route = dashboardRoute(url.pathname);
+      if (!route) return new Response("not found", { status: 404 });
       await buildDashboard(args, out);
-      return new Response(await readFile(out, "utf8"), {
+      const htmlPath = route === "lane-view" ? join(dirname(out), "lane-view.html") : out;
+      return new Response(await readFile(htmlPath, "utf8"), {
         headers: {
           "cache-control": "no-store",
           "content-type": "text/html; charset=utf-8",
@@ -287,6 +358,12 @@ async function serveDashboard(args: ParsedArgs): Promise<void> {
   console.log(`Samantha dashboard listening on http://${server.hostname}:${server.port}/`);
   console.log(`Rendering ${out} on each request`);
   await new Promise(() => {});
+}
+
+function dashboardRoute(pathname: string): "overview" | "lane-view" | undefined {
+  if (pathname === "/" || pathname === "/index.html" || pathname === "/overview") return "overview";
+  if (pathname === "/lane-view" || pathname === "/lane-view.html") return "lane-view";
+  return undefined;
 }
 
 async function collectOps(args: ParsedArgs) {
@@ -441,7 +518,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
   if (command.type === "dashboard:build") {
     const out = resolve(flag(args, "out", join(root, "dashboard/index.html")));
     await buildDashboard(args, out);
-    return `# dashboard:build\n\nWrote ${out}`;
+    return [`# dashboard:build`, "", `Wrote ${out}`, `Wrote ${join(dirname(out), "lane-view.html")}`].join("\n");
   }
 
   throw new Error(`unsupported inbox command: ${command.type}`);
@@ -1120,7 +1197,7 @@ async function main(): Promise<void> {
   if (args.command === "dashboard:build") {
     const out = resolve(flag(args, "out", join(root, "dashboard/index.html")));
     const runs = await buildDashboard(args, out);
-    printJson({ out, runs });
+    printJson({ out, laneViewOut: join(dirname(out), "lane-view.html"), runs });
     return;
   }
 

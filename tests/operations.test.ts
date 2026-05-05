@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import type { DaemonHeartbeat } from "../src/lib/daemon";
-import { renderDashboard } from "../src/lib/dashboard";
+import { renderDashboard, renderLaneViewDashboard, writeDashboard } from "../src/lib/dashboard";
 import { processInbox } from "../src/lib/inbox";
 import type { RunSummary } from "../src/lib/ledger";
 import { buildPlanBatches, type LoadedPlanTask } from "../src/lib/plan-runner";
@@ -293,6 +293,20 @@ describe("dashboard", () => {
           lastAt: "2026-05-03T10:06:00.000Z",
           liveLogPath: "/repo/runs/live/run-live.jsonl",
           latestText: "<worker update>",
+          events: [
+            {
+              at: "2026-05-03T10:05:00.000Z",
+              type: "command_start",
+              phase: "worker",
+              command: "bun test",
+            },
+            {
+              at: "2026-05-03T10:06:00.000Z",
+              type: "stdout",
+              phase: "worker",
+              text: "<worker update>",
+            },
+          ],
         },
       ],
       lifecycles: [
@@ -312,17 +326,433 @@ describe("dashboard", () => {
     });
 
     expect(html).toContain("Samantha Dashboard");
-    expect(html).toContain("Operation");
-    expect(html).toContain("Work Intake");
-    expect(html).toContain("Latest Run");
+    expect(html).toContain("Overview");
+    expect(html).toContain("Lane View");
+    expect(html).toContain("Running Workers");
+    expect(html).toContain("Current Problems");
+    expect(html).toContain("Recent Run Failures");
+    expect(html).toContain("Next Action");
+    expect(html).toContain("Live Timeline");
+    expect(html).toContain("Current Attention");
+    expect(html).toContain("Run History Attention");
     expect(html).toContain("Heartbeat");
     expect(html).toContain("Pending inbox commands");
     expect(html).toContain("status:show");
     expect(html).toContain("merged=yes pushed=yes cleaned=yes");
     expect(html).toContain("dashboard-live-observer-dogfood");
-    expect(html).toContain("/repo/runs/live/run-live.jsonl");
     expect(html).toContain("&lt;worker update&gt;");
     expect(html).toContain("&lt;task&gt;");
     expect(html).toContain("abc123");
+    expect(html).toContain("Worker output");
+    expect(html).toContain("Started: bun test");
+    expect(html).not.toContain("/repo/runs/live/run-live.jsonl");
+    expect(html).not.toContain(">Runs<");
+    expect(html).not.toContain(">Intake<");
+    expect(html).not.toContain(">System<");
+    expect(html).not.toContain(">Docs<");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<form");
+  });
+
+  test("separates current problems from historical run failures", () => {
+    const failedRun: RunSummary = {
+      schemaVersion: 1,
+      runId: "run-failed",
+      taskId: "old-failed-task",
+      taskTitle: "Old failed task",
+      agentId: "codex-worker",
+      repoRoot: "/repo",
+      worktreePath: "/repo/worktrees/old-failed-task",
+      logPath: "/logs/run-failed.json",
+      startedAt: "2026-05-03T10:00:00.000Z",
+      finishedAt: "2026-05-03T10:01:00.000Z",
+      outcome: "verify_failed",
+      pass: false,
+      commit: "",
+      failureReason: "verify command failed",
+    };
+    const html = renderDashboard([failedRun], {
+      tasks: [
+        {
+          ...task,
+          id: "pending-task",
+          status: "pending",
+        },
+      ],
+      ops: {
+        ok: true,
+        checkedAt: "2026-05-05T10:00:00.000Z",
+        env: {
+          envFilePath: "/repo/.env",
+          envFileExists: true,
+          hasBotToken: true,
+          hasPollChatId: true,
+          hasReplyChatId: true,
+        },
+        health: { ok: true, ageMs: 1000, violations: [] },
+        queues: {
+          pendingInboxCount: 0,
+          outboxCount: 0,
+          remoteOutboxCount: 0,
+          unsentRemoteOutboxCount: 0,
+        },
+        telegram: {
+          replyState: { schemaVersion: 1, sentFiles: [], updatedAt: "2026-05-05T10:00:00.000Z" },
+        },
+        systemd: { directory: "/systemd", files: [] },
+        warnings: [],
+        failures: [],
+      },
+      liveRuns: [],
+    });
+
+    expect(html).toContain('<div class="label">Current Problems</div>');
+    expect(html).toContain('<div class="value">0</div>');
+    expect(html).toContain('<div class="label">Recent Run Failures</div>');
+    expect(html).toContain("old-failed-task");
+    expect(html).toContain("Dispatch pending task: pending-task");
+    expect(html).toContain("run failed: old-failed-task - verify command failed");
+  });
+
+  test("renders live log events by worker lane", () => {
+    const now = new Date().toISOString();
+    const html = renderLaneViewDashboard([], {
+      liveRuns: [
+        {
+          runId: "run-live",
+          taskId: "lane-task",
+          agentId: "codex-worker",
+          phase: "worker",
+          lastEventType: "command_exit",
+          lastAt: now,
+          liveLogPath: "/repo/runs/live/run-live.jsonl",
+          latestText: "done",
+          events: [
+            {
+              at: now,
+              type: "command_start",
+              phase: "setup:1",
+              command: "bun install",
+            },
+            {
+              at: now,
+              type: "stdout",
+              phase: "worker",
+              text: "working",
+            },
+            {
+              at: now,
+              type: "command_exit",
+              phase: "worker",
+              command: "codex exec",
+              exitCode: 0,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(html).toContain("Lane View");
+    expect(html).toContain("lane-task");
+    expect(html).toContain("run-live");
+    expect(html).toContain("setup:1");
+    expect(html).toContain("Worker output");
+    expect(html).toContain("running");
+    expect(html).toContain("result");
+    expect(html).toContain("exit 0");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<form");
+  });
+
+  test("renders live timeline timestamps as local clock labels", () => {
+    const now = new Date();
+    const eventAt = now.toISOString();
+    const expectedTime = [
+      String(now.getHours()).padStart(2, "0"),
+      String(now.getMinutes()).padStart(2, "0"),
+      String(now.getSeconds()).padStart(2, "0"),
+    ].join(":");
+    const html = renderDashboard([], {
+      liveRuns: [
+        {
+          runId: "run-live",
+          taskId: "time-task",
+          agentId: "codex-worker",
+          phase: "worker",
+          lastEventType: "stdout",
+          lastAt: eventAt,
+          liveLogPath: "/repo/runs/live/run-live.jsonl",
+          events: [
+            {
+              at: eventAt,
+              type: "stdout",
+              phase: "worker",
+              text: "time check",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(html).toContain(expectedTime);
+    expect(html).not.toContain(`<span>${eventAt}</span>`);
+  });
+
+  test("summarizes structured file change events instead of showing raw JSON", () => {
+    const now = new Date().toISOString();
+    const html = renderDashboard([], {
+      liveRuns: [
+        {
+          runId: "run-live",
+          taskId: "file-change-task",
+          agentId: "codex-worker",
+          phase: "worker",
+          lastEventType: "stdout",
+          lastAt: now,
+          liveLogPath: "/repo/runs/live/run-live.jsonl",
+          events: [
+            {
+              at: now,
+              type: "stdout",
+              phase: "worker",
+              text: JSON.stringify({
+                type: "item.completed",
+                item: {
+                  type: "file_change",
+                  changes: [
+                    { path: "/home/lbk0523/projects/samantha-codex/src/lib/dashboard.ts", kind: "update" },
+                    { path: "/home/lbk0523/projects/samantha-codex/tests/operations.test.ts", kind: "update" },
+                  ],
+                },
+              }),
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(html).toContain("File changes");
+    expect(html).toContain("Changed 2 files");
+    expect(html).toContain("/home/lbk0523/projects/samantha-codex/src/lib/dashboard.ts");
+    expect(html).not.toContain("&quot;file_change&quot;");
+  });
+
+  test("highlights failed command events with a readable failure summary", () => {
+    const now = new Date().toISOString();
+    const html = renderDashboard([], {
+      liveRuns: [
+        {
+          runId: "run-live",
+          taskId: "failed-command-task",
+          agentId: "codex-worker",
+          phase: "worker",
+          lastEventType: "command_exit",
+          lastAt: now,
+          liveLogPath: "/repo/runs/live/run-live.jsonl",
+          events: [
+            {
+              at: now,
+              type: "command_exit",
+              phase: "worker",
+              command: "bun test",
+              exitCode: 1,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(html).toContain("Command failed");
+    expect(html).toContain("Failed exit 1: bun test");
+    expect(html).toContain("timeline-item high");
+  });
+
+  test("summarizes combined command output chunks", () => {
+    const now = new Date().toISOString();
+    const html = renderDashboard([], {
+      liveRuns: [
+        {
+          runId: "run-live",
+          taskId: "combined-command-task",
+          agentId: "codex-worker",
+          phase: "worker",
+          lastEventType: "stdout",
+          lastAt: now,
+          liveLogPath: "/repo/runs/live/run-live.jsonl",
+          events: [
+            {
+              at: now,
+              type: "stdout",
+              phase: "worker",
+              text: "[cmd:start] bun test\n[cmd:exit 2] bun test\nfailed output",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(html).toContain("Command failed");
+    expect(html).toContain("Failed exit 2: bun test");
+    expect(html).toContain("failed output");
+    expect(html).not.toContain("[cmd:start]");
+  });
+
+  test("renders responsive safeguards that keep timeline and attention panels from overlapping", () => {
+    const html = renderDashboard([], { liveRuns: [] });
+
+    expect(html).toContain(".layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);");
+    expect(html).toContain(".layout > .stack, .panel, .lane-card { min-width: 0; }");
+    expect(html).toContain(".timeline { display: grid; gap: 8px; min-width: 0; }");
+    expect(html).toContain(".event-text { min-width: 0;");
+    expect(html).toContain("@media (max-width: 1120px)");
+    expect(html).toContain(".layout { grid-template-columns: 1fr; }");
+  });
+
+  test("sorts completed lane cards after active problem lanes", () => {
+    const now = new Date().toISOString();
+    const completedRun: RunSummary = {
+      schemaVersion: 1,
+      runId: "run-completed",
+      taskId: "completed-task",
+      taskTitle: "Completed task",
+      agentId: "codex-worker",
+      repoRoot: "/repo",
+      worktreePath: "/repo/worktrees/completed-task",
+      logPath: "/logs/run-completed.json",
+      startedAt: "2026-05-05T10:00:00.000Z",
+      finishedAt: "2026-05-05T10:01:00.000Z",
+      outcome: "pass",
+      pass: true,
+      commit: "abc123",
+    };
+    const html = renderLaneViewDashboard([completedRun], {
+      liveRuns: [
+        {
+          runId: "run-completed",
+          taskId: "completed-task",
+          agentId: "codex-worker",
+          phase: "worker",
+          lastEventType: "command_exit",
+          lastAt: now,
+          liveLogPath: "/repo/runs/live/run-completed.jsonl",
+          events: [
+            {
+              at: now,
+              type: "command_exit",
+              phase: "worker",
+              exitCode: 0,
+            },
+          ],
+        },
+        {
+          runId: "run-active-failed",
+          taskId: "active-failed-task",
+          agentId: "codex-worker",
+          phase: "worker",
+          lastEventType: "command_exit",
+          lastAt: "2026-05-05T09:59:00.000Z",
+          liveLogPath: "/repo/runs/live/run-active-failed.jsonl",
+          events: [
+            {
+              at: "2026-05-05T09:59:00.000Z",
+              type: "command_exit",
+              phase: "worker",
+              exitCode: 1,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(html.indexOf("active-failed-task")).toBeLessThan(html.indexOf("completed-task"));
+  });
+
+  test("renders an empty lane view state", () => {
+    const html = renderLaneViewDashboard([], { liveRuns: [] });
+    expect(html).toContain("No live worker logs found.");
+  });
+
+  test("writes overview and lane view dashboard files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-dashboard-"));
+    tmpRoots.push(root);
+    const out = join(root, "dashboard", "index.html");
+
+    await writeDashboard(out, [], { liveRuns: [] });
+
+    expect(await readFile(out, "utf8")).toContain("Overview");
+    expect(await readFile(join(root, "dashboard", "lane-view.html"), "utf8")).toContain("Lane View");
+  });
+
+  test("builds dashboards from live logs without malformed or token-only events", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-live-dashboard-"));
+    tmpRoots.push(root);
+    const logDir = join(root, "runs");
+    const liveDir = join(logDir, "live");
+    const out = join(root, "dashboard", "index.html");
+    await mkdir(liveDir, { recursive: true });
+    await writeFile(
+      join(liveDir, "run-live.jsonl"),
+      [
+        JSON.stringify({
+          schemaVersion: 1,
+          type: "meta",
+          at: "2026-05-05T10:00:00.000Z",
+          runId: "run-live",
+          taskId: "live-task",
+          agentId: "codex-worker",
+        }),
+        "{malformed",
+        JSON.stringify({
+          schemaVersion: 1,
+          type: "stdout",
+          at: "2026-05-05T10:00:01.000Z",
+          runId: "run-live",
+          taskId: "live-task",
+          phase: "worker",
+          text: JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 2 } }),
+        }),
+        JSON.stringify({
+          schemaVersion: 1,
+          type: "stdout",
+          at: "2026-05-05T10:00:02.000Z",
+          runId: "run-live",
+          taskId: "live-task",
+          phase: "worker",
+          text: JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: "<useful update>" },
+          }),
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "samantha",
+        "dashboard:build",
+        `--state-dir=${join(root, "state")}`,
+        `--log-dir=${logDir}`,
+        `--out=${out}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const overview = await readFile(out, "utf8");
+    const laneView = await readFile(join(root, "dashboard", "lane-view.html"), "utf8");
+    expect(overview).toContain("live-task");
+    expect(overview).toContain("&lt;useful update&gt;");
+    expect(laneView).toContain("&lt;useful update&gt;");
+    expect(overview).not.toContain("turn.completed");
+    expect(laneView).not.toContain("turn.completed");
+    expect(overview).not.toContain("malformed");
   });
 });

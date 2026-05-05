@@ -6,7 +6,7 @@ The browser dashboard used to be a static build from completed run summaries onl
 
 There are now two observer surfaces:
 
-- Browser dashboard: `bun run samantha dashboard:serve --port=4173`, then open `http://127.0.0.1:4173/`. The page auto-refreshes every 5 seconds; each request rebuilds from local state and `runs/live/*.jsonl`.
+- Browser dashboard: `bun run samantha dashboard:serve --port=4173`, then open `http://127.0.0.1:4173/` for Overview or `http://127.0.0.1:4173/lane-view` for Lane View. Both pages auto-refresh every 5 seconds; each request rebuilds from local state and `runs/live/*.jsonl`.
 - Terminal observer: `tmux attach -t samantha` after dispatching with `--tmux`.
 
 Fallback when tmux is unavailable:
@@ -29,6 +29,7 @@ Open:
 
 ```text
 http://127.0.0.1:4173/
+http://127.0.0.1:4173/lane-view
 ```
 
 Terminal 2:
@@ -50,6 +51,7 @@ tmux attach -t samantha
 
 Pass criteria:
 
-- Browser dashboard shows `dashboard-live-observer-dogfood` in the Live Workers section while the task is running.
+- Overview shows `dashboard-live-observer-dogfood` in the Live Timeline while the task is running, with current operational problems separated from historical run failures.
+- Lane View shows the same live events grouped by worker/run lane.
 - `tmux attach -t samantha` shows formatted worker events.
-- Completed worker run appears under Recent Runs after dispatch exits.
+- Completed worker run appears under Recent Completed Work after dispatch exits.
