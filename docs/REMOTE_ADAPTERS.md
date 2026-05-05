@@ -17,13 +17,13 @@ remote input -> allowlist -> command mapping -> inbox/*.json -> inbox:watch
 Use this as the normal Telegram operating path:
 
 ```text
-/work <request> -> /draft_next -> /draft_prepare <project_id> [target_file...] -> /draft_approve -> /run_next -> /yes -> /action_current
+/work <request> -> /plan -> /go -> /action_current
 ```
 
 - `/now` shows the next Telegram command, local command, or read-only inspection command for the current state.
-- `/run_next` prepares the next pending task as a safe dispatch action.
-- `/yes` approves the latest pending dispatch action.
 - `/work <request>` captures new work as a proposal plus draft; it does not create a task or dispatch a worker.
+- `/plan` prepares the latest draft from project defaults and remote scope recipes, then returns the execution plan.
+- `/go` approves the ready draft or pending dispatch action. It does not execute inside `inbox:watch`.
 - `/check` is the compact status view.
 - `/problems` is the diagnostic view.
 
@@ -38,10 +38,8 @@ The current primary Telegram spellings are:
 - `/start`
 - `/now`
 - `/work <text>`
-- `/draft_prepare <project_id> [target_file...]`
-- `/draft_approve`
-- `/run_next`
-- `/yes`
+- `/plan [project_id] [scope_id]`
+- `/go`
 - `/check`
 - `/problems`
 - `/status`
@@ -74,9 +72,9 @@ The current primary Telegram spellings are:
 
 Unsupported commands are ignored or rejected.
 
-Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, conservative task draft creation, safe draft preparation/approval, and explicit approval of a prebuilt dispatch action. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/work` and `/draft_propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal_id>` may write a draft to `state/task-drafts.jsonl`; `/draft_prepare` may apply project defaults and target files to the latest draft; `/draft_approve` may promote the latest ready draft to `state/tasks.jsonl`. Direct worker dispatch, merge, push, cleanup, arbitrary shell execution, and worker execution during draft approval are intentionally not exposed remotely.
+Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, conservative task draft creation, safe draft planning/approval, and explicit approval of a prebuilt dispatch action. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/work` and `/draft_propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal_id>` may write a draft to `state/task-drafts.jsonl`; `/plan` may apply project defaults and a remote scope recipe to the latest draft; `/go` may promote the latest ready draft to `state/tasks.jsonl` and approve a dispatch action. Direct worker dispatch, merge, push, cleanup, arbitrary shell execution, and worker execution inside inbox processing are intentionally not exposed remotely.
 
-`/now` is the default operating command. It chooses one next remote command from current action state, diagnostics, pending tasks, task drafts, proposals, and latest run state. After `/work <request>`, `/now` should show the created draft and Telegram preparation command instead of reporting no immediate action. It must not present inspect-only commands like `/draft_next` as the next state-changing action.
+`/now` is the default operating command. It chooses one next remote command from current action state, diagnostics, pending tasks, task drafts, proposals, and latest run state. After `/work <request>`, `/now` should show the created draft and `/plan` instead of reporting no immediate action. It must not present inspect-only commands like `/draft_next` as the next state-changing action.
 
 `/check` and `/status` are the quick operational view. They include daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
 
@@ -97,6 +95,8 @@ Task draft commands are draft-only:
 
 - `/draft <proposal_id>` creates one draft from an accepted proposal
 - `/draft_propose <text>` creates an accepted proposal and one draft in a single command
+- `/plan [project_id] [scope_id]` prepares the latest draft with project defaults and a remote scope recipe, then returns the execution plan
+- `/go` promotes a ready draft to one pending task, prepares the dispatch action, and approves it for `actions:watch`
 - `/draft_prepare <project_id> [target_file...]` prepares the latest draft with project defaults and optional target files
 - `/draft_approve` promotes the latest ready draft to one pending task
 - `/drafts` lists recent task drafts
@@ -114,9 +114,9 @@ bun run samantha drafts:prepare <draft-id> --project=<id> [--from=<draft-patch.j
 bun run samantha drafts:approve <draft-id>
 ```
 
-`drafts:check` returns a readiness summary with missing fields and next commands. `drafts:template` prints an editable JSON patch, optionally filled with project defaults. `drafts:update` rejects unknown patch fields instead of silently ignoring them. `drafts:approve` and `/draft_approve` refuse drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker.
+`drafts:check` returns a readiness summary with missing fields and next commands. `drafts:template` prints an editable JSON patch, optionally filled with project defaults. `drafts:update` rejects unknown patch fields instead of silently ignoring them. `drafts:approve`, `/draft_approve`, and `/go` refuse drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker inside inbox processing.
 
-`/draft_next` is read-only, but its report includes the next Telegram command to send. If target files are still missing, use `/draft_prepare <project_id> <target_file...>`. Target files must be repo-relative file paths; draft/proposal/task ids, absolute paths, parent-directory paths, and project-forbidden paths are rejected.
+`/draft_next` is read-only, but its report includes the next Telegram command to send. If target files are still missing, use `/plan`; advanced users can still use `/draft_prepare <project_id> <target_file...>`. Target files must be repo-relative file paths; draft/proposal/task ids, absolute paths, parent-directory paths, and project-forbidden paths are rejected.
 
 Telegram reports use a consistent next-action shape:
 
@@ -133,7 +133,7 @@ Draft patches may include `setupCommands`. Use this for fresh worktree dependenc
 }
 ```
 
-Project profiles can provide these defaults. The first bundled profile is `omht`, which supplies the local OMHT repo root, `bun install`, and a conservative default typecheck command. Use `drafts:prepare` when converting a rough draft into an executable task draft for a known project.
+Project profiles can provide these defaults plus remote scope recipes. The first bundled profile is `omht`, which supplies the local OMHT repo root, `bun install`, a conservative default typecheck command, and remote scopes for implementation and planning/report work. Use `/plan` for normal Telegram operation and `drafts:prepare` when converting a rough draft into an executable task draft locally.
 
 Direct worker dispatch is local-only:
 
@@ -148,14 +148,13 @@ Without `--execute`, `tasks:dispatch` only prepares and prints the Codex command
 Remote dispatch uses an action gate plus a separate runner instead of direct command execution:
 
 ```text
-/run_next -> state/remote-actions.jsonl pending action
-/yes -> approved action
+/go -> state/remote-actions.jsonl approved action
 actions:watch -> tasks:dispatch <task-id> --allocate --execute --tmux
 ```
 
-`/run_next` reuses an existing pending, approved, or running dispatch action if one exists; otherwise it validates the next pending task and records the fixed repo root, task id, target agent, and dispatch flags in `state/remote-actions.jsonl`. No worker is started.
+`/go` reuses an existing pending, approved, or running dispatch action if one exists. If the current state is a ready draft, it promotes that draft to a task, prepares the dispatch action, and approves it. If the current state is a pending task, it prepares and approves the dispatch action. No worker is started inside `inbox:watch`.
 
-`/yes` only marks the latest existing pending action as approved. It does not run inside `inbox:watch`, so Telegram status and inspection commands can continue while the worker later runs.
+`/run_next` and `/yes` remain available as advanced lower-level steps. `/yes` only marks the latest existing pending action as approved. It does not run inside `inbox:watch`, so Telegram status and inspection commands can continue while the worker later runs.
 
 The explicit advanced equivalents remain available:
 

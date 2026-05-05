@@ -472,10 +472,10 @@ bun run samantha telegram:reply
 
 Pass criteria:
 
-- allowed practical commands `/help`, `/start`, `/now`, `/work <text>`, `/run_next`, `/yes`, `/check`, and `/problems` create inbox files
+- allowed practical commands `/help`, `/start`, `/now`, `/work <text>`, `/plan`, `/go`, `/check`, and `/problems` create inbox files
 - allowed advanced commands `/help_advanced`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/draft_propose <text>`, `/proposals`, `/proposal <id>`, `/accept <id>`, `/reject <id>`, `/draft <proposal_id>`, `/drafts`, `/draft <draft_id>`, `/tasks`, `/dashboard`, `/task <id>`, `/prepare_dispatch <task_id>`, `/actions`, `/action <action_id>`, and `/approve_action <action_id>` create inbox files
 - legacy hyphenated aliases still normalize, but Telegram reports and docs prefer underscore commands
-- `/help` shows the short `/now -> /run_next -> /yes` operating flow instead of a long command catalog
+- `/help` shows the short `/work <request> -> /plan -> /go` operating flow instead of a long command catalog
 - unsupported messages are ignored
 - messages from other sender ids are ignored
 - `state/telegram-offset.json` is updated after a successful poll
@@ -489,6 +489,8 @@ Pass criteria:
 - `drafts:check`, `drafts:update`, and `drafts:approve` stay local-only
 - `drafts:approve` writes one pending task to `state/tasks.jsonl` only after `targetFiles`, `verifyCommands`, `instructions`, and `targetAgent` pass checks
 - direct `tasks:dispatch` stays local-only; dry-run prints the prepared Codex command, and `--execute` writes run logs and run index entries
+- `/plan` prepares the latest draft and returns a detailed execution plan without dispatching a worker
+- `/go` approves the ready draft or pending action without running inside `inbox:watch`
 - `/run_next` and `/prepare_dispatch <task_id>` create only a pending action in `state/remote-actions.jsonl`
 - `/yes` and `/approve_action <action_id>` only mark an existing pending dispatch action approved
 - `actions:watch` executes approved dispatch action ids with fixed `--allocate --execute --tmux` flags and locally configured repo root

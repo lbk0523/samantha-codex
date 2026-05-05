@@ -9,5 +9,73 @@
     ".env.*",
     "node_modules/**",
     "bun.lock"
+  ],
+  "defaultRemoteScopeId": "implementation",
+  "remoteScopes": [
+    {
+      "id": "implementation",
+      "label": "Product implementation",
+      "description": "Code and test changes inside the OMHT app surface.",
+      "risk": "medium",
+      "targetFiles": [
+        "app/**",
+        "components/**",
+        "lib/**",
+        "tests/**",
+        "e2e/**"
+      ],
+      "keywords": [
+        "implement",
+        "fix",
+        "bug",
+        "test",
+        "ui",
+        "screen",
+        "api"
+      ],
+      "planSteps": [
+        "Read the relevant product code, tests, and existing patterns before editing.",
+        "Implement the smallest scoped change that satisfies the request.",
+        "Add or update focused tests when behavior changes.",
+        "Run the configured verification command and report changed files plus residual risk."
+      ],
+      "successCriteria": [
+        "The requested behavior is implemented inside the declared target scope.",
+        "No forbidden files are changed.",
+        "Configured verification passes or the blocker is reported clearly."
+      ]
+    },
+    {
+      "id": "planning_report",
+      "label": "Planning/report document",
+      "description": "Documentation, planning, prompt, or report work without app code changes.",
+      "risk": "low",
+      "targetFiles": [
+        "01 Design/**",
+        "02 Sprints/**",
+        "03 Prompts/**",
+        "04 Refer/**"
+      ],
+      "keywords": [
+        "plan",
+        "report",
+        "doc",
+        "document",
+        "brief",
+        "proposal",
+        "review"
+      ],
+      "planSteps": [
+        "Read the relevant planning and reference documents before writing.",
+        "Create or update only the requested planning/report artifact.",
+        "Keep decisions, assumptions, and next actions explicit.",
+        "Run the configured verification command if repository tooling requires it."
+      ],
+      "successCriteria": [
+        "The requested planning/report artifact is complete and easy to act on.",
+        "No app code or forbidden files are changed.",
+        "Configured verification passes or the blocker is reported clearly."
+      ]
+    }
   ]
 }

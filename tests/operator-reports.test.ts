@@ -18,6 +18,7 @@ import {
   remoteActionShowReport,
   remoteActionsListReport,
   remoteHelpReport,
+  remoteGoReport,
   runsListReport,
   runShowReport,
   statusReport,
@@ -26,6 +27,7 @@ import {
   taskDraftApprovedReport,
   taskDraftPrepareBlockedReport,
   taskDraftPreparedReport,
+  taskDraftPlanReport,
   taskDraftShowReport,
   taskDraftsListReport,
   tasksListReport,
@@ -129,11 +131,10 @@ describe("operator reports", () => {
 
     expect(report).toContain("/now");
     expect(report).toContain("/work <request>");
-    expect(report).toContain("/draft_prepare <project_id>");
-    expect(report).toContain("/draft_approve");
-    expect(report).toContain("/run_next");
-    expect(report).toContain("/yes");
+    expect(report).toContain("/plan");
+    expect(report).toContain("/go");
     expect(report).toContain("/help_advanced");
+    expect(report).not.toContain("/draft_prepare <project_id>");
     expect(report).not.toContain("/run-next");
     expect(report).not.toContain("/prepare-dispatch <task_id>");
 
@@ -295,12 +296,13 @@ describe("operator reports", () => {
       },
     };
 
-    expect(remoteActionPreparedReport(action)).toContain("Telegram: `/yes`");
+    expect(remoteActionPreparedReport(action)).toContain("Telegram: `/go`");
     expect(remoteActionPreparedReport(action)).toContain("/approve_action");
     expect(remoteActionPreparedReport(action)).toContain("No worker was dispatched yet.");
     expect(remoteActionsListReport([action])).toContain("dispatch_task");
     expect(remoteActionShowReport(action.id, action)).toContain("tasks:dispatch task-pass");
-    expect(remoteActionShowReport(action.id, action)).toContain("Telegram: `/yes`");
+    expect(remoteActionShowReport(action.id, action)).toContain("Telegram: `/go`");
+    expect(remoteGoReport({ action: { ...action, status: "approved" } })).toContain("Telegram: `/action_current`");
     expect(remoteActionApprovedReport({ ...action, status: "approved" })).toContain("waiting for `actions:watch`");
     expect(remoteActionApprovedReport({ ...action, status: "approved" })).toContain("Telegram: `/action_current`");
     expect(remoteActionApprovedReport(completed)).toContain("Pass: yes");
@@ -317,16 +319,13 @@ describe("operator reports", () => {
       commandId: "remote-prepare",
     });
 
-    expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).toContain("Telegram: `/yes`");
+    expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).toContain("Telegram: `/go`");
     expect(nowReport({ runs: [], tasks: [], actions: [{ ...pendingAction, status: "approved" }] })).toContain(
       "Telegram: `/action_current`",
     );
-    expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("Telegram: `/run_next`");
+    expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("Telegram: `/go`");
     expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("Draft is waiting for preparation");
-    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain(
-      "Telegram: `/draft_prepare <project-id> <target_file...>`",
-    );
-    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("Inspect again: `/draft_next`");
+    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("Telegram: `/plan`");
     expect(nowReport({ runs: [], tasks: [], actions: [], proposals: [proposal] })).toContain("Proposal is waiting for review");
     expect(nowReport({ runs: [], tasks: [], actions: [], proposals: [proposal] })).toContain("Inspect: `/proposal_next`");
     expect(nowReport({ runs: [failRun], tasks: [], actions: [] })).toContain("Telegram: `/run_latest`");
@@ -360,17 +359,42 @@ describe("operator reports", () => {
 
   test("renders task draft reports without implying execution", () => {
     expect(taskDraftAddedReport(draft)).toContain("No worker was dispatched");
-    expect(taskDraftAddedReport(draft)).toContain("Telegram: `/draft_prepare <project-id> <target_file...>`");
+    expect(taskDraftAddedReport(draft)).toContain("Telegram: `/plan`");
     expect(draftProposeAddedReport({ proposal: { ...proposal, status: "accepted" }, draft })).toContain(
       "only creates an accepted proposal and a task draft",
     );
-    expect(draftProposeAddedReport({ proposal: { ...proposal, status: "accepted" }, draft })).toContain("Inspect: `/draft_next`");
+    expect(draftProposeAddedReport({ proposal: { ...proposal, status: "accepted" }, draft })).toContain("Telegram: `/plan`");
     expect(taskDraftsListReport([draft])).toContain("Total drafts: 1");
     expect(taskDraftShowReport("draft-1", draft)).toContain("Improve status reports");
-    expect(taskDraftShowReport("draft-1", draft)).toContain("Telegram: `/draft_prepare <project-id> <target_file...>`");
+    expect(taskDraftShowReport("draft-1", draft)).toContain("Telegram: `/plan`");
     expect(taskDraftShowReport("draft-1", { ...draft, targetFiles: ["src/app.ts"], verifyCommands: ["bun test"] })).toContain(
-      "Telegram: `/draft_approve`",
+      "Telegram: `/go`",
     );
+    expect(
+      taskDraftPlanReport({
+        draft: { ...draft, targetFiles: ["docs/report.md"], forbiddenChanges: ["state/**"], verifyCommands: ["bun typecheck"] },
+        project: {
+          schemaVersion: 1,
+          id: "omht",
+          repoRoot: "/repo/omht",
+          setupCommands: ["bun install"],
+          verifyCommands: ["bun typecheck"],
+          forbiddenChanges: ["state/**"],
+        },
+        scope: {
+          id: "planning_report",
+          label: "Planning report",
+          description: "Document work.",
+          risk: "low",
+          targetFiles: ["docs/**"],
+          planSteps: ["Read context.", "Write report."],
+          successCriteria: ["Report is actionable."],
+        },
+        violations: [],
+        inferredProject: true,
+        inferredScope: true,
+      }),
+    ).toContain("Execution Plan:");
     expect(taskDraftPreparedReport({ draft, projectId: "omht", violations: ["targetFiles must not be empty"] })).toContain(
       "Prepared draft: `draft-1`",
     );
@@ -380,6 +404,6 @@ describe("operator reports", () => {
     expect(taskDraftApprovalBlockedReport({ draft, violations: ["targetFiles must not be empty"] })).toContain(
       "Draft was not approved.",
     );
-    expect(taskDraftApprovedReport({ draft: { ...draft, status: "approved" }, task })).toContain("Telegram: `/run_next`");
+    expect(taskDraftApprovedReport({ draft: { ...draft, status: "approved" }, task })).toContain("Telegram: `/go`");
   });
 });

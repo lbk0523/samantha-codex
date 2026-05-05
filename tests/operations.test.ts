@@ -119,6 +119,15 @@ describe("inbox and remote commands", () => {
     });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/help advanced" }, "bk").type).toBe("remote:help");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/now" }, "bk").type).toBe("ops:now");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/plan" }, "bk").type).toBe("drafts:plan-latest");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/plan omht planning_report" }, "bk")).toMatchObject({
+      type: "drafts:plan-latest",
+      args: {
+        projectId: "omht",
+        scopeId: "planning_report",
+      },
+    });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/go" }, "bk").type).toBe("actions:go");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/check" }, "bk").type).toBe("status:show");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/problems" }, "bk").type).toBe("ops:doctor");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/status" }, "bk").type).toBe("status:show");
@@ -421,7 +430,7 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const report = await readFile(join(outbox, "001.md"), "utf8");
     const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
-    expect(report).toContain("Telegram: `/yes`");
+    expect(report).toContain("Telegram: `/go`");
     expect(actions[0]).toMatchObject({
       status: "pending",
       taskId: "task-pass",
@@ -639,13 +648,12 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const report = await readFile(join(outbox, "002-now.md"), "utf8");
     expect(report).toContain("Draft is waiting for preparation");
-    expect(report).toContain("Telegram: `/draft_prepare <project-id> <target_file...>`");
-    expect(report).toContain("Inspect again: `/draft_next`");
+    expect(report).toContain("Telegram: `/plan`");
     expect(report).not.toContain("No immediate remote action");
     const draftReport = await readFile(join(outbox, "003-draft-next.md"), "utf8");
     expect(draftReport).toContain("Draft: `draft-work-now`");
     expect(draftReport).toContain("Improve Telegram now flow");
-    expect(draftReport).toContain("Telegram: `/draft_prepare <project-id> <target_file...>`");
+    expect(draftReport).toContain("Telegram: `/plan`");
   });
 
   test("prepares and approves the latest draft from remote commands without dispatching a worker", async () => {
@@ -765,11 +773,11 @@ describe("inbox and remote commands", () => {
 
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     expect(await readFile(join(outbox, "002-prepare.md"), "utf8")).toContain("Ready: yes");
-    expect(await readFile(join(outbox, "002-prepare.md"), "utf8")).toContain("Telegram: `/draft_approve`");
+    expect(await readFile(join(outbox, "002-prepare.md"), "utf8")).toContain("Telegram: `/go`");
     const approveReport = await readFile(join(outbox, "003-approve.md"), "utf8");
     expect(approveReport).toContain("Created task: `task-remote-draft`");
     expect(approveReport).toContain("No worker was dispatched yet.");
-    expect(approveReport).toContain("Telegram: `/run_next`");
+    expect(approveReport).toContain("Telegram: `/go`");
     const actionReport = await readFile(join(outbox, "004-run-next.md"), "utf8");
     expect(actionReport).toContain("Repo: `/repo`");
     expect(actionReport).toContain("--repo-root=/repo");
@@ -793,6 +801,141 @@ describe("inbox and remote commands", () => {
     expect((await new RemoteActionStore(join(state, "remote-actions.jsonl")).list())[0]).toMatchObject({
       taskId: "task-remote-draft",
       repoRoot: "/repo",
+    });
+  });
+
+  test("plans and approves execution through compressed remote commands", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-plan-go-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const agents = join(root, "agents");
+    const projects = join(root, "projects");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      `${JSON.stringify(
+        {
+          ...writer,
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(projects, "omht.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "omht",
+          repoRoot: "/repo/omht",
+          setupCommands: ["bun install"],
+          verifyCommands: ["bun typecheck"],
+          forbiddenChanges: ["state/**"],
+          defaultRemoteScopeId: "planning_report",
+          remoteScopes: [
+            {
+              id: "planning_report",
+              label: "Planning report",
+              description: "Planning documents only.",
+              risk: "low",
+              targetFiles: ["docs/**"],
+              planSteps: ["Read context.", "Write the report.", "Run verification."],
+              successCriteria: ["Report is actionable.", "Verification passes."],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-work.json"),
+      JSON.stringify({
+        id: "remote-work",
+        type: "drafts:add-from-proposal-text",
+        args: {
+          proposalId: "proposal-remote-plan-go",
+          text: "Write a planning report for the Telegram flow",
+          senderId: "bk",
+          receivedAt: "2026-05-05T10:40:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "002-plan.json"),
+      JSON.stringify({
+        id: "remote-plan",
+        type: "drafts:plan-latest",
+        args: { receivedAt: "2026-05-05T10:41:00.000Z" },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "003-go.json"),
+      JSON.stringify({
+        id: "remote-go",
+        type: "actions:go",
+        args: { receivedAt: "2026-05-05T10:42:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const planReport = await readFile(join(outbox, "002-plan.md"), "utf8");
+    expect(planReport).toContain("# plan");
+    expect(planReport).toContain("Project: `omht` (inferred)");
+    expect(planReport).toContain("Scope: `planning_report` - Planning report");
+    expect(planReport).toContain("Execution Plan:");
+    expect(planReport).toContain("Will Change:");
+    expect(planReport).toContain("Telegram: `/go`");
+
+    const goReport = await readFile(join(outbox, "003-go.md"), "utf8");
+    expect(goReport).toContain("# go");
+    expect(goReport).toContain("Approved draft: `draft-remote-plan-go`");
+    expect(goReport).toContain("Status: `approved`");
+    expect(goReport).toContain("Telegram: `/action_current`");
+    expect((await new RemoteActionStore(join(state, "remote-actions.jsonl")).list())[0]).toMatchObject({
+      status: "approved",
+      taskId: "task-remote-plan-go",
+      repoRoot: "/repo/omht",
     });
   });
 });

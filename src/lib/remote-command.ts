@@ -44,6 +44,23 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   if (text === "/now") {
     return { id: `remote-${commandToken}-now`, type: "ops:now", args: { source: "remote" } };
   }
+  const planArgs = commandArgument(text, "/plan");
+  if (text === "/plan" || planArgs !== undefined) {
+    const [projectId = "", scopeId = ""] = planArgs ? commandParts(planArgs) : [];
+    return {
+      id: `remote-${commandToken}-plan`,
+      type: "drafts:plan-latest",
+      args: {
+        ...(projectId ? { projectId } : {}),
+        ...(scopeId ? { scopeId } : {}),
+        source: "remote",
+        receivedAt,
+      },
+    };
+  }
+  if (text === "/go") {
+    return { id: `remote-${commandToken}-go`, type: "actions:go", args: { source: "remote", receivedAt } };
+  }
   if (text === "/check") {
     return { id: `remote-${commandToken}-check`, type: "status:show", args: { source: "remote" } };
   }

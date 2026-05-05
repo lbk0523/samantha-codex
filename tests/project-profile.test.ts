@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { applyProjectDefaults, type ProjectProfile } from "../src/lib/project-profile";
+import {
+  applyProjectDefaults,
+  applyProjectRemoteScopeDefaults,
+  selectProjectRemoteScope,
+  type ProjectProfile,
+} from "../src/lib/project-profile";
 
 const profile: ProjectProfile = {
   schemaVersion: 1,
@@ -8,6 +13,29 @@ const profile: ProjectProfile = {
   setupCommands: ["bun install"],
   verifyCommands: ["bun typecheck"],
   forbiddenChanges: ["node_modules/**"],
+  defaultRemoteScopeId: "implementation",
+  remoteScopes: [
+    {
+      id: "implementation",
+      label: "Implementation",
+      description: "Code changes.",
+      risk: "medium",
+      targetFiles: ["app/**", "lib/**"],
+      keywords: ["fix"],
+      planSteps: ["Read code.", "Implement."],
+      successCriteria: ["Verification passes."],
+    },
+    {
+      id: "planning_report",
+      label: "Planning report",
+      description: "Document changes.",
+      risk: "low",
+      targetFiles: ["docs/**"],
+      keywords: ["report"],
+      planSteps: ["Read docs.", "Write report."],
+      successCriteria: ["Report is actionable."],
+    },
+  ],
 };
 
 describe("project profiles", () => {
@@ -37,5 +65,23 @@ describe("project profiles", () => {
       verifyCommands: ["bun test tests/unit/foo.test.ts"],
       forbiddenChanges: ["app/**"],
     });
+  });
+
+  test("selects and applies remote scope defaults", () => {
+    const scope = selectProjectRemoteScope(profile, { requestText: "write report" });
+
+    expect(scope?.id).toBe("planning_report");
+    expect(applyProjectRemoteScopeDefaults({}, profile, scope)).toMatchObject({
+      projectId: "omht",
+      repoRoot: "/repo/omht",
+      targetFiles: ["docs/**"],
+      forbiddenChanges: ["node_modules/**"],
+      setupCommands: ["bun install"],
+      verifyCommands: ["bun typecheck"],
+    });
+  });
+
+  test("uses the default remote scope when no keyword matches", () => {
+    expect(selectProjectRemoteScope(profile, { requestText: "unknown request" })?.id).toBe("implementation");
   });
 });

@@ -269,7 +269,7 @@ Do not prioritize these until the Telegram operating surface is stable:
 Use the shortened Telegram operating flow in real work:
 
 ```text
-/now -> /run_next -> /yes
+/work <request> -> /plan -> /go -> /action_current
 ```
 
 The next implementation should be chosen from observed friction in that loop, not from adding more remote commands.

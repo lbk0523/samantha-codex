@@ -2,6 +2,7 @@ import type { TaskSpec } from "./contracts";
 import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
+import type { ProjectProfile, ProjectRemoteScope } from "./project-profile";
 import type { ProposalRecord } from "./proposal-store";
 import { remoteActionCommand, type RemoteActionRecord } from "./remote-action-store";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
@@ -73,17 +74,12 @@ function draftNextLines(draft: TaskDraftRecord): string[] {
   return [
     "",
     "Next:",
-    missing.length
-      ? `- Telegram: ${code(
-          draft.targetFiles.length === 0 ? "/draft_prepare <project-id> <target_file...>" : "/draft_prepare <project-id>",
-        )}`
-      : `- Telegram: ${code("/draft_approve")}`,
-    `- Inspect again: ${code("/draft_next")}`,
+    missing.length ? `- Telegram: ${code("/plan")}` : `- Telegram: ${code("/go")}`,
   ];
 }
 
 function remoteActionNextLines(action: RemoteActionRecord): string[] {
-  if (action.status === "pending") return ["", "Next:", `- Telegram: ${code("/yes")}`];
+  if (action.status === "pending") return ["", "Next:", `- Telegram: ${code("/go")}`];
   if (action.status === "approved" || action.status === "running") {
     return ["", "Next:", `- Telegram: ${code("/action_current")}`];
   }
@@ -159,6 +155,7 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
       "- `/drafts`, `/draft_next`, `/draft <draft_id>`",
       "",
       "Explicit workflow:",
+      "- `/work <request>`, `/plan [project_id] [scope_id]`, `/go`",
       "- `/propose <text>`",
       "- `/draft_propose <text>`",
       "- `/accept <proposal_id>`, `/reject <proposal_id>`",
@@ -178,17 +175,16 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "",
     "Main flow:",
     "",
-    "- `/now`: show the one next command to send",
     "- `/work <request>`: capture new work as a draft",
-    "- `/draft_prepare <project_id> [target_file...]`: prepare the latest draft",
-    "- `/draft_approve`: promote the latest ready draft to a pending task",
-    "- `/run_next`: prepare the next pending task for approval",
-    "- `/yes`: approve the latest prepared action",
+    "- `/plan`: prepare and show the execution plan",
+    "- `/go`: approve the plan and queue execution",
+    "- `/now`: show the one next command to send",
+    "- `/action_current`: inspect the current execution",
     "- `/check`: compact status",
     "- `/problems`: diagnostics when something looks wrong",
     "",
     "Typical execution:",
-    "`/work <request>` -> `/draft_next` -> `/draft_prepare <project_id> [target_file...]` -> `/draft_approve` -> `/run_next` -> `/yes` -> `/action_current`",
+    "`/work <request>` -> `/plan` -> `/go` -> `/action_current`",
     "",
     "More commands: `/help_advanced`",
   ].join("\n");
@@ -350,7 +346,7 @@ export function nowReport(input: {
       `Task: ${code(pendingTask.id)} - ${oneLine(pendingTask.title)}`,
       "",
       "Next:",
-      `- Telegram: ${code("/run_next")}`,
+      `- Telegram: ${code("/go")}`,
     ].join("\n");
   }
 
@@ -369,7 +365,7 @@ export function nowReport(input: {
       "Draft is waiting for preparation.",
       `Draft: ${code(draft.id)}`,
       `Title: ${oneLine(draft.title)}`,
-      missing.length ? `Missing: ${missing.join(", ")}` : "Ready for local approval.",
+      missing.length ? `Missing: ${missing.join(", ")}` : "Ready for approval.",
       ...draftNextLines(draft),
     ].join("\n");
   }
@@ -524,9 +520,73 @@ export function taskDraftAddedReport(draft: TaskDraftRecord): string {
     "",
     `Title: ${oneLine(draft.title)}`,
     "",
-    "No worker was dispatched. Fill targetFiles and verifyCommands before promoting this draft to a task.",
+    "No worker was dispatched. Run `/plan` to prepare scope and verification before approval.",
     ...draftNextLines(draft),
   ].join("\n");
+}
+
+export function taskDraftPlanReport(input: {
+  draft: TaskDraftRecord;
+  project: ProjectProfile;
+  scope: ProjectRemoteScope | undefined;
+  violations: string[];
+  inferredProject: boolean;
+  inferredScope: boolean;
+}): string {
+  const scope = input.scope;
+  const lines = [
+    "# plan",
+    "",
+    `Draft: ${code(input.draft.id)}`,
+    `Project: ${code(input.project.id)}${input.inferredProject ? " (inferred)" : ""}`,
+    `Scope: ${scope ? `${code(scope.id)} - ${oneLine(scope.label)}` : "project defaults"}`,
+    scope ? `Risk: ${scope.risk}${input.inferredScope ? " (inferred)" : ""}` : "Risk: unknown",
+    `Ready: ${input.violations.length === 0 ? "yes" : "no"}`,
+    "",
+    "Request:",
+    oneLine(input.draft.instructions),
+    "",
+    "Assumptions:",
+    `- Work happens in repo ${code(input.project.repoRoot)}.`,
+    scope
+      ? `- Scope recipe ${code(scope.id)} is the intended operating boundary for this request.`
+      : "- No remote scope recipe exists, so only project-level defaults were applied.",
+    "- `/plan` does not dispatch a worker or approve execution.",
+    "",
+    "Will Change:",
+    ...input.draft.targetFiles.map((file) => `- ${code(file)}`),
+    "",
+    "Will Not Change:",
+    ...input.draft.forbiddenChanges.map((file) => `- ${code(file)}`),
+    "",
+    "Execution Plan:",
+    ...(scope?.planSteps ?? [
+      "Read the relevant files before editing.",
+      "Implement the requested change inside the declared target scope.",
+      "Run the configured verification command.",
+      "Report changed files and residual risk.",
+    ]).map((step, index) => `${index + 1}. ${step}`),
+    "",
+    "Verify:",
+    ...input.draft.verifyCommands.map((command) => `- ${code(command)}`),
+    "",
+    "Success Criteria:",
+    ...(scope?.successCriteria ?? [
+      "The requested change is complete.",
+      "No forbidden files are changed.",
+      "Verification passes or the blocker is reported clearly.",
+    ]).map((criterion) => `- ${criterion}`),
+  ];
+  if (input.violations.length) {
+    lines.push("", "Blocking Issues:", ...input.violations.map((violation) => `- ${violation}`));
+  }
+  lines.push(
+    "",
+    "Next:",
+    input.violations.length === 0 ? `- Telegram: ${code("/go")}` : `- Telegram: ${code("/plan <project_id> <scope_id>")}`,
+    `- Advanced inspect: ${code("/draft_next")}`,
+  );
+  return lines.join("\n");
 }
 
 export function taskDraftPreparedReport(input: {
@@ -594,8 +654,7 @@ export function taskDraftApprovedReport(input: { draft: TaskDraftRecord; task: T
     "No worker was dispatched yet.",
     "",
     "Next:",
-    `- Telegram: ${code("/run_next")}`,
-    `- Then: ${code("/yes")}`,
+    `- Telegram: ${code("/go")}`,
   ].join("\n");
 }
 
@@ -613,7 +672,7 @@ export function draftProposeAddedReport(input: { proposal: ProposalRecord; draft
     "No worker was dispatched. This only creates an accepted proposal and a task draft.",
     "",
     "Next:",
-    `- Inspect: ${code("/draft_next")}`,
+    `- Telegram: ${code("/plan")}`,
   ].join("\n");
 }
 
@@ -662,9 +721,33 @@ export function remoteActionPreparedReport(action: RemoteActionRecord): string {
     "No worker was dispatched yet.",
     "",
     "Next:",
-    `- Telegram: ${code("/yes")}`,
+    `- Telegram: ${code("/go")}`,
     `- Explicit approval: ${code(`/approve_action ${action.id}`)}`,
   ].join("\n");
+}
+
+export function remoteGoReport(input: {
+  action: RemoteActionRecord;
+  draft?: TaskDraftRecord;
+  task?: TaskSpec;
+}): string {
+  return [
+    "# go",
+    "",
+    input.draft ? `Approved draft: ${code(input.draft.id)}` : "",
+    input.task ? `Task: ${code(input.task.id)} - ${oneLine(input.task.title)}` : `Task: ${code(input.action.taskId)} - ${oneLine(input.action.taskTitle)}`,
+    `Action: ${code(input.action.id)}`,
+    `Status: ${code(input.action.status)}`,
+    `Repo: ${code(input.action.repoRoot)}`,
+    "",
+    "Approved execution.",
+    "Runner: waiting for `actions:watch` or `actions:run-pending`.",
+    "",
+    "Next:",
+    `- Telegram: ${code("/action_current")}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function remoteActionsListReport(actions: RemoteActionRecord[], limit = 10): string {

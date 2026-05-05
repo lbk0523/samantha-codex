@@ -20,6 +20,7 @@ import {
   nextActionReport,
   remoteHelpReport,
   remoteActionApprovedReport,
+  remoteGoReport,
   remoteActionPreparedReport,
   remoteActionShowReport,
   remoteActionsListReport,
@@ -31,6 +32,7 @@ import {
   taskDraftApprovedReport,
   taskDraftPrepareBlockedReport,
   taskDraftPreparedReport,
+  taskDraftPlanReport,
   taskDraftShowReport,
   taskDraftsListReport,
   tasksListReport,
@@ -39,7 +41,14 @@ import {
 import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnostics";
 import { runPlan } from "./lib/plan-runner";
 import { validateDispatch } from "./lib/policy";
-import { applyProjectDefaults, loadProjectProfile } from "./lib/project-profile";
+import {
+  applyProjectDefaults,
+  applyProjectRemoteScopeDefaults,
+  loadProjectProfile,
+  loadProjectProfiles,
+  selectProjectRemoteScope,
+  type ProjectProfile,
+} from "./lib/project-profile";
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
 import { createRemoteDispatchAction, RemoteActionStore } from "./lib/remote-action-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
@@ -553,6 +562,51 @@ async function prepareDispatchActionForTask(input: {
   return action;
 }
 
+async function projectProfileForRemotePlan(input: {
+  args: ParsedArgs;
+  draftProjectId?: string;
+  requestedProjectId?: string;
+}): Promise<{ profile: ProjectProfile; inferred: boolean }> {
+  if (input.requestedProjectId) {
+    return {
+      profile: await loadProjectProfile(projectProfilesDir(input.args), input.requestedProjectId),
+      inferred: false,
+    };
+  }
+  if (input.draftProjectId) {
+    return {
+      profile: await loadProjectProfile(projectProfilesDir(input.args), input.draftProjectId),
+      inferred: false,
+    };
+  }
+
+  const profiles = await loadProjectProfiles(projectProfilesDir(input.args));
+  if (profiles.length === 1 && profiles[0]) return { profile: profiles[0], inferred: true };
+  if (profiles.length === 0) throw new Error("project profile is required, but no project profiles are configured");
+  throw new Error("project id is required: send /plan <project_id>");
+}
+
+async function nowReportForInbox(args: ParsedArgs): Promise<string> {
+  const [runs, tasks, actions, proposals, drafts, ops, lifecycles] = await Promise.all([
+    new RunIndex(runsPath(args)).list(),
+    new TaskStore(tasksPath(args)).listActive(),
+    new RemoteActionStore(remoteActionsPath(args)).list(),
+    new ProposalStore(proposalsPath(args)).list(),
+    new TaskDraftStore(taskDraftsPath(args)).list(),
+    collectOps(args),
+    new RunLifecycleStore(runLifecyclePath(args)).list(),
+  ]);
+  return nowReport({
+    runs,
+    tasks,
+    actions,
+    proposals,
+    drafts,
+    ops: withoutActiveInboxCommand(ops),
+    lifecycles,
+  });
+}
+
 async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Promise<string> {
   if (command.type === "remote:help") {
     return remoteHelpReport(command.args?.mode === "advanced" ? "advanced" : "basic");
@@ -572,15 +626,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     });
   }
   if (command.type === "ops:now") {
-    return nowReport({
-      runs: await new RunIndex(runsPath(args)).list(),
-      tasks: await new TaskStore(tasksPath(args)).listActive(),
-      actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
-      proposals: await new ProposalStore(proposalsPath(args)).list(),
-      drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
-      ops: withoutActiveInboxCommand(await collectOps(args)),
-      lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
-    });
+    return nowReportForInbox(args);
   }
   if (command.type === "ops:doctor") {
     return doctorReport(withoutActiveInboxCommand(await collectOps(args)));
@@ -698,6 +744,66 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const draft = drafts.slice().reverse().find((item) => item.status === "drafted") ?? drafts.at(-1);
     return taskDraftShowReport(draft?.id ?? "latest", draft);
   }
+  if (command.type === "drafts:plan-latest") {
+    const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
+    const draftStore = new TaskDraftStore(taskDraftsPath(args));
+    const draft = (await draftStore.list()).slice().reverse().find((item) => item.status === "drafted");
+    if (!draft) return taskDraftShowReport("latest", undefined);
+
+    const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
+    const requestedScopeId = typeof command.args?.scopeId === "string" ? command.args.scopeId : undefined;
+    const { profile: project, inferred: inferredProject } = await projectProfileForRemotePlan({
+      args,
+      draftProjectId: draft.projectId,
+      requestedProjectId,
+    });
+    const scope = selectProjectRemoteScope(project, {
+      requestedScopeId,
+      requestText: `${draft.title}\n${draft.instructions}`,
+    });
+    const patch = applyProjectRemoteScopeDefaults(
+      {
+        targetFiles: draft.targetFiles.length ? draft.targetFiles : undefined,
+        forbiddenChanges: draft.forbiddenChanges.length ? draft.forbiddenChanges : undefined,
+        setupCommands: (draft.setupCommands ?? []).length ? draft.setupCommands : undefined,
+        verifyCommands: draft.verifyCommands.length ? draft.verifyCommands : undefined,
+      },
+      project,
+      scope,
+    );
+    const plannedTargetFiles = patch.targetFiles ?? draft.targetFiles;
+    const plannedForbiddenChanges = patch.forbiddenChanges ?? draft.forbiddenChanges;
+    const targetFileViolations = validateTaskTargetFiles(plannedTargetFiles, plannedForbiddenChanges);
+    if (targetFileViolations.length) {
+      return taskDraftPlanReport({
+        draft: {
+          ...draft,
+          projectId: patch.projectId ?? draft.projectId,
+          repoRoot: patch.repoRoot ?? draft.repoRoot,
+          targetFiles: plannedTargetFiles,
+          forbiddenChanges: plannedForbiddenChanges,
+          setupCommands: patch.setupCommands ?? draft.setupCommands,
+          verifyCommands: patch.verifyCommands ?? draft.verifyCommands,
+          updatedAt: receivedAt,
+        },
+        project,
+        scope,
+        violations: targetFileViolations,
+        inferredProject,
+        inferredScope: !requestedScopeId && scope !== undefined,
+      });
+    }
+    const updated = await draftStore.update(draft.id, patch, receivedAt);
+    const check = checkTaskDraft(updated, { knownAgentIds: await knownAgentIds(args) });
+    return taskDraftPlanReport({
+      draft: updated,
+      project,
+      scope,
+      violations: check.violations,
+      inferredProject,
+      inferredScope: !requestedScopeId && scope !== undefined,
+    });
+  }
   if (command.type === "drafts:prepare-latest") {
     const projectId = String(command.args?.projectId ?? "");
     if (!projectId) throw new Error("project id is required");
@@ -787,15 +893,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     if (existing) return remoteActionShowReport(existing.id, existing);
 
     const task = (await new TaskStore(tasksPath(args)).listActive()).find((item) => item.status === "pending");
-    if (!task) return nowReport({
-      runs: await new RunIndex(runsPath(args)).list(),
-      tasks: await new TaskStore(tasksPath(args)).listActive(),
-      actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
-      proposals: await new ProposalStore(proposalsPath(args)).list(),
-      drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
-      ops: withoutActiveInboxCommand(await collectOps(args)),
-      lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
-    });
+    if (!task) return nowReportForInbox(args);
     const action = await prepareDispatchActionForTask({
       args,
       taskId: task.id,
@@ -803,6 +901,54 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       commandId: command.id,
     });
     return remoteActionPreparedReport(action);
+  }
+  if (command.type === "actions:go") {
+    const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
+    const actionStore = new RemoteActionStore(remoteActionsPath(args));
+    const currentAction = (await actionStore.list())
+      .slice()
+      .reverse()
+      .find((item) => item.status === "pending" || item.status === "approved" || item.status === "running");
+    if (currentAction?.status === "pending") {
+      return remoteGoReport({ action: await actionStore.markApproved(currentAction.id, receivedAt) });
+    }
+    if (currentAction) return remoteActionShowReport(currentAction.id, currentAction);
+
+    const taskStore = new TaskStore(tasksPath(args));
+    const pendingTask = (await taskStore.listActive()).find((item) => item.status === "pending");
+    if (pendingTask) {
+      const action = await prepareDispatchActionForTask({
+        args,
+        taskId: pendingTask.id,
+        receivedAt,
+        commandId: command.id,
+      });
+      return remoteGoReport({
+        action: await new RemoteActionStore(remoteActionsPath(args)).markApproved(action.id, receivedAt),
+        task: pendingTask,
+      });
+    }
+
+    const draftStore = new TaskDraftStore(taskDraftsPath(args));
+    const draft = (await draftStore.list()).slice().reverse().find((item) => item.status === "drafted");
+    if (!draft) return nowReportForInbox(args);
+    const check = checkTaskDraft(draft, { knownAgentIds: await knownAgentIds(args) });
+    if (!check.ok) return taskDraftApprovalBlockedReport({ draft, violations: check.violations });
+
+    const task = taskSpecFromDraft(draft);
+    await taskStore.append(task);
+    const approvedDraft = await draftStore.markApproved(draft.id, receivedAt);
+    const action = await prepareDispatchActionForTask({
+      args,
+      taskId: task.id,
+      receivedAt,
+      commandId: command.id,
+    });
+    return remoteGoReport({
+      action: await new RemoteActionStore(remoteActionsPath(args)).markApproved(action.id, receivedAt),
+      draft: approvedDraft,
+      task,
+    });
   }
   if (command.type === "actions:approve") {
     const id = String(command.args?.id ?? "");
@@ -816,15 +962,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       .slice()
       .reverse()
       .find((item) => item.status === "pending");
-    if (!action) return nowReport({
-      runs: await new RunIndex(runsPath(args)).list(),
-      tasks: await new TaskStore(tasksPath(args)).listActive(),
-      actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
-      proposals: await new ProposalStore(proposalsPath(args)).list(),
-      drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
-      ops: withoutActiveInboxCommand(await collectOps(args)),
-      lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
-    });
+    if (!action) return nowReportForInbox(args);
     const approved = await new RemoteActionStore(remoteActionsPath(args)).markApproved(
       action.id,
       String(command.args?.receivedAt ?? new Date().toISOString()),
