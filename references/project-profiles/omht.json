@@ -17,6 +17,7 @@
       "label": "Product implementation",
       "description": "Code and test changes inside the OMHT app surface.",
       "risk": "medium",
+      "resultMode": "write",
       "targetFiles": [
         "app/**",
         "components/**",
@@ -50,6 +51,7 @@
       "label": "Planning/report document",
       "description": "Documentation, planning, prompt, or report work without app code changes.",
       "risk": "low",
+      "resultMode": "report",
       "targetFiles": [
         "01 Design/**",
         "02 Sprints/**",
@@ -63,7 +65,14 @@
         "document",
         "brief",
         "proposal",
-        "review"
+        "review",
+        "계획",
+        "보고",
+        "검토",
+        "다음 작업",
+        "작업 계획",
+        "리뷰",
+        "정리"
       ],
       "planSteps": [
         "Read the relevant planning and reference documents before writing.",

@@ -4,6 +4,7 @@ export type WorktreePolicy = "per-task" | "none";
 export type MergePolicy = "samantha-controlled" | "none";
 export type TaskStatus = "pending" | "in_progress" | "completed" | "failed" | "blocked" | "archived";
 export type HarnessStatus = "pass" | "rework" | "blocked";
+export type TaskResultMode = "write" | "report";
 
 export interface SkillBundleRef {
   id: string;
@@ -38,6 +39,7 @@ export interface TaskSpec {
   setupCommands?: string[];
   verifyCommands: string[];
   instructions: string;
+  resultMode?: TaskResultMode;
   expectedCommitSubject?: string;
   status: TaskStatus;
   archivedAt?: string;

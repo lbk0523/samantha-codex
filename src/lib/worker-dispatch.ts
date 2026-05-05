@@ -262,7 +262,10 @@ export async function executeWorkerDispatch(input: PrepareWorkerDispatchInput): 
     output,
   });
   const commit =
-    evaluation.pass && preparation.allocation && input.agent.writerClass === "writer"
+    evaluation.pass &&
+    preparation.allocation &&
+    input.agent.writerClass === "writer" &&
+    (evaluation.changedFiles.length > 0 || input.task.resultMode !== "report")
       ? await commitWorkerChanges({
           task: input.task,
           cwd: preparation.worktreePath,

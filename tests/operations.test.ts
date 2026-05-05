@@ -853,7 +853,9 @@ describe("inbox and remote commands", () => {
               label: "Planning report",
               description: "Planning documents only.",
               risk: "low",
+              resultMode: "report",
               targetFiles: ["docs/**"],
+              keywords: ["보고", "계획"],
               planSteps: ["Read context.", "Write the report.", "Run verification."],
               successCriteria: ["Report is actionable.", "Verification passes."],
             },
@@ -871,7 +873,7 @@ describe("inbox and remote commands", () => {
         type: "drafts:add-from-proposal-text",
         args: {
           proposalId: "proposal-remote-plan-go",
-          text: "Write a planning report for the Telegram flow",
+          text: "다음 작업 계획 보고",
           senderId: "bk",
           receivedAt: "2026-05-05T10:40:00.000Z",
         },
@@ -923,6 +925,7 @@ describe("inbox and remote commands", () => {
     expect(planReport).toContain("# plan");
     expect(planReport).toContain("Project: `omht` (inferred)");
     expect(planReport).toContain("Scope: `planning_report` - Planning report");
+    expect(planReport).toContain("Result mode: `report`");
     expect(planReport).toContain("Execution Plan:");
     expect(planReport).toContain("Will Change:");
     expect(planReport).toContain("Telegram: `/go`");
@@ -937,6 +940,11 @@ describe("inbox and remote commands", () => {
       taskId: "task-remote-plan-go",
       repoRoot: "/repo/omht",
     });
+    const taskRecords = (await readFile(join(state, "tasks.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as TaskSpec);
+    expect(taskRecords[0]).toMatchObject({ resultMode: "report", targetFiles: ["docs/**"] });
   });
 });
 

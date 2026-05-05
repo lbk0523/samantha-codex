@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import { git } from "../src/lib/git";
-import { commitWorkerChanges, prepareWorkerDispatch, runCommand, runSetupCommands } from "../src/lib/worker-dispatch";
+import { commitWorkerChanges, executeWorkerDispatch, prepareWorkerDispatch, runCommand, runSetupCommands } from "../src/lib/worker-dispatch";
 
 const agent: AgentProfile = {
   id: "codex-worker",
@@ -187,6 +187,73 @@ describe("prepareWorkerDispatch", () => {
       expect(result.commit.exitCode).toBe(0);
       expect(result.commitHash).toHaveLength(40);
       expect(await git(["log", "-1", "--pretty=%s"], root)).toBe("test: commit worker files");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("passes report-only worker tasks with no changed files", async () => {
+    const root = await makeRepo();
+    const fakeCodex = join(root, "fake-codex");
+    try {
+      await writeFile(
+        fakeCodex,
+        "#!/usr/bin/env bash\necho 'HARNESS_RESULT: {\"status\":\"pass\",\"note\":\"report only\",\"commit\":\"\"}'\n",
+        "utf8",
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const result = await executeWorkerDispatch({
+        task: {
+          ...task,
+          id: "report-only-fixture",
+          targetFiles: ["README.md"],
+          verifyCommands: ["test -f README.md"],
+          resultMode: "report",
+        },
+        agent,
+        repoRoot: root,
+        allocate: true,
+        worktreesDir: "worktrees",
+        codexBin: fakeCodex,
+      });
+
+      expect(result.evaluation?.changedFiles).toEqual([]);
+      expect(result.commit).toBeUndefined();
+      expect(result.pass).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps no-change write worker tasks failing", async () => {
+    const root = await makeRepo();
+    const fakeCodex = join(root, "fake-codex");
+    try {
+      await writeFile(
+        fakeCodex,
+        "#!/usr/bin/env bash\necho 'HARNESS_RESULT: {\"status\":\"pass\",\"note\":\"no change\",\"commit\":\"\"}'\n",
+        "utf8",
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const result = await executeWorkerDispatch({
+        task: {
+          ...task,
+          id: "write-no-change-fixture",
+          targetFiles: ["README.md"],
+          verifyCommands: ["test -f README.md"],
+        },
+        agent,
+        repoRoot: root,
+        allocate: true,
+        worktreesDir: "worktrees",
+        codexBin: fakeCodex,
+      });
+
+      expect(result.evaluation?.changedFiles).toEqual([]);
+      expect(result.commit?.add.stderr).toBe("no changed files to commit");
+      expect(result.pass).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

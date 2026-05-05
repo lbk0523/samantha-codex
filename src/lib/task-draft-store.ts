@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { TaskSpec } from "./contracts";
+import type { TaskResultMode, TaskSpec } from "./contracts";
 import { matchesAnyGlob } from "./glob";
 import type { ProposalRecord } from "./proposal-store";
 import { sanitizeTaskId } from "./worktree";
@@ -21,6 +21,7 @@ export interface TaskDraftRecord {
   setupCommands?: string[];
   verifyCommands: string[];
   instructions: string;
+  resultMode?: TaskResultMode;
   createdAt: string;
   updatedAt?: string;
   approvedAt?: string;
@@ -59,11 +60,18 @@ export interface TaskDraftUpdatePatch {
   setupCommands?: string[];
   verifyCommands?: string[];
   instructions?: string;
+  resultMode?: TaskResultMode;
 }
 
 function optionalString(value: unknown, field: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`${field} must be a string`);
+  return value;
+}
+
+function optionalResultMode(value: unknown, field: string): TaskResultMode | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "write" && value !== "report") throw new Error(`${field} must be write or report`);
   return value;
 }
 
@@ -90,6 +98,7 @@ export function parseTaskDraftUpdatePatch(raw: unknown): TaskDraftUpdatePatch {
     "setupCommands",
     "verifyCommands",
     "instructions",
+    "resultMode",
   ]);
   for (const field of Object.keys(value)) {
     if (!allowed.has(field)) throw new Error(`${field} is not an allowed draft update field`);
@@ -104,6 +113,7 @@ export function parseTaskDraftUpdatePatch(raw: unknown): TaskDraftUpdatePatch {
     setupCommands: optionalStringArray(value.setupCommands, "setupCommands"),
     verifyCommands: optionalStringArray(value.verifyCommands, "verifyCommands"),
     instructions: optionalString(value.instructions, "instructions"),
+    resultMode: optionalResultMode(value.resultMode, "resultMode"),
   };
 }
 
@@ -283,7 +293,7 @@ export function taskDraftReadiness(
 }
 
 export function taskDraftPatchTemplate(draft: TaskDraftRecord, defaults: TaskDraftUpdatePatch = {}): TaskDraftUpdatePatch {
-  return {
+  const template: TaskDraftUpdatePatch = {
     title: draft.title,
     targetAgent: draft.targetAgent || defaults.targetAgent || "codex-worker",
     targetFiles: draft.targetFiles.length > 0 ? draft.targetFiles : defaults.targetFiles ?? [],
@@ -292,6 +302,9 @@ export function taskDraftPatchTemplate(draft: TaskDraftRecord, defaults: TaskDra
     verifyCommands: draft.verifyCommands.length > 0 ? draft.verifyCommands : defaults.verifyCommands ?? [],
     instructions: draft.instructions,
   };
+  const resultMode = draft.resultMode ?? defaults.resultMode;
+  if (resultMode) template.resultMode = resultMode;
+  return template;
 }
 
 export function taskSpecFromDraft(draft: TaskDraftRecord): TaskSpec {
@@ -306,6 +319,7 @@ export function taskSpecFromDraft(draft: TaskDraftRecord): TaskSpec {
     setupCommands: draft.setupCommands && draft.setupCommands.length > 0 ? draft.setupCommands : undefined,
     verifyCommands: draft.verifyCommands,
     instructions: draft.instructions,
+    ...(draft.resultMode ? { resultMode: draft.resultMode } : {}),
     status: "pending",
   };
 }
@@ -353,6 +367,7 @@ export class TaskDraftStore {
     if (patch.setupCommands !== undefined) updated.setupCommands = patch.setupCommands;
     if (patch.verifyCommands !== undefined) updated.verifyCommands = patch.verifyCommands;
     if (patch.instructions !== undefined) updated.instructions = patch.instructions;
+    if (patch.resultMode !== undefined) updated.resultMode = patch.resultMode;
     const next = [...drafts];
     next[index] = updated;
     await writeJsonLines(this.path, next);

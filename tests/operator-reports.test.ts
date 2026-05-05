@@ -372,7 +372,13 @@ describe("operator reports", () => {
     );
     expect(
       taskDraftPlanReport({
-        draft: { ...draft, targetFiles: ["docs/report.md"], forbiddenChanges: ["state/**"], verifyCommands: ["bun typecheck"] },
+        draft: {
+          ...draft,
+          targetFiles: ["docs/report.md"],
+          forbiddenChanges: ["state/**"],
+          verifyCommands: ["bun typecheck"],
+          resultMode: "report",
+        },
         project: {
           schemaVersion: 1,
           id: "omht",
@@ -386,6 +392,7 @@ describe("operator reports", () => {
           label: "Planning report",
           description: "Document work.",
           risk: "low",
+          resultMode: "report",
           targetFiles: ["docs/**"],
           planSteps: ["Read context.", "Write report."],
           successCriteria: ["Report is actionable."],
@@ -394,7 +401,7 @@ describe("operator reports", () => {
         inferredProject: true,
         inferredScope: true,
       }),
-    ).toContain("Execution Plan:");
+    ).toContain("Result mode: `report`");
     expect(taskDraftPreparedReport({ draft, projectId: "omht", violations: ["targetFiles must not be empty"] })).toContain(
       "Prepared draft: `draft-1`",
     );

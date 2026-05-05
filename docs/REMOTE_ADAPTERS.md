@@ -133,7 +133,9 @@ Draft patches may include `setupCommands`. Use this for fresh worktree dependenc
 }
 ```
 
-Project profiles can provide these defaults plus remote scope recipes. The first bundled profile is `omht`, which supplies the local OMHT repo root, `bun install`, a conservative default typecheck command, and remote scopes for implementation and planning/report work. Use `/plan` for normal Telegram operation and `drafts:prepare` when converting a rough draft into an executable task draft locally.
+Project profiles can provide these defaults plus remote scope recipes. The first bundled profile is `omht`, which supplies the local OMHT repo root, `bun install`, a conservative default typecheck command, and remote scopes for implementation and planning/report work. Korean planning/report requests such as `계획`, `보고`, `검토`, and `다음 작업` are routed to the planning/report scope. Use `/plan` for normal Telegram operation and `drafts:prepare` when converting a rough draft into an executable task draft locally.
+
+Remote scopes may set `resultMode` to `write` or `report`. `write` remains the default implementation mode and still fails if a writer returns `pass` without changed files. `report` is for planning or read-only dogfood requests: if the worker returns a valid passing HARNESS_RESULT and changes no files, Samantha records the run as successful without requiring a commit.
 
 Direct worker dispatch is local-only:
 

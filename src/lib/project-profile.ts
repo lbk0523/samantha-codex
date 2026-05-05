@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { TaskResultMode } from "./contracts";
 import type { TaskDraftUpdatePatch } from "./task-draft-store";
 
 export interface ProjectProfile {
@@ -22,6 +23,7 @@ export interface ProjectRemoteScope {
   setupCommands?: string[];
   verifyCommands?: string[];
   forbiddenChanges?: string[];
+  resultMode?: TaskResultMode;
   keywords?: string[];
   planSteps: string[];
   successCriteria: string[];
@@ -96,6 +98,7 @@ export function applyProjectRemoteScopeDefaults(
       forbiddenChanges: patch.forbiddenChanges ?? scope?.forbiddenChanges,
       setupCommands: patch.setupCommands ?? scope?.setupCommands,
       verifyCommands: patch.verifyCommands ?? scope?.verifyCommands,
+      resultMode: patch.resultMode ?? scope?.resultMode,
     },
     profile,
   );

@@ -6,8 +6,11 @@ export interface PreparedCodexDispatch {
 }
 
 export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): string {
+  const reportOnly = task.resultMode === "report";
   const writeBoundary =
-    agent.writerClass === "writer"
+    reportOnly
+      ? "This is a report-only task. You may inspect files and return a HARNESS_RESULT without changing files. If you do change files, stay inside targetFiles."
+      : agent.writerClass === "writer"
       ? "Do not create worktrees. Do not dispatch subagents. Do not commit or push. Samantha creates the commit after safety gates pass. Do not modify files outside targetFiles."
       : "This is a non-writer task. Do not edit, create, delete, format, commit, push, or move files.";
   const targetFiles =
@@ -53,7 +56,9 @@ export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): str
     "",
     task.expectedCommitSubject
       ? `Samantha commit subject after gates pass: ${task.expectedCommitSubject}`
-      : "Samantha will choose a concise commit subject after gates pass.",
+      : reportOnly
+        ? "Samantha will not require a commit when this report-only task changes no files."
+        : "Samantha will choose a concise commit subject after gates pass.",
     "",
     "Before final response, run the verify commands if you changed files.",
     "If a verify command is blocked only because the worker sandbox cannot bind a local dev-server port, report `blocked` and include `sandbox port bind` in the note; Samantha may rerun verification outside the worker sandbox.",

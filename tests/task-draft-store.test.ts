@@ -115,6 +115,7 @@ describe("TaskDraftStore", () => {
       forbiddenChanges: ["state/**"],
       setupCommands: ["bun install"],
       verifyCommands: ["bun test"],
+      resultMode: "report",
     });
 
     expect(template).toEqual({
@@ -125,6 +126,7 @@ describe("TaskDraftStore", () => {
       setupCommands: ["bun install"],
       verifyCommands: ["bun test"],
       instructions: proposal.text,
+      resultMode: "report",
     });
   });
 
@@ -134,6 +136,7 @@ describe("TaskDraftStore", () => {
       targetFiles: ["src/lib/task-draft-store.ts"],
       setupCommands: ["bun install"],
       verifyCommands: ["bun test tests/task-draft-store.test.ts"],
+      resultMode: "report",
     });
 
     expect(task).toMatchObject({
@@ -143,6 +146,7 @@ describe("TaskDraftStore", () => {
       targetFiles: ["src/lib/task-draft-store.ts"],
       setupCommands: ["bun install"],
       verifyCommands: ["bun test tests/task-draft-store.test.ts"],
+      resultMode: "report",
     });
   });
 
@@ -178,6 +182,7 @@ describe("TaskDraftStore", () => {
         targetFiles: ["src/lib/task-draft-store.ts"],
         setupCommands: ["bun install"],
         verifyCommands: ["bun test tests/task-draft-store.test.ts"],
+        resultMode: "report",
       },
       "2026-05-04T10:03:00.000Z",
     );
@@ -185,6 +190,7 @@ describe("TaskDraftStore", () => {
 
     expect(updated.targetFiles).toEqual(["src/lib/task-draft-store.ts"]);
     expect(updated.setupCommands).toEqual(["bun install"]);
+    expect(updated.resultMode).toBe("report");
     expect(approved.status).toBe("approved");
     expect(approved.approvedAt).toBe("2026-05-04T10:04:00.000Z");
     await expect(store.update(draft.id, { title: "Nope" }, "2026-05-04T10:05:00.000Z")).rejects.toThrow(
@@ -197,6 +203,7 @@ describe("TaskDraftStore", () => {
       title: "Updated title",
       targetFiles: ["src/lib/task-draft-store.ts"],
       setupCommands: ["bun install"],
+      resultMode: "report",
     });
 
     expect(patch).toEqual({
@@ -209,6 +216,7 @@ describe("TaskDraftStore", () => {
       setupCommands: ["bun install"],
       verifyCommands: undefined,
       instructions: undefined,
+      resultMode: "report",
     });
     expect(() => parseTaskDraftUpdatePatch({ status: "approved" })).toThrow(
       "status is not an allowed draft update field",
@@ -218,6 +226,9 @@ describe("TaskDraftStore", () => {
     );
     expect(() => parseTaskDraftUpdatePatch({ setupCommands: "bun install" })).toThrow(
       "setupCommands must be a string array",
+    );
+    expect(() => parseTaskDraftUpdatePatch({ resultMode: "maybe" })).toThrow(
+      "resultMode must be write or report",
     );
   });
 });

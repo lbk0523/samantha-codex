@@ -20,6 +20,7 @@ const profile: ProjectProfile = {
       label: "Implementation",
       description: "Code changes.",
       risk: "medium",
+      resultMode: "write",
       targetFiles: ["app/**", "lib/**"],
       keywords: ["fix"],
       planSteps: ["Read code.", "Implement."],
@@ -30,8 +31,9 @@ const profile: ProjectProfile = {
       label: "Planning report",
       description: "Document changes.",
       risk: "low",
+      resultMode: "report",
       targetFiles: ["docs/**"],
-      keywords: ["report"],
+      keywords: ["report", "보고"],
       planSteps: ["Read docs.", "Write report."],
       successCriteria: ["Report is actionable."],
     },
@@ -78,10 +80,15 @@ describe("project profiles", () => {
       forbiddenChanges: ["node_modules/**"],
       setupCommands: ["bun install"],
       verifyCommands: ["bun typecheck"],
+      resultMode: "report",
     });
   });
 
   test("uses the default remote scope when no keyword matches", () => {
     expect(selectProjectRemoteScope(profile, { requestText: "unknown request" })?.id).toBe("implementation");
+  });
+
+  test("matches Korean planning and report keywords", () => {
+    expect(selectProjectRemoteScope(profile, { requestText: "다음 작업 계획 보고" })?.id).toBe("planning_report");
   });
 });
