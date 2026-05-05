@@ -112,6 +112,8 @@ bun run samantha drafts:approve <draft-id>
 
 `drafts:check` returns a readiness summary with missing fields and next local commands. `drafts:template` prints an editable JSON patch, optionally filled with project defaults. `drafts:update` rejects unknown patch fields instead of silently ignoring them. `drafts:approve` refuses drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker.
 
+`/draft_next` is read-only, but its report includes the next local `bun run samantha drafts:*` command and the Telegram command to send afterward.
+
 Draft patches may include `setupCommands`. Use this for fresh worktree dependencies, for example:
 
 ```json

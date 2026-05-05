@@ -629,6 +629,8 @@ describe("inbox and remote commands", () => {
     const draftReport = await readFile(join(outbox, "003-draft-next.md"), "utf8");
     expect(draftReport).toContain("Draft: `draft-work-now`");
     expect(draftReport).toContain("Improve Telegram now flow");
+    expect(draftReport).toContain("Local: `bun run samantha drafts:prepare draft-work-now --project=<project-id>`");
+    expect(draftReport).toContain("Telegram after local step: `/now`");
   });
 });
 

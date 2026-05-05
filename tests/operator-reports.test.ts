@@ -349,5 +349,10 @@ describe("operator reports", () => {
     );
     expect(taskDraftsListReport([draft])).toContain("Total drafts: 1");
     expect(taskDraftShowReport("draft-1", draft)).toContain("Improve status reports");
+    expect(taskDraftShowReport("draft-1", draft)).toContain("Local: `bun run samantha drafts:prepare draft-1 --project=<project-id>`");
+    expect(taskDraftShowReport("draft-1", draft)).toContain("Telegram after local step: `/now`");
+    expect(taskDraftShowReport("draft-1", { ...draft, targetFiles: ["src/app.ts"], verifyCommands: ["bun test"] })).toContain(
+      "Local: `bun run samantha drafts:approve draft-1`",
+    );
   });
 });

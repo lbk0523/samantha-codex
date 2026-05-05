@@ -508,6 +508,23 @@ export function taskDraftShowReport(draftId: string, draft: TaskDraftRecord | un
     return ["# drafts:show", "", `Draft not found: ${code(draftId)}`].join("\n");
   }
 
+  const missing = [
+    draft.targetFiles.length === 0 ? "targetFiles" : "",
+    draft.verifyCommands.length === 0 ? "verifyCommands" : "",
+  ].filter(Boolean);
+  const nextLines =
+    draft.status !== "drafted"
+      ? ["", "Next:", `- Telegram: ${code("/now")}`]
+      : [
+          "",
+          "Next:",
+          missing.length
+            ? `- Local: ${code(`bun run samantha drafts:prepare ${draft.id} --project=<project-id>`)}`
+            : `- Local: ${code(`bun run samantha drafts:approve ${draft.id}`)}`,
+          `- Telegram after local step: ${code("/now")}`,
+          `- Inspect again: ${code("/draft_next")}`,
+        ];
+
   return [
     "# drafts:show",
     "",
@@ -523,6 +540,7 @@ export function taskDraftShowReport(draftId: string, draft: TaskDraftRecord | un
     "",
     "Instructions:",
     draft.instructions.trim(),
+    ...nextLines,
   ].join("\n");
 }
 
