@@ -286,15 +286,17 @@ describe("operator reports", () => {
       },
     };
 
-    expect(remoteActionPreparedReport(action)).toContain("Next: `/yes`");
+    expect(remoteActionPreparedReport(action)).toContain("Telegram: `/yes`");
     expect(remoteActionPreparedReport(action)).toContain("/approve_action");
     expect(remoteActionPreparedReport(action)).toContain("No worker was dispatched yet.");
     expect(remoteActionsListReport([action])).toContain("dispatch_task");
     expect(remoteActionShowReport(action.id, action)).toContain("tasks:dispatch task-pass");
-    expect(remoteActionShowReport(action.id, action)).toContain("Next: `/yes`");
+    expect(remoteActionShowReport(action.id, action)).toContain("Telegram: `/yes`");
     expect(remoteActionApprovedReport({ ...action, status: "approved" })).toContain("waiting for `actions:watch`");
+    expect(remoteActionApprovedReport({ ...action, status: "approved" })).toContain("Telegram: `/action_current`");
     expect(remoteActionApprovedReport(completed)).toContain("Pass: yes");
     expect(remoteActionApprovedReport(completed)).toContain("Tmux: `samantha`");
+    expect(remoteActionApprovedReport(completed)).toContain("Telegram: `/run_latest`");
   });
 
   test("renders a one-command Telegram now report", () => {
@@ -306,17 +308,19 @@ describe("operator reports", () => {
       commandId: "remote-prepare",
     });
 
-    expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).toContain("Next: `/yes`");
+    expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).toContain("Telegram: `/yes`");
     expect(nowReport({ runs: [], tasks: [], actions: [{ ...pendingAction, status: "approved" }] })).toContain(
-      "Next: `/action_current`",
+      "Telegram: `/action_current`",
     );
-    expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("Next: `/run_next`");
+    expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("Telegram: `/run_next`");
     expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("Draft is waiting for local preparation");
-    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("Remote next: none");
-    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("Inspect: `/draft_next`");
+    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain(
+      "Local: `bun run samantha drafts:prepare draft-1 --project=<project-id>`",
+    );
+    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("Inspect again: `/draft_next`");
     expect(nowReport({ runs: [], tasks: [], actions: [], proposals: [proposal] })).toContain("Proposal is waiting for review");
     expect(nowReport({ runs: [], tasks: [], actions: [], proposals: [proposal] })).toContain("Inspect: `/proposal_next`");
-    expect(nowReport({ runs: [failRun], tasks: [], actions: [] })).toContain("Next: `/run_latest`");
+    expect(nowReport({ runs: [failRun], tasks: [], actions: [] })).toContain("Telegram: `/run_latest`");
   });
 
   test("renders next action reports", () => {
@@ -337,16 +341,21 @@ describe("operator reports", () => {
 
   test("renders proposal reports without implying execution", () => {
     expect(proposalAddedReport(proposal)).toContain("No worker was dispatched");
+    expect(proposalAddedReport(proposal)).toContain("Inspect: `/proposal_next`");
     expect(proposalsListReport([proposal])).toContain("Total proposals: 1");
     expect(proposalShowReport("proposal-1", proposal)).toContain("Improve status reports");
+    expect(proposalShowReport("proposal-1", proposal)).toContain("Accept: `/accept proposal-1`");
     expect(proposalReviewedReport("accept", { ...proposal, status: "accepted" })).toContain("only updates proposal review state");
+    expect(proposalReviewedReport("accept", { ...proposal, status: "accepted" })).toContain("Telegram: `/draft proposal-1`");
   });
 
   test("renders task draft reports without implying execution", () => {
     expect(taskDraftAddedReport(draft)).toContain("No worker was dispatched");
+    expect(taskDraftAddedReport(draft)).toContain("Local: `bun run samantha drafts:prepare draft-1 --project=<project-id>`");
     expect(draftProposeAddedReport({ proposal: { ...proposal, status: "accepted" }, draft })).toContain(
       "only creates an accepted proposal and a task draft",
     );
+    expect(draftProposeAddedReport({ proposal: { ...proposal, status: "accepted" }, draft })).toContain("Inspect: `/draft_next`");
     expect(taskDraftsListReport([draft])).toContain("Total drafts: 1");
     expect(taskDraftShowReport("draft-1", draft)).toContain("Improve status reports");
     expect(taskDraftShowReport("draft-1", draft)).toContain("Local: `bun run samantha drafts:prepare draft-1 --project=<project-id>`");

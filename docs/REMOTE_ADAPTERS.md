@@ -17,10 +17,10 @@ remote input -> allowlist -> command mapping -> inbox/*.json -> inbox:watch
 Use this as the normal Telegram operating path:
 
 ```text
-/now -> /run_next -> /yes
+/work <request> -> /draft_next -> local prepare/approve -> /now -> /run_next -> /yes -> /action_current
 ```
 
-- `/now` shows the single next command to send or the draft/proposal that needs local preparation.
+- `/now` shows the next Telegram command, local command, or read-only inspection command for the current state.
 - `/run_next` prepares the next pending task as a safe dispatch action.
 - `/yes` approves the latest pending dispatch action.
 - `/work <request>` captures new work as a proposal plus draft; it does not create a task or dispatch a worker.
@@ -113,6 +113,12 @@ bun run samantha drafts:approve <draft-id>
 `drafts:check` returns a readiness summary with missing fields and next local commands. `drafts:template` prints an editable JSON patch, optionally filled with project defaults. `drafts:update` rejects unknown patch fields instead of silently ignoring them. `drafts:approve` refuses drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker.
 
 `/draft_next` is read-only, but its report includes the next local `bun run samantha drafts:*` command and the Telegram command to send afterward.
+
+Telegram reports use a consistent next-action shape:
+
+- `Telegram` is the command to send next when remote progress can continue.
+- `Local` is a local shell command that must be run before Telegram can continue safely.
+- `Inspect` is a read-only Telegram command for the confirmation step.
 
 Draft patches may include `setupCommands`. Use this for fresh worktree dependencies, for example:
 

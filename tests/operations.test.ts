@@ -405,7 +405,7 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const report = await readFile(join(outbox, "001.md"), "utf8");
     const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
-    expect(report).toContain("Next: `/yes`");
+    expect(report).toContain("Telegram: `/yes`");
     expect(actions[0]).toMatchObject({
       status: "pending",
       taskId: "task-pass",
@@ -623,8 +623,8 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const report = await readFile(join(outbox, "002-now.md"), "utf8");
     expect(report).toContain("Draft is waiting for local preparation");
-    expect(report).toContain("Remote next: none");
-    expect(report).toContain("Inspect: `/draft_next`");
+    expect(report).toContain("Local: `bun run samantha drafts:prepare draft-work-now --project=<project-id>`");
+    expect(report).toContain("Inspect again: `/draft_next`");
     expect(report).not.toContain("No immediate remote action");
     const draftReport = await readFile(join(outbox, "003-draft-next.md"), "utf8");
     expect(draftReport).toContain("Draft: `draft-work-now`");

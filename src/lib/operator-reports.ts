@@ -60,6 +60,54 @@ function lifecycleText(lifecycle: RunLifecycleRecord | undefined): string {
   return `merged=${lifecycle.mergedAt ? "yes" : "no"} pushed=${lifecycle.pushedAt ? "yes" : "no"} cleaned=${lifecycle.cleanedAt ? "yes" : "no"}`;
 }
 
+function draftNextLines(draft: TaskDraftRecord): string[] {
+  if (draft.status !== "drafted") {
+    return ["", "Next:", `- Telegram: ${code("/now")}`];
+  }
+
+  const missing = [
+    draft.targetFiles.length === 0 ? "targetFiles" : "",
+    draft.verifyCommands.length === 0 ? "verifyCommands" : "",
+  ].filter(Boolean);
+
+  return [
+    "",
+    "Next:",
+    missing.length
+      ? `- Local: ${code(`bun run samantha drafts:prepare ${draft.id} --project=<project-id>`)}`
+      : `- Local: ${code(`bun run samantha drafts:approve ${draft.id}`)}`,
+    `- Telegram after local step: ${code("/now")}`,
+    `- Inspect again: ${code("/draft_next")}`,
+  ];
+}
+
+function remoteActionNextLines(action: RemoteActionRecord): string[] {
+  if (action.status === "pending") return ["", "Next:", `- Telegram: ${code("/yes")}`];
+  if (action.status === "approved" || action.status === "running") {
+    return ["", "Next:", `- Telegram: ${code("/action_current")}`];
+  }
+  if (action.status === "completed") {
+    return ["", "Next:", `- Telegram: ${code("/run_latest")}`, `- Then: ${code("/now")}`];
+  }
+  return ["", "Next:", `- Telegram: ${code("/run_latest")}`, `- Then: ${code("/problems")}`];
+}
+
+function proposalNextLines(proposal: ProposalRecord): string[] {
+  if (proposal.status === "pending_review") {
+    return [
+      "",
+      "Next:",
+      `- Inspect: ${code("/proposal_next")}`,
+      `- Accept: ${code(`/accept ${proposal.id}`)}`,
+      `- Reject: ${code(`/reject ${proposal.id}`)}`,
+    ];
+  }
+  if (proposal.status === "accepted") {
+    return ["", "Next:", `- Telegram: ${code(`/draft ${proposal.id}`)}`, `- Then: ${code("/draft_next")}`];
+  }
+  return ["", "Next:", `- Telegram: ${code("/now")}`];
+}
+
 function latestReplyFailure(snapshot: OpsSnapshot): string {
   const failure = snapshot.telegram.replyState?.failures?.at(-1);
   if (!failure) return "none";
@@ -136,7 +184,7 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "- `/problems`: diagnostics when something looks wrong",
     "",
     "Typical execution:",
-    "`/now` -> `/run_next` -> `/yes`",
+    "`/work <request>` -> `/draft_next` -> local prepare/approve -> `/now` -> `/run_next` -> `/yes` -> `/action_current`",
     "",
     "More commands: `/help_advanced`",
   ].join("\n");
@@ -256,8 +304,7 @@ export function nowReport(input: {
       "Worker is running.",
       `Action: ${code(running.id)}`,
       `Task: ${code(running.taskId)} - ${oneLine(running.taskTitle)}`,
-      "",
-      `Next: ${code("/action_current")}`,
+      ...remoteActionNextLines(running),
     ].join("\n");
   }
 
@@ -269,8 +316,7 @@ export function nowReport(input: {
       "Action is approved. Waiting for the runner.",
       `Action: ${code(approved.id)}`,
       `Task: ${code(approved.taskId)} - ${oneLine(approved.taskTitle)}`,
-      "",
-      `Next: ${code("/action_current")}`,
+      ...remoteActionNextLines(approved),
     ].join("\n");
   }
 
@@ -282,14 +328,13 @@ export function nowReport(input: {
       "Action is ready for approval.",
       `Action: ${code(pendingAction.id)}`,
       `Task: ${code(pendingAction.taskId)} - ${oneLine(pendingAction.taskTitle)}`,
-      "",
-      `Next: ${code("/yes")}`,
+      ...remoteActionNextLines(pendingAction),
     ].join("\n");
   }
 
   if (input.ops?.failures.length || input.ops?.warnings.length) {
     const issue = input.ops.failures[0] ?? input.ops.warnings[0] ?? "operation needs attention";
-    return ["# now", "", "Operation needs attention.", oneLine(issue), "", `Next: ${code("/problems")}`].join("\n");
+    return ["# now", "", "Operation needs attention.", oneLine(issue), "", "Next:", `- Telegram: ${code("/problems")}`].join("\n");
   }
 
   const pendingTask = input.tasks.find((task) => task.status === "pending");
@@ -300,7 +345,8 @@ export function nowReport(input: {
       "Pending task is ready to prepare.",
       `Task: ${code(pendingTask.id)} - ${oneLine(pendingTask.title)}`,
       "",
-      `Next: ${code("/run_next")}`,
+      "Next:",
+      `- Telegram: ${code("/run_next")}`,
     ].join("\n");
   }
 
@@ -313,10 +359,6 @@ export function nowReport(input: {
       draft.targetFiles.length === 0 ? "targetFiles" : "",
       draft.verifyCommands.length === 0 ? "verifyCommands" : "",
     ].filter(Boolean);
-    const localNext =
-      missing.length > 0
-        ? `bun run samantha drafts:prepare ${draft.id} --project=<project-id>`
-        : `bun run samantha drafts:approve ${draft.id}`;
     return [
       "# now",
       "",
@@ -324,10 +366,7 @@ export function nowReport(input: {
       `Draft: ${code(draft.id)}`,
       `Title: ${oneLine(draft.title)}`,
       missing.length ? `Missing: ${missing.join(", ")}` : "Ready for local approval.",
-      "",
-      "Remote next: none",
-      `Inspect: ${code("/draft_next")}`,
-      `Local next: ${code(localNext)}`,
+      ...draftNextLines(draft),
     ].join("\n");
   }
 
@@ -342,9 +381,7 @@ export function nowReport(input: {
       "Proposal is waiting for review.",
       `Proposal: ${code(proposal.id)}`,
       `Text: ${oneLine(proposal.text)}`,
-      "",
-      "Remote next: review decision required",
-      `Inspect: ${code("/proposal_next")}`,
+      ...proposalNextLines(proposal),
     ].join("\n");
   }
 
@@ -357,13 +394,14 @@ export function nowReport(input: {
       `Run: ${code(latest.runId)}`,
       latest.failureReason ? `Failure: ${oneLine(latest.failureReason)}` : "",
       "",
-      `Next: ${code("/run_latest")}`,
+      "Next:",
+      `- Telegram: ${code("/run_latest")}`,
     ]
       .filter(Boolean)
       .join("\n");
   }
 
-  return ["# now", "", "No immediate remote action.", "", `Next: ${code("/check")}`].join("\n");
+  return ["# now", "", "No immediate remote action.", "", "Next:", `- Telegram: ${code("/check")}`].join("\n");
 }
 
 export function failuresReport(runs: RunSummary[], limit = 10): string {
@@ -417,6 +455,7 @@ export function proposalAddedReport(proposal: ProposalRecord): string {
     oneLine(proposal.text),
     "",
     "No worker was dispatched. Review this proposal locally before creating a task.",
+    ...proposalNextLines(proposal),
   ].join("\n");
 }
 
@@ -449,6 +488,7 @@ export function proposalShowReport(proposalId: string, proposal: ProposalRecord 
     "",
     "Text:",
     proposal.text.trim(),
+    ...proposalNextLines(proposal),
   ]
     .filter(Boolean)
     .join("\n");
@@ -464,6 +504,7 @@ export function proposalReviewedReport(action: "accept" | "reject", proposal: Pr
     proposal.reviewNote ? `Note: ${oneLine(proposal.reviewNote)}` : "",
     "",
     "No worker was dispatched. This only updates proposal review state.",
+    ...proposalNextLines(proposal),
   ]
     .filter(Boolean)
     .join("\n");
@@ -480,6 +521,7 @@ export function taskDraftAddedReport(draft: TaskDraftRecord): string {
     `Title: ${oneLine(draft.title)}`,
     "",
     "No worker was dispatched. Fill targetFiles and verifyCommands before promoting this draft to a task.",
+    ...draftNextLines(draft),
   ].join("\n");
 }
 
@@ -495,6 +537,9 @@ export function draftProposeAddedReport(input: { proposal: ProposalRecord; draft
     `Title: ${oneLine(input.draft.title)}`,
     "",
     "No worker was dispatched. This only creates an accepted proposal and a task draft.",
+    "",
+    "Next:",
+    `- Inspect: ${code("/draft_next")}`,
   ].join("\n");
 }
 
@@ -507,23 +552,6 @@ export function taskDraftShowReport(draftId: string, draft: TaskDraftRecord | un
   if (!draft) {
     return ["# drafts:show", "", `Draft not found: ${code(draftId)}`].join("\n");
   }
-
-  const missing = [
-    draft.targetFiles.length === 0 ? "targetFiles" : "",
-    draft.verifyCommands.length === 0 ? "verifyCommands" : "",
-  ].filter(Boolean);
-  const nextLines =
-    draft.status !== "drafted"
-      ? ["", "Next:", `- Telegram: ${code("/now")}`]
-      : [
-          "",
-          "Next:",
-          missing.length
-            ? `- Local: ${code(`bun run samantha drafts:prepare ${draft.id} --project=<project-id>`)}`
-            : `- Local: ${code(`bun run samantha drafts:approve ${draft.id}`)}`,
-          `- Telegram after local step: ${code("/now")}`,
-          `- Inspect again: ${code("/draft_next")}`,
-        ];
 
   return [
     "# drafts:show",
@@ -540,7 +568,7 @@ export function taskDraftShowReport(draftId: string, draft: TaskDraftRecord | un
     "",
     "Instructions:",
     draft.instructions.trim(),
-    ...nextLines,
+    ...draftNextLines(draft),
   ].join("\n");
 }
 
@@ -559,8 +587,9 @@ export function remoteActionPreparedReport(action: RemoteActionRecord): string {
     "",
     "No worker was dispatched yet.",
     "",
-    `Next: ${code("/yes")}`,
-    `Explicit approval: ${code(`/approve_action ${action.id}`)}`,
+    "Next:",
+    `- Telegram: ${code("/yes")}`,
+    `- Explicit approval: ${code(`/approve_action ${action.id}`)}`,
   ].join("\n");
 }
 
@@ -593,8 +622,7 @@ export function remoteActionShowReport(actionId: string, action: RemoteActionRec
     action.result?.runId ? `Run: ${code(action.result.runId)}` : "",
     action.result?.outcome ? `Outcome: ${code(action.result.outcome)}` : "",
     action.result?.failure ? `Failure: ${oneLine(action.result.failure)}` : "",
-    action.status === "pending" ? `Next: ${code("/yes")}` : "",
-    action.status === "approved" || action.status === "running" ? `Next: ${code(`/action ${action.id}`)}` : "",
+    ...remoteActionNextLines(action),
   ]
     .filter(Boolean)
     .join("\n");
@@ -616,7 +644,7 @@ export function remoteActionApprovedReport(action: RemoteActionRecord): string {
     result?.tmuxSession ? `Tmux: ${code(result.tmuxSession)}` : "",
     result?.failure ? `Failure: ${oneLine(result.failure)}` : "",
     action.status === "approved" ? "Runner: waiting for `actions:watch` or `actions:run-pending`." : "",
-    action.status === "approved" || action.status === "running" ? `Next: ${code(`/action ${action.id}`)}` : "",
+    ...remoteActionNextLines(action),
   ]
     .filter(Boolean)
     .join("\n");
