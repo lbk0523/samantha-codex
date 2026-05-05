@@ -1157,6 +1157,34 @@ describe("dashboard", () => {
     expect(html).toContain("run failed: old-failed-task - verify command failed");
   });
 
+  test("does not count stale live logs as running workers", () => {
+    const html = renderDashboard([], {
+      liveRuns: [
+        {
+          runId: "orphan-live-run",
+          taskId: "stale-task",
+          agentId: "codex-worker",
+          phase: "worker",
+          lastEventType: "command_start",
+          lastAt: "2000-01-01T00:00:00.000Z",
+          liveLogPath: "/repo/runs/live/orphan-live-run.jsonl",
+          events: [
+            {
+              at: "2000-01-01T00:00:00.000Z",
+              type: "command_start",
+              phase: "worker",
+              command: "codex exec",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(html).toContain('<div class="label">Running Workers</div>\n    <div class="value">0</div>\n    <div class="detail">Stale 1');
+    expect(html).toContain("stale-task is stale");
+    expect(html).toContain("Inspect current attention");
+  });
+
   test("renders live log events by worker lane", () => {
     const now = new Date().toISOString();
     const html = renderLaneViewDashboard([], {

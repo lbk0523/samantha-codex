@@ -774,12 +774,18 @@ ${rows || '<tr><td colspan="6">No run summaries found.</td></tr>'}
 function renderOverviewContent(runs: RunSummary[], status: DashboardStatus, view: DashboardView): string {
   const replyFailures = view.ops?.telegram.replyState?.failures ?? [];
   const latestReplyFailure = replyFailures.at(-1);
-  const staleActiveRuns = view.activeLiveRuns.filter((run) => liveRunView({
+  const liveRunStates = view.liveRuns.map((run) => ({
     run,
-    nowMs: view.nowMs,
-    completedRunIds: view.completedRunIds,
-    failedRunIds: view.failedRunIds,
-  }).label === "stale");
+    state: liveRunView({
+      run,
+      nowMs: view.nowMs,
+      completedRunIds: view.completedRunIds,
+      failedRunIds: view.failedRunIds,
+    }),
+  }));
+  const runningLiveRuns = liveRunStates.filter(({ state }) => state.label === "running");
+  const staleLiveRuns = liveRunStates.filter(({ state }) => state.label === "stale");
+  const completedLiveRuns = liveRunStates.filter(({ state }) => state.label === "completed");
   const heartbeatText = status.heartbeat
     ? `${status.heartbeat.status} pid=${status.heartbeat.pid} updated=${formatTimestamp(status.heartbeat.updatedAt, view.nowMs)}`
     : "not recorded";
@@ -789,8 +795,8 @@ function renderOverviewContent(runs: RunSummary[], status: DashboardStatus, view
   return `<section class="kpi-grid" aria-label="Operations summary">
   <div class="kpi">
     <div class="label">Running Workers</div>
-    <div class="value">${String(view.activeLiveRuns.length)}</div>
-    <div class="detail">Stale ${String(staleActiveRuns.length)} · Live logs ${String(view.liveRuns.length)} · Completed logs ${String(view.liveRuns.length - view.activeLiveRuns.length)}</div>
+    <div class="value">${String(runningLiveRuns.length)}</div>
+    <div class="detail">Stale ${String(staleLiveRuns.length)} · Live logs ${String(view.liveRuns.length)} · Completed logs ${String(completedLiveRuns.length)}</div>
   </div>
   <div class="kpi">
     <div class="label">Current Problems</div>
