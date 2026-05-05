@@ -565,6 +565,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       runs: await new RunIndex(runsPath(args)).list(),
       tasks: await new TaskStore(tasksPath(args)).listActive(),
       actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
+      proposals: await new ProposalStore(proposalsPath(args)).list(),
+      drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
       ops: withoutActiveInboxCommand(await collectOps(args)),
       lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
     });
@@ -713,6 +715,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       runs: await new RunIndex(runsPath(args)).list(),
       tasks: await new TaskStore(tasksPath(args)).listActive(),
       actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
+      proposals: await new ProposalStore(proposalsPath(args)).list(),
+      drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
       ops: withoutActiveInboxCommand(await collectOps(args)),
       lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
     });
@@ -740,6 +744,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       runs: await new RunIndex(runsPath(args)).list(),
       tasks: await new TaskStore(tasksPath(args)).listActive(),
       actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
+      proposals: await new ProposalStore(proposalsPath(args)).list(),
+      drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
       ops: withoutActiveInboxCommand(await collectOps(args)),
       lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
     });

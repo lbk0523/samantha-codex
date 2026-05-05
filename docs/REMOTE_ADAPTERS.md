@@ -20,7 +20,7 @@ Use this as the normal Telegram operating path:
 /now -> /run_next -> /yes
 ```
 
-- `/now` shows the single next command to send.
+- `/now` shows the single next command to send or the draft/proposal that needs local preparation.
 - `/run_next` prepares the next pending task as a safe dispatch action.
 - `/yes` approves the latest pending dispatch action.
 - `/work <request>` captures new work as a proposal plus draft; it does not create a task or dispatch a worker.
@@ -70,7 +70,7 @@ Unsupported commands are ignored or rejected.
 
 Supported remote commands are operational reports, a safe dashboard rebuild, proposal intake/review, conservative task draft creation, and explicit approval of a prebuilt dispatch action. `/propose` may write a pending proposal to `state/proposals.jsonl`; `/work` and `/draft_propose` may write an accepted proposal plus a draft; `/accept` and `/reject` may update proposal review state; `/draft <proposal_id>` may write a draft to `state/task-drafts.jsonl`. Task ledger promotion, direct worker dispatch, merge, push, cleanup, and arbitrary shell execution are intentionally not exposed remotely.
 
-`/now` is the default operating command. It chooses one next remote command from current action state, diagnostics, pending tasks, and latest run state.
+`/now` is the default operating command. It chooses one next remote command from current action state, diagnostics, pending tasks, task drafts, proposals, and latest run state. After `/work <request>`, `/now` should show the created draft instead of reporting no immediate action.
 
 `/check` and `/status` are the quick operational view. They include daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
 

@@ -241,6 +241,8 @@ export function nowReport(input: {
   runs: RunSummary[];
   tasks: TaskSpec[];
   actions: RemoteActionRecord[];
+  proposals?: ProposalRecord[];
+  drafts?: TaskDraftRecord[];
   ops?: OpsSnapshot;
   lifecycles?: RunLifecycleRecord[];
 }): string {
@@ -299,6 +301,48 @@ export function nowReport(input: {
       `Task: ${code(pendingTask.id)} - ${oneLine(pendingTask.title)}`,
       "",
       `Next: ${code("/run_next")}`,
+    ].join("\n");
+  }
+
+  const draft = input.drafts
+    ?.slice()
+    .reverse()
+    .find((item) => item.status === "drafted");
+  if (draft) {
+    const missing = [
+      draft.targetFiles.length === 0 ? "targetFiles" : "",
+      draft.verifyCommands.length === 0 ? "verifyCommands" : "",
+    ].filter(Boolean);
+    const localNext =
+      missing.length > 0
+        ? `bun run samantha drafts:prepare ${draft.id} --project=<project-id>`
+        : `bun run samantha drafts:approve ${draft.id}`;
+    return [
+      "# now",
+      "",
+      "Draft is waiting for local preparation.",
+      `Draft: ${code(draft.id)}`,
+      `Title: ${oneLine(draft.title)}`,
+      missing.length ? `Missing: ${missing.join(", ")}` : "Ready for local approval.",
+      "",
+      `Next: ${code(`/draft ${draft.id}`)}`,
+      `Local next: ${code(localNext)}`,
+    ].join("\n");
+  }
+
+  const proposal = input.proposals
+    ?.slice()
+    .reverse()
+    .find((item) => item.status === "pending_review");
+  if (proposal) {
+    return [
+      "# now",
+      "",
+      "Proposal is waiting for review.",
+      `Proposal: ${code(proposal.id)}`,
+      `Text: ${oneLine(proposal.text)}`,
+      "",
+      `Next: ${code(`/proposal ${proposal.id}`)}`,
     ].join("\n");
   }
 

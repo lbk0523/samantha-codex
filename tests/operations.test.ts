@@ -517,6 +517,102 @@ describe("inbox and remote commands", () => {
     expect(await readFile(join(outbox, "001.md"), "utf8")).toContain("Status: `approved`");
     expect(await store.find(action.id)).toMatchObject({ status: "approved" });
   });
+
+  test("surfaces a work-created draft in now instead of reporting no action", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-work-now-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await writeFile(
+      join(state, "daemon.lock"),
+      JSON.stringify({
+        schemaVersion: 1,
+        pid: process.pid,
+        command: "inbox:watch",
+        startedAt: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(state, "heartbeat.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        pid: process.pid,
+        command: "inbox:watch",
+        status: "running",
+        lockPath: join(state, "daemon.lock"),
+        inboxDir: inbox,
+        outboxDir: outbox,
+        archiveDir: archive,
+        processedTotal: 0,
+        updatedAt: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+    await writeFile(join(state, "telegram-offset.json"), JSON.stringify({ nextOffset: 1 }), "utf8");
+    await writeFile(
+      join(state, "telegram-replies.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        sentFiles: [],
+        failures: [],
+        updatedAt: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-work.json"),
+      JSON.stringify({
+        id: "remote-work",
+        type: "drafts:add-from-proposal-text",
+        args: {
+          proposalId: "proposal-work-now",
+          text: "Improve Telegram now flow",
+          senderId: "bk",
+          receivedAt: "2026-05-05T10:40:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "002-now.json"),
+      JSON.stringify({
+        id: "remote-now",
+        type: "ops:now",
+        args: { receivedAt: "2026-05-05T10:41:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const report = await readFile(join(outbox, "002-now.md"), "utf8");
+    expect(report).toContain("Draft is waiting for local preparation");
+    expect(report).toContain("Next: `/draft draft-work-now`");
+    expect(report).not.toContain("No immediate remote action");
+  });
 });
 
 describe("dashboard", () => {
