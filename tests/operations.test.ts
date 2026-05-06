@@ -712,6 +712,121 @@ describe("inbox and remote commands", () => {
     });
   });
 
+  test("remote go does not approve or create worker actions from stale task/action/draft state", async () => {
+    async function runGoFixture(name: string, seed: (input: { state: string; agents: string }) => Promise<void>) {
+      const root = await mkdtemp(join(tmpdir(), name));
+      tmpRoots.push(root);
+      const inbox = join(root, "inbox");
+      const outbox = join(root, "outbox");
+      const archive = join(root, "archive");
+      const state = join(root, "state");
+      const agents = join(root, "agents");
+      await mkdir(inbox, { recursive: true });
+      await mkdir(state, { recursive: true });
+      await mkdir(agents, { recursive: true });
+      await writeFile(
+        join(agents, "codex-worker.json"),
+        `${JSON.stringify(
+          {
+            ...writer,
+            skillPolicy: {
+              requiredBundles: [],
+              blockedSkills: [
+                "using-git-worktrees",
+                "dispatching-parallel-agents",
+                "subagent-driven-development",
+              ],
+            },
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+      await seed({ state, agents });
+      await writeFile(
+        join(inbox, "001-go.json"),
+        JSON.stringify({
+          id: "remote-go-stale",
+          type: "actions:go",
+          args: { receivedAt: "2026-05-05T10:42:00.000Z" },
+        }),
+        "utf8",
+      );
+
+      const proc = Bun.spawn(
+        [
+          "bun",
+          "run",
+          "src/samantha.ts",
+          "inbox:process",
+          `--state-dir=${state}`,
+          `--inbox-dir=${inbox}`,
+          `--outbox-dir=${outbox}`,
+          `--archive-dir=${archive}`,
+          `--agent-profiles-dir=${agents}`,
+          "--repo-root=/repo",
+        ],
+        { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+      );
+      expect({
+        stdout: await new Response(proc.stdout).text(),
+        stderr: await new Response(proc.stderr).text(),
+        exitCode: await proc.exited,
+      }).toMatchObject({ exitCode: 0 });
+
+      return { state, outbox };
+    }
+
+    const pendingAction = createRemoteDispatchAction({
+      task: { ...task, id: "stale-action-task", verifyCommands: ["test -f allowed.txt"] },
+      repoRoot: "/repo",
+      createdAt: "2026-05-05T10:00:00.000Z",
+      source: "remote",
+      commandId: "remote-old-prepare",
+    });
+    const actionFixture = await runGoFixture("samantha-codex-stale-go-action-", async ({ state }) => {
+      await writeFile(join(state, "remote-actions.jsonl"), `${JSON.stringify(pendingAction)}\n`, "utf8");
+    });
+    expect(await readFile(join(actionFixture.outbox, "001-go.md"), "utf8")).toContain("통합 gate가 없습니다.");
+    expect(await new RemoteActionStore(join(actionFixture.state, "remote-actions.jsonl")).find(pendingAction.id)).toMatchObject({
+      status: "pending",
+    });
+
+    const taskFixture = await runGoFixture("samantha-codex-stale-go-task-", async ({ state }) => {
+      await writeFile(
+        join(state, "tasks.jsonl"),
+        `${JSON.stringify({ ...task, id: "stale-pending-task", verifyCommands: ["test -f allowed.txt"] })}\n`,
+        "utf8",
+      );
+    });
+    expect(await new RemoteActionStore(join(taskFixture.state, "remote-actions.jsonl")).list()).toEqual([]);
+    expect(await readFile(join(taskFixture.outbox, "001-go.md"), "utf8")).not.toContain("실행을 승인했습니다.");
+
+    const draftFixture = await runGoFixture("samantha-codex-stale-go-draft-", async ({ state }) => {
+      await writeFile(
+        join(state, "task-drafts.jsonl"),
+        `${JSON.stringify({
+          schemaVersion: 1,
+          id: "stale-draft",
+          sourceProposalId: "proposal-stale",
+          status: "drafted",
+          title: "Stale draft",
+          targetAgent: "codex-worker",
+          targetFiles: ["allowed.txt"],
+          forbiddenChanges: ["state/**"],
+          verifyCommands: ["test -f allowed.txt"],
+          instructions: "This draft has no actionable orchestrator plan.",
+          createdAt: "2026-05-05T10:00:00.000Z",
+        })}\n`,
+        "utf8",
+      );
+    });
+    await expect(readFile(join(draftFixture.state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    expect(await new RemoteActionStore(join(draftFixture.state, "remote-actions.jsonl")).list()).toEqual([]);
+    expect(await readFile(join(draftFixture.outbox, "001-go.md"), "utf8")).toContain("pending task/action/draft");
+  });
+
   test("prepares and approves the latest draft from remote commands without dispatching a worker", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-draft-"));
     tmpRoots.push(root);

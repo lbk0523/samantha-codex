@@ -157,7 +157,7 @@ const plan: OrchestratorPlanRecord = {
     questions: [],
     scope: ["명령어 안내", "다음 액션 메시지"],
     nonScope: ["worker 자동 실행 확대"],
-    risks: ["구 명령어가 다시 노출될 수 있음"],
+    risks: ["구 명령어 /status, /doctor, /health, /failures가 다시 노출될 수 있음"],
     tasks: [
       {
         id: "task-proposal-telegram-ux-review",
@@ -174,7 +174,7 @@ const plan: OrchestratorPlanRecord = {
       },
     ],
     batches: [["task-proposal-telegram-ux-review"]],
-    userMessage: "Telegram에서 다음에 무엇을 해야 하는지만 보이도록 정리합니다.",
+    userMessage: "Telegram에서 /run_latest, /next_action, /next-action을 보이지 않게 정리합니다.",
   },
 };
 
@@ -224,7 +224,7 @@ const runLog: WorkerRunLog = {
         type: "item.completed",
         item: {
           type: "agent_message",
-          text: "Telegram 보고 메시지를 짧게 정리했습니다.\n\nHARNESS_RESULT: {\"status\":\"pass\",\"note\":\"done\",\"commit\":\"\"}",
+          text: "Telegram 보고 메시지를 짧게 정리했습니다. /action_current는 쓰지 않습니다.\n\nHARNESS_RESULT: {\"status\":\"pass\",\"note\":\"done\",\"commit\":\"\"}",
         },
       })}\n`,
       stderr: "",
@@ -277,8 +277,8 @@ function checkTelegramReports(): void {
           outcome: "pass",
           summary: "통과",
           nextActions: ["텔레그램: /run_latest"],
-          risks: [],
-          userMessage: "작업이 완료됐습니다.",
+          risks: ["종합 risk에 /status가 포함돼도 Telegram에는 보정되어야 합니다."],
+          userMessage: "작업이 완료됐습니다. /run_latest는 쓰지 않습니다.",
         },
       }),
     ],

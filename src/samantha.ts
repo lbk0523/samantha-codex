@@ -29,8 +29,8 @@ import {
   nextActionReport,
   remoteHelpReport,
   remoteDeprecatedCommandReport,
+  remoteGoNoActionablePlanReport,
   remoteActionApprovedReport,
-  remoteGoReport,
   remoteIntegrationReport,
   type RemoteActionArtifactPreview,
   remoteActionPreparedReport,
@@ -1139,13 +1139,6 @@ async function latestPrimaryWorkflowTimestamp(args: ParsedArgs): Promise<number>
   );
 }
 
-function latestRelevantDraft(drafts: TaskDraftRecord[], primaryWorkflowTimestamp: number): TaskDraftRecord | undefined {
-  return drafts
-    .slice()
-    .reverse()
-    .find((item) => item.status === "drafted" && timestamp(item.updatedAt ?? item.createdAt) >= primaryWorkflowTimestamp);
-}
-
 async function advanceLatestPassedRunIntegration(args: ParsedArgs): Promise<string | undefined> {
   const runs = await new RunIndex(runsPath(args)).list();
   const lifecycles = await new RunLifecycleStore(runLifecyclePath(args)).list();
@@ -1728,54 +1721,10 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       return nowReportForInbox(args);
     }
 
-    const actionStore = new RemoteActionStore(remoteActionsPath(args));
-    const currentAction = (await actionStore.list())
-      .slice()
-      .reverse()
-      .find((item) => item.status === "pending" || item.status === "waiting" || item.status === "approved" || item.status === "running");
-    if (currentAction?.status === "pending") {
-      return remoteGoReport({ action: await actionStore.markApproved(currentAction.id, receivedAt) });
-    }
-    if (currentAction) return remoteActionShowReport(currentAction.id, currentAction);
-
-    const taskStore = new TaskStore(tasksPath(args));
     const integrationReport = await advanceLatestPassedRunIntegration(args);
     if (integrationReport) return integrationReport;
 
-    const pendingTask = (await taskStore.listActive()).find((item) => item.status === "pending");
-    if (pendingTask) {
-      const action = await prepareDispatchActionForTask({
-        args,
-        taskId: pendingTask.id,
-        receivedAt,
-        commandId: command.id,
-      });
-      return remoteGoReport({
-        action: await new RemoteActionStore(remoteActionsPath(args)).markApproved(action.id, receivedAt),
-        task: pendingTask,
-      });
-    }
-
-    const draftStore = new TaskDraftStore(taskDraftsPath(args));
-    const draft = latestRelevantDraft(await draftStore.list(), await latestPrimaryWorkflowTimestamp(args));
-    if (!draft) return nowReportForInbox(args);
-    const check = checkTaskDraft(draft, { knownAgentIds: await knownAgentIds(args) });
-    if (!check.ok) return taskDraftApprovalBlockedReport({ draft, violations: check.violations });
-
-    const task = taskSpecFromDraft(draft);
-    await taskStore.append(task);
-    const approvedDraft = await draftStore.markApproved(draft.id, receivedAt);
-    const action = await prepareDispatchActionForTask({
-      args,
-      taskId: task.id,
-      receivedAt,
-      commandId: command.id,
-    });
-    return remoteGoReport({
-      action: await new RemoteActionStore(remoteActionsPath(args)).markApproved(action.id, receivedAt),
-      draft: approvedDraft,
-      task,
-    });
+    return remoteGoNoActionablePlanReport();
   }
   if (command.type === "actions:approve") {
     const id = String(command.args?.id ?? "");

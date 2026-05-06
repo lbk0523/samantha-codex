@@ -14,11 +14,37 @@ function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+const telegramCommandReplacements: Array<[RegExp, string]> = [
+  [/\/help_advanced\b/g, "/help"],
+  [/\/help advanced\b/g, "/help"],
+  [/\/(?:next_action|next-action|runs|run_latest|run_next|run-next|tasks|task|actions|action_current|action|proposals|proposal_next|proposal|drafts|draft_next)\b/g, "/now"],
+  [/\/run\b/g, "/now"],
+  [/\/(?:status|dashboard)\b/g, "/check"],
+  [/\/(?:doctor|health|failures)\b/g, "/problems"],
+  [/\/(?:accept|draft_approve|draft-approve|yes|prepare_dispatch|prepare-dispatch|approve_action|approve-action)\b/g, "/go"],
+  [/\/reject\b/g, "/cancel"],
+  [/\/(?:draft_prepare|draft-prepare)\b/g, "/plan"],
+  [/\/(?:propose|draft_propose|draft-propose|draft)\b/g, "/work <요청>"],
+];
+
+function telegramSafeText(value: string): string {
+  let safe = value;
+  for (const [pattern, replacement] of telegramCommandReplacements) {
+    safe = safe.replace(pattern, replacement);
+  }
+  return safe;
+}
+
+function telegramSafeLine(value: string): string {
+  return telegramSafeText(oneLine(value));
+}
+
+function telegramSafeClipText(text: string, maxLength = 3500): string {
+  return clipText(telegramSafeText(text), maxLength);
+}
+
 function remoteSafeSuggestion(value: string): string {
-  return oneLine(value)
-    .replace(/\/(?:action_current|run_latest|next_action|next-action)\b/g, "/now")
-    .replace(/\/(?:status|dashboard)\b/g, "/check")
-    .replace(/\/(?:doctor|health|failures)\b/g, "/problems");
+  return telegramSafeLine(value);
 }
 
 function code(value: string): string {
@@ -177,7 +203,7 @@ function orchestrationRequestNextLines(request: OrchestrationRequestRecord): str
 }
 
 function orchestrationRequestSummary(request: OrchestrationRequestRecord): string {
-  const text = oneLine(request.text);
+  const text = telegramSafeLine(request.text);
   if (text.startsWith("복구 계획 요청입니다.")) return "실패 계획 복구 요청";
   if (text.startsWith("계획 수정 요청입니다.")) return "계획 수정 요청";
   return text;
@@ -282,13 +308,13 @@ function workerFinalMessage(runLog: WorkerRunLog | undefined): string {
   const command = runLog.result.command;
   const output = [command?.stdout ?? "", command?.stderr ?? ""].filter(Boolean).join("\n");
   const agentMessage = extractAgentMessages(output).map(stripHarnessResult).filter(Boolean).at(-1);
-  if (agentMessage) return clipText(agentMessage);
+  if (agentMessage) return telegramSafeClipText(agentMessage);
 
   const harnessNote = runLog.result.evaluation?.harness?.note;
-  if (harnessNote) return clipText(harnessNote);
+  if (harnessNote) return telegramSafeClipText(harnessNote);
 
   const fallback = stripHarnessResult(output);
-  return fallback ? clipText(fallback) : "worker 최종 메시지를 찾지 못했습니다.";
+  return fallback ? telegramSafeClipText(fallback) : "worker 최종 메시지를 찾지 못했습니다.";
 }
 
 function changedFileLines(runLog: WorkerRunLog | undefined): string[] {
@@ -301,9 +327,9 @@ function verificationLines(runLog: WorkerRunLog | undefined): string[] {
   if (!evaluation) return ["- worker 검증 결과 없음"];
 
   const lines = [
-    evaluation.harness ? `- Worker 보고: ${code(evaluation.harness.status)} - ${oneLine(evaluation.harness.note)}` : "",
-    evaluation.parseError ? `- HARNESS_RESULT 파싱 실패: ${oneLine(evaluation.parseError)}` : "",
-    evaluation.verifyOverrideReason ? `- 검증 보정: ${oneLine(evaluation.verifyOverrideReason)}` : "",
+    evaluation.harness ? `- Worker 보고: ${code(evaluation.harness.status)} - ${telegramSafeLine(evaluation.harness.note)}` : "",
+    evaluation.parseError ? `- HARNESS_RESULT 파싱 실패: ${telegramSafeLine(evaluation.parseError)}` : "",
+    evaluation.verifyOverrideReason ? `- 검증 보정: ${telegramSafeLine(evaluation.verifyOverrideReason)}` : "",
     ...evaluation.verifyResults.map((result) =>
       `- ${result.exitCode === 0 ? "통과" : "실패"} exit ${result.exitCode}: ${code(result.command)}`,
     ),
@@ -331,8 +357,12 @@ function artifactPreviewLines(runLog: WorkerRunLog | undefined, previews: Remote
 function remoteActionResultNextLines(action: RemoteActionRecord, runLog: WorkerRunLog | undefined): string[] {
   const lines = ["", "다음 액션:"];
   if (action.status === "failed") {
-    if (action.orchestratorPlanId) lines.push(`- 복구 계획 생성: ${code("/recover")}`);
-    else lines.push(`- 문제 확인: ${code("/problems")}`);
+    if (action.orchestratorPlanId) {
+      lines.push("- 오케스트레이터 계획 결과 보고가 끝난 뒤 복구 가능 여부를 판단합니다.");
+      lines.push(`- 텔레그램: ${code("/now")}`);
+    } else {
+      lines.push(`- 문제 확인: ${code("/problems")}`);
+    }
   } else {
     lines.push(`- 텔레그램: ${code("/now")}`);
   }
@@ -513,7 +543,7 @@ export function remoteDeprecatedCommandReport(input: { command: string; replacem
   return [
     "# remote:deprecated",
     "",
-    `제거된 Telegram 명령입니다: ${code(input.command)}`,
+    "사용한 Telegram 명령은 제거됐습니다.",
     "",
     "현재 Telegram은 오케스트레이터 워크플로우만 직접 다룹니다.",
     "run, task, action, proposal, draft ID를 직접 입력하는 수동 흐름은 로컬 점검용으로만 남깁니다.",
@@ -661,10 +691,12 @@ export function nowReport(input: {
     return [
       "# now",
       "",
-      "승인 대기 중인 액션이 있습니다.",
+      "승인 대기 중인 수동 action이 있지만 Telegram `/go`로는 개별 action을 승인하지 않습니다.",
       `액션: ${code(pendingAction.id)}`,
       `태스크: ${code(pendingAction.taskId)} - ${oneLine(pendingAction.taskTitle)}`,
-      ...remoteActionNextLines(pendingAction),
+      "",
+      "다음 액션:",
+      `- 텔레그램: ${code("/problems")}`,
     ].join("\n");
   }
 
@@ -696,7 +728,7 @@ export function nowReport(input: {
         : "오케스트레이터 계획이 생성되어 검토를 기다리고 있습니다.",
       `계획: ${code(latestPlan.id)}`,
       `요청: ${code(latestPlan.requestId)}`,
-      latestPlan.payload?.summary ? `요약: ${oneLine(latestPlan.payload.summary)}` : "",
+      latestPlan.payload?.summary ? `요약: ${telegramSafeLine(latestPlan.payload.summary)}` : "",
       ...orchestratorPlanNextLines(latestPlan),
     ]
       .filter(Boolean)
@@ -738,7 +770,7 @@ export function nowReport(input: {
       "",
       "실패한 오케스트레이터 계획 결과가 있습니다.",
       `실패 작업: ${recoverable.failedActions.length}/${recoverable.actions.length}`,
-      recoverable.plan.synthesis?.summary ? `종합: ${oneLine(recoverable.plan.synthesis.summary)}` : "",
+      recoverable.plan.synthesis?.summary ? `종합: ${telegramSafeLine(recoverable.plan.synthesis.summary)}` : "",
       "",
       "다음 액션:",
       `- 텔레그램: ${code("/recover")}`,
@@ -755,11 +787,11 @@ export function nowReport(input: {
     return [
       "# now",
       "",
-      "실행 준비 가능한 pending task가 있습니다.",
+      "수동 pending task가 있지만 Telegram `/go`는 task를 직접 실행 큐에 등록하지 않습니다.",
       `태스크: ${code(pendingTask.id)} - ${oneLine(pendingTask.title)}`,
       "",
       "다음 액션:",
-      `- 텔레그램: ${code("/go")}`,
+      `- 텔레그램: ${code("/problems")}`,
     ].join("\n");
   }
 
@@ -921,12 +953,12 @@ export function orchestratorRecoveryRequestReport(input: {
     "# recover",
     "",
     "실패한 계획 결과를 바탕으로 복구 계획 요청을 만들었습니다.",
-    input.sourcePlan.payload?.summary ? `복구 대상: ${oneLine(input.sourcePlan.payload.summary)}` : "",
-    input.sourcePlan.synthesis?.summary ? `실패 요약: ${oneLine(input.sourcePlan.synthesis.summary)}` : "",
+    input.sourcePlan.payload?.summary ? `복구 대상: ${telegramSafeLine(input.sourcePlan.payload.summary)}` : "",
+    input.sourcePlan.synthesis?.summary ? `실패 요약: ${telegramSafeLine(input.sourcePlan.synthesis.summary)}` : "",
     "",
     "실패 작업:",
     ...(input.failedActions.length
-      ? input.failedActions.map((action) => `- ${oneLine(action.taskTitle)}: ${oneLine(action.result?.failure ?? action.result?.outcome ?? action.status)}`)
+      ? input.failedActions.map((action) => `- ${telegramSafeLine(action.taskTitle)}: ${telegramSafeLine(action.result?.failure ?? action.result?.outcome ?? action.status)}`)
       : ["- action 실패는 없지만 plan 종합 결과가 복구 필요 상태입니다."]),
     "",
     "아직 task/action은 만들지 않았습니다.",
@@ -1002,24 +1034,24 @@ export function orchestratorPlanReport(input: {
     `계획: ${code(plan.id)}`,
     `상태: ${code(plan.status)}`,
     "",
-    payload?.userMessage ? clipText(payload.userMessage, 1400) : "오케스트레이터가 표시할 메시지를 반환하지 않았습니다.",
+    payload?.userMessage ? telegramSafeClipText(payload.userMessage, 1400) : "오케스트레이터가 표시할 메시지를 반환하지 않았습니다.",
     "",
-    payload?.summary ? `요약: ${oneLine(payload.summary)}` : "",
+    payload?.summary ? `요약: ${telegramSafeLine(payload.summary)}` : "",
     payload?.questions.length ? "" : "",
-    ...(payload?.questions.length ? ["확인 질문:", ...payload.questions.map((question) => `- ${question}`)] : []),
+    ...(payload?.questions.length ? ["확인 질문:", ...payload.questions.map((question) => `- ${telegramSafeLine(question)}`)] : []),
     payload?.scope.length ? "" : "",
-    ...(payload?.scope.length ? ["범위:", ...payload.scope.map((item) => `- ${item}`)] : []),
+    ...(payload?.scope.length ? ["범위:", ...payload.scope.map((item) => `- ${telegramSafeLine(item)}`)] : []),
     payload?.tasks.length ? "" : "",
     ...(payload?.tasks.length
       ? [
           "작업 후보:",
           ...payload.tasks.map((task) =>
-            `- ${code(task.id)} ${oneLine(task.title)} agent=${code(task.targetAgent)} mode=${code(task.resultMode ?? "write")}`,
+            `- ${code(task.id)} ${telegramSafeLine(task.title)} agent=${code(task.targetAgent)} mode=${code(task.resultMode ?? "write")}`,
           ),
         ]
       : []),
     payload?.risks.length ? "" : "",
-    ...(payload?.risks.length ? ["리스크:", ...payload.risks.map((risk) => `- ${risk}`)] : []),
+    ...(payload?.risks.length ? ["리스크:", ...payload.risks.map((risk) => `- ${telegramSafeLine(risk)}`)] : []),
     "",
     "안전장치:",
     "- `/go` 전까지 task/action은 만들지 않습니다.",
@@ -1112,9 +1144,9 @@ export function orchestratorPlanResultReport(input: {
       : "구현 통과";
   const riskLines = [
     ...(input.synthesis?.risks ?? []),
-    input.synthesis && input.synthesis.outcome !== "pass" ? `종합 결과: ${oneLine(input.synthesis.summary)}` : "",
-    input.synthesisFailure ? `오케스트레이터 종합 실패: ${oneLine(input.synthesisFailure)}` : "",
-    ...failed.map((action) => `${oneLine(action.taskTitle)}: ${oneLine(action.result?.failure ?? action.result?.outcome ?? action.status)}`),
+    input.synthesis && input.synthesis.outcome !== "pass" ? `종합 결과: ${telegramSafeLine(input.synthesis.summary)}` : "",
+    input.synthesisFailure ? `오케스트레이터 종합 실패: ${telegramSafeLine(input.synthesisFailure)}` : "",
+    ...failed.map((action) => `${telegramSafeLine(action.taskTitle)}: ${telegramSafeLine(action.result?.failure ?? action.result?.outcome ?? action.status)}`),
   ].filter((line): line is string => Boolean(line));
   const nextCommand = needsRecovery ? "/recover" : mergeCommands.length ? "/now" : "/check";
   const repoNames = Array.from(
@@ -1131,8 +1163,8 @@ export function orchestratorPlanResultReport(input: {
     input.synthesis ? `종합 결과: ${code(input.synthesis.outcome)}` : "",
     "",
     input.synthesis ? "오케스트레이터 종합:" : "",
-    input.synthesis ? clipText(input.synthesis.userMessage, 1400) : "",
-    input.synthesisFailure ? `오케스트레이터 종합 실패: ${oneLine(input.synthesisFailure)}` : "",
+    input.synthesis ? telegramSafeClipText(input.synthesis.userMessage, 1400) : "",
+    input.synthesisFailure ? `오케스트레이터 종합 실패: ${telegramSafeLine(input.synthesisFailure)}` : "",
     input.synthesis || input.synthesisFailure ? "" : "",
     "Worker 결과:",
     ...input.actions.flatMap((action) => {
@@ -1145,10 +1177,10 @@ export function orchestratorPlanResultReport(input: {
           ? "보고 완료"
           : "통과";
       return [
-        `- ${oneLine(action.taskTitle)}: ${actionOutcome}`,
+        `- ${telegramSafeLine(action.taskTitle)}: ${actionOutcome}`,
         `  대상: ${repoName(runLog?.input.repoRoot ?? action.repoRoot)} / ${resultModeLabel(runLog?.task.resultMode)}`,
         runLog ? `  보고: ${oneLine(workerFinalMessage(runLog))}` : "",
-        action.result?.failure ? `  실패 이유: ${oneLine(action.result.failure)}` : "",
+        action.result?.failure ? `  실패 이유: ${telegramSafeLine(action.result.failure)}` : "",
       ].filter(Boolean);
     }),
     "",
@@ -1407,6 +1439,18 @@ export function remoteGoReport(input: {
     .join("\n");
 }
 
+export function remoteGoNoActionablePlanReport(): string {
+  return [
+    "# go",
+    "",
+    "승인할 오케스트레이터 계획이나 진행할 통합 gate가 없습니다.",
+    "오래된 pending task/action/draft는 Telegram `/go`로 승인하거나 실행 큐에 등록하지 않습니다.",
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code("/now")}`,
+  ].join("\n");
+}
+
 export function remoteIntegrationReport(input: {
   stage: "merge" | "push" | "cleanup";
   run: RunSummary;
@@ -1476,7 +1520,7 @@ export function remoteActionShowReport(actionId: string, action: RemoteActionRec
     action.result?.runLogPath ? `Run log: ${code(action.result.runLogPath)}` : "",
     action.result?.liveLogPath ? `Live log: ${code(action.result.liveLogPath)}` : "",
     action.result?.tmuxSession ? `Tmux: ${code(action.result.tmuxSession)}` : "",
-    action.result?.failure ? `실패 이유: ${oneLine(action.result.failure)}` : "",
+    action.result?.failure ? `실패 이유: ${telegramSafeLine(action.result.failure)}` : "",
     ...remoteActionNextLines(action),
   ]
     .filter(Boolean)
@@ -1498,7 +1542,7 @@ export function remoteActionApprovedReport(action: RemoteActionRecord): string {
     result?.runLogPath ? `Run log: ${code(result.runLogPath)}` : "",
     result?.liveLogPath ? `Live log: ${code(result.liveLogPath)}` : "",
     result?.tmuxSession ? `Tmux: ${code(result.tmuxSession)}` : "",
-    result?.failure ? `실패 이유: ${oneLine(result.failure)}` : "",
+    result?.failure ? `실패 이유: ${telegramSafeLine(result.failure)}` : "",
     action.status === "approved" ? "runner가 `actions:watch` 또는 `actions:run-pending`에서 실행을 이어갑니다." : "",
     ...remoteActionNextLines(action),
   ]
@@ -1528,7 +1572,7 @@ export function remoteActionResultReport(input: {
     result?.runId ? `런: ${code(result.runId)}` : "",
     result?.outcome ? `결과: ${code(result.outcome)}` : "",
     action.completedAt ? `완료: ${code(action.completedAt)}` : "",
-    result?.failure ? `실패 이유: ${oneLine(result.failure)}` : "",
+    result?.failure ? `실패 이유: ${telegramSafeLine(result.failure)}` : "",
     "",
     "산출 보고:",
     workerFinalMessage(runLog),

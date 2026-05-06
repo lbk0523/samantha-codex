@@ -237,6 +237,31 @@ describe("sendOutboxReplies", () => {
     expect(report).not.toContain("merge:check");
   });
 
+  test("normalizes deprecated commands before Telegram display", () => {
+    const report = compactTelegramReport(
+      [
+        "# plan-result",
+        "",
+        "계획 결과: 복구 필요",
+        "오케스트레이터 종합:",
+        "Synthesis mentioned /run_latest, /next_action, /next-action, and /status.",
+        "Worker 결과:",
+        "- Worker final text mentioned /action_current, /doctor, /health, and /failures.",
+        "남은 리스크:",
+        "- Old guidance: /run_latest then /status",
+        "다음 액션:",
+        "- 텔레그램: `/action_current`",
+      ].join("\n"),
+    );
+
+    expect(report).toContain("/now");
+    expect(report).toContain("/check");
+    expect(report).toContain("/problems");
+    for (const command of ["/run_latest", "/next_action", "/next-action", "/action_current", "/status", "/doctor", "/health", "/failures"]) {
+      expect(report).not.toContain(command);
+    }
+  });
+
   test("does not send id-only Telegram messages after reports that return ids", () => {
     const messages = telegramReplyMessages(
       "remote-propose.md",

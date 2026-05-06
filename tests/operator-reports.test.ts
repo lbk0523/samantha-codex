@@ -27,6 +27,7 @@ import {
   remoteActionShowReport,
   remoteActionsListReport,
   remoteDeprecatedCommandReport,
+  remoteGoNoActionablePlanReport,
   remoteHelpReport,
   remoteIntegrationReport,
   remoteGoReport,
@@ -213,8 +214,85 @@ describe("operator reports", () => {
     expect(advanced).not.toContain("/approve_action <action_id>");
 
     const deprecated = remoteDeprecatedCommandReport({ command: "/action_current", replacement: "/now" });
-    expect(deprecated).toContain("제거된 Telegram 명령");
+    expect(deprecated).toContain("명령은 제거됐습니다");
     expect(deprecated).toContain("텔레그램: `/now`");
+    expect(deprecated).not.toContain("/action_current");
+  });
+
+  test("normalizes deprecated command names from free-text report payloads", () => {
+    const planWithDeprecatedText = {
+      ...orchestratorPlan,
+      payload: {
+        ...orchestratorPlan.payload!,
+        summary: "Use /status only in local notes",
+        userMessage: "Do not ask for /run_latest or /next-action in Telegram.",
+        risks: ["Old /doctor and /health guidance can leak."],
+      },
+    };
+    const planReport = orchestratorPlanReport({ request: orchestrationRequest, plan: planWithDeprecatedText });
+    expect(planReport).toContain("/now");
+    expect(planReport).toContain("/check");
+    expect(planReport).toContain("/problems");
+    expect(planReport).not.toContain("/run_latest");
+    expect(planReport).not.toContain("/next-action");
+    expect(planReport).not.toContain("/status");
+    expect(planReport).not.toContain("/doctor");
+    expect(planReport).not.toContain("/health");
+
+    const runLog: WorkerRunLog = {
+      schemaVersion: 1,
+      runId: "run-command-normalize",
+      startedAt: "2026-05-05T10:02:00.000Z",
+      finishedAt: "2026-05-05T10:03:00.000Z",
+      task,
+      agent,
+      input: { repoRoot: "/repo", allocate: true, execute: true },
+      result: {
+        preparation: {
+          taskId: task.id,
+          agentId: agent.id,
+          worktreePath: "/worktree",
+          codex: { prompt: "prompt", command: ["codex", "exec"] },
+        },
+        setupResults: [],
+        command: {
+          command: ["codex", "exec"],
+          exitCode: 0,
+          stdout: `${JSON.stringify({
+            type: "item.completed",
+            item: {
+              type: "agent_message",
+              text: "Worker says /action_current and /failures are stale.\n\nHARNESS_RESULT: {\"status\":\"pass\",\"note\":\"done\",\"commit\":\"\"}",
+            },
+          })}\n`,
+          stderr: "",
+        },
+        evaluation: {
+          pass: true,
+          harness: { status: "pass", note: "done", commit: "" },
+          changedFiles: [],
+          scopeViolations: [],
+          verifyResults: [],
+        },
+        pass: true,
+      },
+    };
+    const action = {
+      ...createRemoteDispatchAction({
+        task,
+        repoRoot: "/repo",
+        createdAt: "2026-05-05T10:02:00.000Z",
+        source: "remote",
+        commandId: "remote-go",
+      }),
+      status: "completed" as const,
+      result: { pass: true, outcome: "pass" },
+    };
+    const actionReport = remoteActionResultReport({ action, runLog });
+    expect(actionReport).toContain("/now");
+    expect(actionReport).toContain("/problems");
+    expect(actionReport).not.toContain("/action_current");
+    expect(actionReport).not.toContain("/failures");
   });
 
   test("renders compact run and failure summaries", () => {
@@ -484,7 +562,10 @@ describe("operator reports", () => {
       completedAt: "2026-05-03T10:10:00.000Z",
       result: { pass: false, outcome: "fail", failure: "verify failed" },
     };
-    expect(remoteActionResultReport({ action: failedPlanAction })).toContain("복구 계획 생성: `/recover`");
+    const failedActionReport = remoteActionResultReport({ action: failedPlanAction });
+    expect(failedActionReport).toContain("계획 결과 보고가 끝난 뒤 복구 가능 여부를 판단합니다.");
+    expect(failedActionReport).toContain("텔레그램: `/now`");
+    expect(failedActionReport).not.toContain("`/recover`");
   });
 
   test("renders a one-command Telegram now report", () => {
@@ -496,7 +577,8 @@ describe("operator reports", () => {
       commandId: "remote-prepare",
     });
 
-    expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).toContain("텔레그램: `/go`");
+    expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).toContain("텔레그램: `/problems`");
+    expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).not.toContain("텔레그램: `/go`");
     expect(nowReport({ runs: [], tasks: [], actions: [{ ...pendingAction, status: "approved" }] })).toContain(
       "텔레그램: `/now`",
     );
@@ -512,7 +594,8 @@ describe("operator reports", () => {
     expect(nowReport({ runs: [], tasks: [], actions: [], orchestratorPlans: [orchestratorPlan] })).toContain(
       "계획 다시 보기: `/plan_current`",
     );
-    expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("텔레그램: `/go`");
+    expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("텔레그램: `/problems`");
+    expect(nowReport({ runs: [], tasks: [task], actions: [] })).not.toContain("텔레그램: `/go`");
     expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("지금 바로 필요한 원격 액션은 없습니다.");
     expect(nowReport({ runs: [], tasks: [], actions: [], proposals: [proposal] })).toContain("지금 바로 필요한 원격 액션은 없습니다.");
     expect(nowReport({ runs: [failRun], tasks: [], actions: [] })).toContain("텔레그램: `/problems`");
@@ -576,6 +659,27 @@ describe("operator reports", () => {
         ],
       }),
     ).toContain("텔레그램: `/recover`");
+    expect(
+      nowReport({
+        runs: [],
+        tasks: [],
+        actions: [failedPlanAction],
+        orchestratorPlans: [
+          {
+            ...orchestratorPlan,
+            status: "materialized",
+            actionIds: [failedPlanAction.id],
+            synthesis: {
+              outcome: "failed",
+              summary: "verify failed",
+              nextActions: [],
+              risks: [],
+              userMessage: "복구 필요",
+            },
+          },
+        ],
+      }),
+    ).not.toContain("텔레그램: `/recover`");
     expect(
       nowReport({
         runs: [],
@@ -669,6 +773,8 @@ describe("operator reports", () => {
     });
     expect(materialized).toContain("오케스트레이터 계획을 승인했고 worker 실행 큐에 등록했습니다.");
     expect(materialized).toContain("텔레그램: `/now`");
+    expect(remoteGoNoActionablePlanReport()).toContain("통합 gate가 없습니다.");
+    expect(remoteGoNoActionablePlanReport()).toContain("텔레그램: `/now`");
 
     const passedPlanAction = {
       ...createRemoteDispatchAction({
@@ -729,8 +835,8 @@ describe("operator reports", () => {
         outcome: "pass",
         summary: "통과",
         nextActions: ["텔레그램: /run_latest"],
-        risks: [],
-        userMessage: "완료했습니다.",
+        risks: ["/status 대신 현재 명령을 안내해야 합니다."],
+        userMessage: "완료했습니다. /run_latest는 Telegram에 노출되면 안 됩니다.",
       },
     });
     expect(passedPlanResult).toContain("계획 결과: 구현 통과");
@@ -741,6 +847,8 @@ describe("operator reports", () => {
     expect(passedPlanResult).toContain("대상: repo / 구현/수정");
     expect(passedPlanResult).toContain("`README.md`");
     expect(passedPlanResult).toContain("텔레그램: `/now`");
+    expect(passedPlanResult).not.toContain("/run_latest");
+    expect(passedPlanResult).not.toContain("/status");
     expect(passedPlanResult).not.toContain("plan-1");
     expect(passedPlanResult).not.toContain("task-pass status=");
 

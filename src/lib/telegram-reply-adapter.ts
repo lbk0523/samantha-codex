@@ -72,6 +72,27 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+const telegramCommandReplacements: Array<[RegExp, string]> = [
+  [/\/help_advanced\b/g, "/help"],
+  [/\/help advanced\b/g, "/help"],
+  [/\/(?:next_action|next-action|runs|run_latest|run_next|run-next|tasks|task|actions|action_current|action|proposals|proposal_next|proposal|drafts|draft_next)\b/g, "/now"],
+  [/\/run\b/g, "/now"],
+  [/\/(?:status|dashboard)\b/g, "/check"],
+  [/\/(?:doctor|health|failures)\b/g, "/problems"],
+  [/\/(?:accept|draft_approve|draft-approve|yes|prepare_dispatch|prepare-dispatch|approve_action|approve-action)\b/g, "/go"],
+  [/\/reject\b/g, "/cancel"],
+  [/\/(?:draft_prepare|draft-prepare)\b/g, "/plan"],
+  [/\/(?:propose|draft_propose|draft-propose|draft)\b/g, "/work <요청>"],
+];
+
+function normalizeTelegramVisibleText(value: string): string {
+  let safe = value;
+  for (const [pattern, replacement] of telegramCommandReplacements) {
+    safe = safe.replace(pattern, replacement);
+  }
+  return safe;
+}
+
 function splitText(input: string, limit: number): string[] {
   const chunks: string[] = [];
   let remaining = input;
@@ -176,8 +197,7 @@ export function compactTelegramReport(report: string): string {
     lines.push(compacted);
   }
 
-  return lines
-    .join("\n")
+  return normalizeTelegramVisibleText(lines.join("\n").replace(/\n{3,}/g, "\n\n").trim())
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
