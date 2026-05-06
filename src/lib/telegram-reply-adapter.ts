@@ -125,7 +125,7 @@ function compactLine(rawLine: string): string | undefined {
   if (/^(?:요청|계획|액션|런|커밋|기록|Run log|Live log|Tmux|Source proposal|원본 제안):/.test(trimmed)) {
     return undefined;
   }
-  if (/^(?:Saved proposal|저장된 제안|Saved draft|저장된 드래프트|Approved draft|승인된 드래프트|Created task|생성된 task):/.test(trimmed)) {
+  if (/^(?:Saved proposal|저장된 제안|저장된 요청|Saved draft|저장된 드래프트|Approved draft|승인된 드래프트|Created task|생성된 task):/.test(trimmed)) {
     return undefined;
   }
   if (/^(?:Action|Run|Task|Proposal|Draft):\s+`/.test(trimmed)) return undefined;
@@ -141,9 +141,20 @@ export function compactTelegramReport(report: string): string {
   const skipSectionHeadings = new Set([
     "기록:",
     "로컬 fallback:",
+    "로컬 merge 후보:",
+    "실행 예정 명령:",
+    "변경 파일:",
     "생성된 task:",
     "생성된 action:",
     "안전장치:",
+  ]);
+  const resumeSectionHeadings = new Set([
+    "다음 액션:",
+    "검증:",
+    "산출 보고:",
+    "오케스트레이터 종합:",
+    "Worker 결과:",
+    "세부:",
   ]);
   const lines: string[] = [];
   let skippingSection = false;
@@ -156,7 +167,8 @@ export function compactTelegramReport(report: string): string {
     }
     if (skippingSection) {
       if (!trimmed) skippingSection = false;
-      continue;
+      else if (resumeSectionHeadings.has(trimmed)) skippingSection = false;
+      else continue;
     }
 
     const compacted = compactLine(rawLine);

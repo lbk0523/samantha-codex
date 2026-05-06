@@ -10,6 +10,7 @@
   "scripts": {
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test --path-ignore-patterns='worktrees/**' tests",
+    "check:telegram-ux": "bun run scripts/check-telegram-ux.ts",
     "dispatch-worker": "bun run src/dispatch-worker.ts",
     "samantha": "bun run src/samantha.ts",
     "validate-fixture": "bun run src/index.ts validate-fixture"

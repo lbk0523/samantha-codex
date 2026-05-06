@@ -463,7 +463,7 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "`/work <요청>` -> `/plan` -> `/go` -> `/now`",
     "",
     "자동 분류가 틀렸을 때만 `/plan <project_id> <scope_id>`로 보정하세요.",
-    "run/task/action/proposal/draft ID를 직접 입력하는 명령은 Telegram에서 제거했습니다.",
+    "run, task, action, proposal, draft ID를 직접 입력하는 명령은 Telegram에서 제거했습니다.",
   ].join("\n");
 }
 
@@ -474,7 +474,7 @@ export function remoteDeprecatedCommandReport(input: { command: string; replacem
     `제거된 Telegram 명령입니다: ${code(input.command)}`,
     "",
     "현재 Telegram은 오케스트레이터 워크플로우만 직접 다룹니다.",
-    "run/task/action/proposal/draft ID를 직접 입력하는 수동 흐름은 로컬 점검용으로만 남깁니다.",
+    "run, task, action, proposal, draft ID를 직접 입력하는 수동 흐름은 로컬 점검용으로만 남깁니다.",
     "",
     "다음 액션:",
     `- 텔레그램: ${code(input.replacement)}`,

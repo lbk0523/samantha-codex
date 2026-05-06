@@ -167,12 +167,19 @@ describe("sendOutboxReplies", () => {
       [
         "# execution-result",
         "",
+        "저장된 요청: `request-20260506-090000-work-abc12345`",
         "액션: `action-1`",
         "태스크: `task-1` - 보고서 작성",
         "런: `run-1`",
         "결과: `pass`",
+        "변경 파일:",
+        "- `src/lib/operator-reports.ts`",
+        "기록:",
+        "- Run log: `/runs/run-1.json`",
         "다음 액션:",
         "- 텔레그램: `/go`",
+        "로컬 merge 후보:",
+        "`bun run samantha merge:check --run-log=/runs/run-1.json --repo-root=/repo`",
       ].join("\n"),
     );
 
@@ -183,6 +190,9 @@ describe("sendOutboxReplies", () => {
     expect(report).not.toContain("action-1");
     expect(report).not.toContain("task-1");
     expect(report).not.toContain("run-1");
+    expect(report).not.toContain("request-20260506-090000-work-abc12345");
+    expect(report).not.toContain("operator-reports");
+    expect(report).not.toContain("merge:check");
   });
 
   test("does not send id-only Telegram messages after reports that return ids", () => {
