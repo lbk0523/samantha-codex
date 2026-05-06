@@ -13,6 +13,19 @@ This repository builds a Codex-only version of Samantha: a personal 24/7 control
 - Start with one writer. Parallel non-writers are allowed. Writer cap > 1 requires explicit dogfood evidence.
 - Safety gates beat agent suggestions.
 
+## Cross-OS Workspace Rules
+
+- Ubuntu/WSL is the Samantha automation host. Mac is a development/client machine.
+- Do not assume absolute paths are portable across OSes.
+  - Ubuntu paths look like `/home/lbk0523/...`.
+  - Mac paths look like `/Users/byung/...`.
+- Repo code and docs must not hard-code local absolute paths unless the file is explicitly local-only or operational state.
+- Prefer project ids, repo-relative paths, environment variables, or project profile resolution over absolute paths.
+- `state/`, `runs/`, `.samantha-worktrees/`, and dashboard runtime output belong to the Ubuntu Samantha host.
+- Do not run Samantha daemon, watch, poll, reply, worker dispatch, or dashboard runtime processes from Mac.
+- Final automation verification and merge gates are Ubuntu/Samantha-host responsibilities.
+- Mac-side work may edit, test, commit, and push normal repo code, but operational state remains Ubuntu-owned.
+
 ## Safety Priority
 
 1. Samantha safety policy
