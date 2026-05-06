@@ -118,7 +118,7 @@ actions:watch -> tasks:dispatch <task-id> --allocate --execute --tmux
 
 Dependent plan actions use `waiting` status with explicit `dependsOnActionIds`. `actions:watch` promotes a waiting action only after every dependency action completed successfully. If a dependency fails or disappears, the dependent action is marked failed without running a worker.
 
-When all actions belonging to one materialized orchestrator plan finish, `actions:watch` reruns `codex-orchestrator` in synthesis mode and writes one additional `# plan-result` Telegram outbox report. The plan-level report summarizes all worker outcomes, changed files, failed action reasons, and merge-check candidates so BK does not have to inspect isolated action reports one by one. If synthesis fails, Samantha still writes a deterministic fallback report and records the synthesis failure on the plan.
+When all actions belonging to one materialized orchestrator plan finish, `actions:watch` reruns `codex-orchestrator` in synthesis mode and writes one additional `# plan-result` Telegram outbox report. The plan-level report is compact: outcome first, then worker notes, changed files or report artifacts, remaining risk, and one next safe Telegram command. Local merge-check candidates remain local fallback detail rather than the routine Telegram path. If synthesis fails, Samantha still writes a deterministic fallback report and records the synthesis failure on the plan.
 
 Lower-level action preparation and explicit action approval remain available through local CLI/inbox commands for debugging, but they are no longer Telegram commands. Telegram should use `/go` to advance the current safe gate.
 
@@ -152,7 +152,7 @@ If an entire orchestrator plan reports a failed result, use Telegram recovery:
 /go -> materialize the approved recovery plan
 ```
 
-`/recover` copies the failed plan id, original request, synthesis summary, failed action reasons, and run log paths into the new request. It intentionally does not retry the failed task directly.
+`/recover` copies the failed plan id, original request, synthesis summary, failed action reasons, relevant changed files, run log paths, and report artifact previews into the new request. It explicitly tells the Orchestrator Agent to inspect the failure, avoid blind retry, and build recovery tasks from canonical project profile repo roots instead of old worker worktrees.
 
 If a standalone worker run fails for a recoverable reason, keep the recovery local:
 

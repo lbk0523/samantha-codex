@@ -13,8 +13,8 @@ The first useful Telegram remote-work loop now exists:
 - `/cancel` discards the current pending request or unapproved plan before task/action creation.
 - `/go` validates the plan, materializes tasks/actions, approves dependency-free actions, and advances merge/push/cleanup gates for the latest passed run.
 - `actions:watch` executes approved actions, promotes dependent actions after prerequisites pass, and marks dependent actions failed when prerequisites fail.
-- `actions:watch` reruns `codex-orchestrator` in synthesis mode and writes one `# plan-result` report after all actions for a materialized plan finish.
-- `/recover` turns the latest failed materialized plan result into a new orchestration request for the next `/plan`.
+- `actions:watch` reruns `codex-orchestrator` in synthesis mode and writes one compact `# plan-result` report after all actions for a materialized plan finish.
+- `/recover` turns the latest failed materialized plan result into a new orchestration request for the next `/plan`, with failed-plan context instead of a blind retry.
 
 The Telegram command surface has been compressed. The supported routine commands are:
 
@@ -92,7 +92,7 @@ BK
 
 ## Next Objective
 
-Improve the practical trustworthiness of the compressed Telegram workflow. The next slice should focus on the result and recovery loop after a plan has been executed, not on adding more Telegram commands.
+Improve the practical trustworthiness of the compressed Telegram workflow. N1-N3 now focus the result and recovery loop after a plan has been executed, without adding more Telegram commands.
 
 ### Slice N1: Result Report Quality
 
@@ -117,7 +117,7 @@ Goal: make `/recover -> /plan -> /go` reliable for failed materialized plans.
 
 Build:
 
-- recovery prompt context that includes failed plan summary, failed action reasons, relevant changed files, and artifact previews
+- recovery prompt context that includes failed plan summary, failed action reasons, relevant changed files, run-log references, and artifact previews
 - stronger guardrail that recovery tasks use canonical project repo roots, never old worker worktrees
 - recovery task validation that prevents stale failed tasks from polluting `/now`
 - result reporting that makes clear whether the recovery fixed the original problem
@@ -175,5 +175,8 @@ Acceptance:
 12. plan-level result reporting reruns `codex-orchestrator` in synthesis mode with deterministic fallback.
 13. `/recover` turns the latest failed materialized plan result into a new pending orchestration request.
 14. Telegram command surface is compressed and old id-based commands return deprecated guidance.
+15. plan-result reports now show outcome, worker notes, changed/artifact paths, remaining risk, and one next safe Telegram command without routine raw ids.
+16. recovery requests now carry failed plan summary, failed action reasons, changed files, run-log references, artifact previews, and explicit "do not retry blindly" instructions.
+17. recovery planning/materialization guardrails prefer canonical project profile repo roots and reject worker-worktree repo roots.
 
-The next slice is result/recovery quality for real Telegram operation.
+The next slice should be live Telegram dogfood and only fix concrete gaps found in those flows.

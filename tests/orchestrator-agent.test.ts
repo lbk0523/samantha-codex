@@ -32,5 +32,8 @@ describe("orchestrator agent prompt", () => {
     expect(prompt).toContain("Dependent tasks do not see unmerged file changes from earlier worker tasks.");
     expect(prompt).toContain("Do not create a separate verify-only task that depends on files written by an earlier write task.");
     expect(prompt).toContain("Put verification for a write task in that same task's verifyCommands.");
+    expect(prompt).toContain("For recovery requests, treat run logs, changed files, and worker worktree paths as evidence only.");
+    expect(prompt).toContain("Recovery tasks must use the selected project profile's canonical repoRoot.");
+    expect(prompt).toContain("leave `repoRoot` empty and set `projectId`");
   });
 });

@@ -1258,6 +1258,100 @@ describe("inbox and remote commands", () => {
     });
   });
 
+  test("materializes recovery plans from canonical project roots only", () => {
+    const basePlan = {
+      schemaVersion: 1 as const,
+      id: "plan-recovery-canonical-root",
+      requestId: "request-recovery-canonical-root",
+      status: "planned" as const,
+      createdAt: "2026-05-06T01:10:00.000Z",
+      payload: {
+        summary: "복구 계획",
+        assumptions: [],
+        questions: [],
+        scope: ["failed plan recovery"],
+        nonScope: [],
+        risks: [],
+        tasks: [
+          {
+            id: "recover-failed-plan",
+            title: "Recover failed plan",
+            targetAgent: "codex-worker",
+            projectId: "omht",
+            resultMode: "write" as const,
+            targetFiles: ["src/recovery.ts"],
+            forbiddenChanges: ["state/**"],
+            setupCommands: [],
+            verifyCommands: ["bun typecheck"],
+            instructions: "Recover from the failed materialized plan.",
+            dependencies: [],
+          },
+        ],
+        batches: [["recover-failed-plan"]],
+        userMessage: "복구 계획입니다.",
+      },
+    };
+    const projects = [
+      {
+        schemaVersion: 1 as const,
+        id: "omht",
+        repoRoot: "/repo/omht",
+        setupCommands: [],
+        verifyCommands: ["bun typecheck"],
+        forbiddenChanges: ["state/**"],
+      },
+    ];
+    const agents = [
+      {
+        ...writer,
+        skillPolicy: {
+          requiredBundles: [],
+          blockedSkills: [
+            "using-git-worktrees",
+            "dispatching-parallel-agents",
+            "subagent-driven-development",
+          ],
+        },
+      },
+    ];
+
+    const canonical = materializeOrchestratorPlan({
+      plan: basePlan,
+      agents,
+      projects,
+      createdAt: "2026-05-06T01:11:00.000Z",
+      commandId: "remote-go-recovery",
+    });
+
+    expect(canonical.ok).toBe(true);
+    expect(canonical.tasks[0]).toMatchObject({ repoRoot: "/repo/omht" });
+    expect(canonical.actions[0]).toMatchObject({ repoRoot: "/repo/omht" });
+
+    const workerWorktree = materializeOrchestratorPlan({
+      plan: {
+        ...basePlan,
+        id: "plan-recovery-worker-root",
+        payload: {
+          ...basePlan.payload,
+          tasks: [
+            {
+              ...basePlan.payload.tasks[0],
+              repoRoot: "/repo/.samantha-worktrees/omht/task-failed-plan",
+            },
+          ],
+        },
+      },
+      agents,
+      projects,
+      createdAt: "2026-05-06T01:12:00.000Z",
+      commandId: "remote-go-recovery-worker-root",
+    });
+
+    expect(workerWorktree.ok).toBe(false);
+    expect(workerWorktree.violations).toContain("task proposal recover-failed-plan: repoRoot must not point to a Samantha worker worktree");
+    expect(workerWorktree.violations).toContain("task proposal recover-failed-plan: repoRoot must match project profile repoRoot for project omht");
+  });
+
   test("revises the latest orchestrator plan into a new pending request", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-revise-plan-"));
     tmpRoots.push(root);
@@ -1586,6 +1680,47 @@ describe("inbox and remote commands", () => {
     const state = join(root, "state");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    const logs = join(root, "runs");
+    const worktree = join(root, "failed-worktree");
+    await mkdir(join(worktree, "docs"), { recursive: true });
+    await mkdir(logs, { recursive: true });
+    await writeFile(join(worktree, "docs", "recovery-note.md"), "# 실패 산출\n\n타입체크 실패 분석입니다.", "utf8");
+    const runLogPath = join(logs, "failed-plan.json");
+    const failedRunLog: WorkerRunLog = {
+      schemaVersion: 1,
+      runId: "run-failed-plan",
+      startedAt: "2026-05-06T10:12:00.000Z",
+      finishedAt: "2026-05-06T10:20:00.000Z",
+      task: {
+        ...task,
+        id: "task-failed-plan",
+        title: "Failed plan task",
+        targetFiles: ["docs/**"],
+        verifyCommands: ["bun typecheck"],
+        resultMode: "report",
+      },
+      agent: writer,
+      input: { repoRoot: "/repo/samantha", allocate: true, execute: true },
+      result: {
+        preparation: {
+          taskId: "task-failed-plan",
+          agentId: "codex-worker",
+          worktreePath: worktree,
+          codex: { prompt: "prompt", command: ["codex", "exec"] },
+        },
+        setupResults: [],
+        command: { command: ["codex", "exec"], exitCode: 0, stdout: "", stderr: "" },
+        evaluation: {
+          pass: false,
+          harness: { status: "rework", note: "typecheck failed", commit: "" },
+          changedFiles: ["docs/recovery-note.md"],
+          scopeViolations: [],
+          verifyResults: [{ command: "bun typecheck", exitCode: 1, stdout: "", stderr: "typecheck failed" }],
+        },
+        pass: false,
+      },
+    };
+    await writeFile(runLogPath, `${JSON.stringify(failedRunLog, null, 2)}\n`, "utf8");
 
     const failedAction = {
       ...createRemoteDispatchAction({
@@ -1601,7 +1736,7 @@ describe("inbox and remote commands", () => {
         pass: false,
         outcome: "fail",
         failure: "typecheck failed",
-        runLogPath: "/runs/failed-plan.json",
+        runLogPath,
       },
     };
     await writeFile(
@@ -1678,14 +1813,19 @@ describe("inbox and remote commands", () => {
     const report = await readFile(join(outbox, "001-recover.md"), "utf8");
     expect(report).toContain("# recover");
     expect(report).toContain("복구 계획 요청을 만들었습니다.");
-    expect(report).toContain("원 계획: `plan-failed-result`");
+    expect(report).toContain("복구 대상: 실패 복구 대상 계획");
     expect(report).toContain("텔레그램: `/plan`");
     const requests = await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).list();
-    expect(requests.at(-1)).toMatchObject({
-      id: expect.stringMatching(/^request-20260506-102200-recover-plan-failed-result-[0-9a-f]{8}$/),
-      status: "pending_plan",
-      text: expect.stringContaining("무작정 retry하지 말고 복구 계획을 제안하세요."),
-    });
+    const latestRequest = requests.at(-1);
+    const recoveryText = String(latestRequest?.text ?? "");
+    expect(latestRequest?.id).toMatch(/^request-20260506-102200-recover-plan-failed-result-[0-9a-f]{8}$/);
+    expect(latestRequest?.status).toBe("pending_plan");
+    expect(recoveryText).toContain("무작정 retry하지 말고 복구 계획을 제안하세요.");
+    expect(recoveryText).toContain("docs/recovery-note.md");
+    expect(recoveryText).toContain(runLogPath);
+    expect(recoveryText).toContain("# 실패 산출");
+    expect(recoveryText).toContain("canonical repoRoot");
+    expect(recoveryText).toContain("worker worktree path를 repoRoot로 복사하지 마세요.");
   });
 
   test("remote next action uses recoverable orchestrator plan context", async () => {
@@ -2370,10 +2510,10 @@ describe("inbox and remote commands", () => {
     expect(report).toContain("Telegram에서 읽을 수 있어야 하는 산출물입니다.");
     expect(report).toContain("텔레그램: `/now`");
     const planReport = reports.find((item) => item.includes("# plan-result")) ?? "";
-    expect(planReport).toContain("계획 결과: 통과");
+    expect(planReport).toContain("계획 결과: 보고 완료");
     expect(planReport).toContain("오케스트레이터 종합:");
     expect(planReport).toContain("오케스트레이터 최종 종합입니다.");
-    expect(planReport).toContain("완료 action: 1/1");
+    expect(planReport).toContain("완료 작업: 1/1");
     expect(planReport).toContain("계획 보고 완료");
     const reportedPlan = await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).find("plan-report-result");
     expect(typeof reportedPlan?.resultReportedAt).toBe("string");

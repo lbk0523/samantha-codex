@@ -173,7 +173,7 @@ describe("sendOutboxReplies", () => {
         "런: `run-1`",
         "결과: `pass`",
         "변경 파일:",
-        "- `src/lib/operator-reports.ts`",
+        "- `src > lib > operator-reports.ts`",
         "기록:",
         "- Run log: `/runs/run-1.json`",
         "다음 액션:",
@@ -192,6 +192,40 @@ describe("sendOutboxReplies", () => {
     expect(report).not.toContain("run-1");
     expect(report).not.toContain("request-20260506-090000-work-abc12345");
     expect(report).not.toContain("operator-reports");
+    expect(report).not.toContain("merge:check");
+  });
+
+  test("keeps compact plan-result outcome, artifacts, risk, and one next command", () => {
+    const report = compactTelegramReport(
+      [
+        "# plan-result",
+        "",
+        "계획 결과: 구현 통과",
+        "계획: `plan-20260506-090100-work-def67890`",
+        "요청: `request-20260506-090000-work-abc12345`",
+        "완료 작업: 1/1",
+        "Worker 결과:",
+        "- Telegram UX 정리: 통과",
+        "  보고: Telegram 보고 메시지를 짧게 정리했습니다.",
+        "산출/변경:",
+        "- `src > lib > operator-reports.ts`",
+        "남은 리스크:",
+        "- 없음",
+        "다음 액션:",
+        "- 텔레그램: `/now`",
+        "로컬 merge 후보:",
+        "`bun run samantha merge:check --run-log=/runs/run-1.json --repo-root=/repo`",
+      ].join("\n"),
+    );
+
+    expect(report).toContain("계획 결과");
+    expect(report).toContain("계획 결과: 구현 통과");
+    expect(report).toContain("Telegram 보고 메시지를 짧게 정리했습니다.");
+    expect(report).toContain("`src > lib > operator-reports.ts`");
+    expect(report).toContain("남은 리스크:");
+    expect(report).toContain("텔레그램: `/now`");
+    expect(report).not.toContain("plan-20260506-090100-work-def67890");
+    expect(report).not.toContain("request-20260506-090000-work-abc12345");
     expect(report).not.toContain("merge:check");
   });
 

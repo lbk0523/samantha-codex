@@ -726,14 +726,31 @@ function actionNeedsRecovery(action: RemoteActionRecord): boolean {
   return action.status === "failed" || action.result?.pass === false;
 }
 
+interface RecoverableOrchestratorPlan {
+  plan: OrchestratorPlanRecord;
+  actions: RemoteActionRecord[];
+  failedActions: RemoteActionRecord[];
+  request?: OrchestrationRequestRecord;
+  runLogs: WorkerRunLog[];
+  artifactPreviews: RemoteActionArtifactPreview[];
+}
+
+async function readRunLogsForActions(actions: RemoteActionRecord[]): Promise<WorkerRunLog[]> {
+  const logs = await Promise.all(
+    actions.map(async (action) => {
+      if (!action.result?.runLogPath) return undefined;
+      try {
+        return await readWorkerRunLog(action.result.runLogPath);
+      } catch {
+        return undefined;
+      }
+    }),
+  );
+  return logs.filter((log): log is WorkerRunLog => log !== undefined);
+}
+
 async function latestRecoverableOrchestratorPlan(args: ParsedArgs): Promise<
-  | {
-      plan: OrchestratorPlanRecord;
-      actions: RemoteActionRecord[];
-      failedActions: RemoteActionRecord[];
-      request?: OrchestrationRequestRecord;
-    }
-  | undefined
+  RecoverableOrchestratorPlan | undefined
 > {
   const [plans, actions, requests] = await Promise.all([
     new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
@@ -755,11 +772,15 @@ async function latestRecoverableOrchestratorPlan(args: ParsedArgs): Promise<
     const failedActions = finalActions.filter(actionNeedsRecovery);
     const synthesisNeedsRecovery = plan.synthesis ? plan.synthesis.outcome !== "pass" : false;
     if (failedActions.length > 0 || synthesisNeedsRecovery) {
+      const runLogs = await readRunLogsForActions(finalActions);
+      const artifactPreviews = (await Promise.all(runLogs.map((runLog) => collectReportArtifactPreviews(runLog)))).flat();
       return {
         plan,
         actions: finalActions,
         failedActions,
         request: requestsById.get(plan.requestId),
+        runLogs,
+        artifactPreviews,
       };
     }
   }
@@ -767,14 +788,20 @@ async function latestRecoverableOrchestratorPlan(args: ParsedArgs): Promise<
   return undefined;
 }
 
-function recoveryRequestText(input: {
-  plan: OrchestratorPlanRecord;
-  actions: RemoteActionRecord[];
-  failedActions: RemoteActionRecord[];
-  request?: OrchestrationRequestRecord;
-}): string {
+function recoveryRequestText(input: RecoverableOrchestratorPlan): string {
   const plan = input.plan;
   const failedActions = input.failedActions.length ? input.failedActions : input.actions.filter(actionNeedsRecovery);
+  const runLogForAction = (action: RemoteActionRecord) =>
+    input.runLogs.find((log) => log.runId === action.result?.runId || log.task.id === action.taskId);
+  const changedFiles = Array.from(
+    new Set(
+      failedActions.flatMap((action) => {
+        const runLog = runLogForAction(action);
+        return runLog?.result.evaluation?.changedFiles ?? runLog?.result.commit?.files ?? [];
+      }),
+    ),
+  );
+  const runLogPaths = Array.from(new Set(failedActions.flatMap((action) => action.result?.runLogPath ? [action.result.runLogPath] : [])));
   const lines = [
     "복구 계획 요청입니다.",
     "",
@@ -787,22 +814,40 @@ function recoveryRequestText(input: {
     "",
     "실패 action:",
     ...(failedActions.length
-      ? failedActions.map((action) =>
-          [
-            `- ${action.id}`,
-            `task=${action.taskId}`,
-            `status=${action.status}`,
-            `outcome=${action.result?.outcome ?? "unknown"}`,
-            action.result?.failure ? `failure=${compactLine(action.result.failure)}` : "",
-            action.result?.runLogPath ? `runLog=${action.result.runLogPath}` : "",
-          ]
-            .filter(Boolean)
-            .join(" "),
-        )
+      ? failedActions.flatMap((action) => {
+          const runLog = runLogForAction(action);
+          const actionFiles = runLog?.result.evaluation?.changedFiles ?? runLog?.result.commit?.files ?? [];
+          return [
+            `- ${action.taskTitle}: status=${action.status} outcome=${action.result?.outcome ?? "unknown"}`,
+            action.result?.failure ? `  실패 이유: ${compactLine(action.result.failure)}` : "",
+            actionFiles.length ? `  관련 변경/산출: ${actionFiles.map(compactLine).join(", ")}` : "",
+            action.result?.runLogPath ? `  run log: ${action.result.runLogPath}` : "",
+          ].filter(Boolean);
+        })
       : ["- action 자체 실패는 없지만 오케스트레이터 종합 결과가 복구 필요 상태입니다."]),
+    "",
+    "관련 변경/산출:",
+    ...(changedFiles.length ? changedFiles.slice(0, 12).map((file) => `- ${file}`) : ["- 실패 action에서 변경 파일을 찾지 못했습니다. run log를 참고하세요."]),
+    changedFiles.length > 12 ? `- 외 ${changedFiles.length - 12}개` : "",
+    "",
+    "Run log 참고:",
+    ...(runLogPaths.length ? runLogPaths.map((path) => `- ${path}`) : ["- 없음"]),
+    input.artifactPreviews.length ? "" : "",
+    ...(input.artifactPreviews.length
+      ? [
+          "산출물 미리보기:",
+          ...input.artifactPreviews.slice(0, 2).flatMap((preview) => [
+            `파일: ${preview.file}`,
+            clipText(preview.text, 800),
+          ]),
+        ]
+      : []),
     "",
     "요청:",
     "위 실패 원인을 먼저 재검토하고, 무작정 retry하지 말고 복구 계획을 제안하세요.",
+    "복구 task는 project profile의 canonical repoRoot에서 시작해야 합니다.",
+    "실패 run log나 worker worktree path를 repoRoot로 복사하지 마세요.",
+    "repoRoot가 불확실하면 비워 두고 projectId를 맞춰 materializer가 profile 기본값을 쓰게 하세요.",
     "필요하면 원인 확인용 report task를 먼저 두고, 수정/검증 task는 의존 관계로 분리하세요.",
   ];
 

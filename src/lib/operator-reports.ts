@@ -72,6 +72,10 @@ function shortCommit(commit: string): string {
   return commit ? commit.slice(0, 12) : "";
 }
 
+function displayFilePath(file: string): string {
+  return oneLine(file).replace(/\//g, " > ");
+}
+
 function runLine(run: RunSummary): string {
   const commit = shortCommit(run.commit);
   const reason = run.failureReason ? ` reason=${code(run.failureReason)}` : "";
@@ -147,6 +151,13 @@ function orchestrationRequestNextLines(request: OrchestrationRequestRecord): str
   return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
 }
 
+function orchestrationRequestSummary(request: OrchestrationRequestRecord): string {
+  const text = oneLine(request.text);
+  if (text.startsWith("복구 계획 요청입니다.")) return "실패 계획 복구 요청";
+  if (text.startsWith("계획 수정 요청입니다.")) return "계획 수정 요청";
+  return text;
+}
+
 function orchestratorPlanNextLines(plan: OrchestratorPlanRecord): string[] {
   if (plan.status === "questions") {
     return [
@@ -173,6 +184,12 @@ function orchestratorPlanNextLines(plan: OrchestratorPlanRecord): string[] {
 
 function actionNeedsRecovery(action: RemoteActionRecord): boolean {
   return action.status === "failed" || action.result?.pass === false;
+}
+
+function actionVerificationFailed(action: RemoteActionRecord, runLog: WorkerRunLog | undefined): boolean {
+  if (runLog?.result.evaluation?.verifyResults.some((result) => result.exitCode !== 0)) return true;
+  const text = `${action.result?.outcome ?? ""} ${action.result?.failure ?? ""}`.toLowerCase();
+  return text.includes("verify") || text.includes("typecheck") || text.includes("test failed") || text.includes("검증");
 }
 
 function latestRecoverablePlan(input: {
@@ -671,7 +688,7 @@ export function nowReport(input: {
       "",
       "작업 요청이 오케스트레이터 계획 생성을 기다리고 있습니다.",
       `요청: ${code(pendingOrchestrationRequest.id)}`,
-      `내용: ${oneLine(pendingOrchestrationRequest.text)}`,
+      `내용: ${orchestrationRequestSummary(pendingOrchestrationRequest)}`,
       ...orchestrationRequestNextLines(pendingOrchestrationRequest),
     ].join("\n");
   }
@@ -695,9 +712,7 @@ export function nowReport(input: {
       "# now",
       "",
       "실패한 오케스트레이터 계획 결과가 있습니다.",
-      `계획: ${code(recoverable.plan.id)}`,
-      `요청: ${code(recoverable.plan.requestId)}`,
-      `실패 action: ${recoverable.failedActions.length}/${recoverable.actions.length}`,
+      `실패 작업: ${recoverable.failedActions.length}/${recoverable.actions.length}`,
       recoverable.plan.synthesis?.summary ? `종합: ${oneLine(recoverable.plan.synthesis.summary)}` : "",
       "",
       "다음 액션:",
@@ -881,12 +896,12 @@ export function orchestratorRecoveryRequestReport(input: {
     "# recover",
     "",
     "실패한 계획 결과를 바탕으로 복구 계획 요청을 만들었습니다.",
-    `원 계획: ${code(input.sourcePlan.id)}`,
-    `새 요청: ${code(input.request.id)}`,
+    input.sourcePlan.payload?.summary ? `복구 대상: ${oneLine(input.sourcePlan.payload.summary)}` : "",
+    input.sourcePlan.synthesis?.summary ? `실패 요약: ${oneLine(input.sourcePlan.synthesis.summary)}` : "",
     "",
-    "실패 action:",
+    "실패 작업:",
     ...(input.failedActions.length
-      ? input.failedActions.map((action) => `- ${code(action.id)} task=${code(action.taskId)} reason=${oneLine(action.result?.failure ?? action.result?.outcome ?? action.status)}`)
+      ? input.failedActions.map((action) => `- ${oneLine(action.taskTitle)}: ${oneLine(action.result?.failure ?? action.result?.outcome ?? action.status)}`)
       : ["- action 실패는 없지만 plan 종합 결과가 복구 필요 상태입니다."]),
     "",
     "아직 task/action은 만들지 않았습니다.",
@@ -1048,9 +1063,10 @@ export function orchestratorPlanResultReport(input: {
   synthesisFailure?: string;
 }): string {
   const failed = input.actions.filter((action) => action.status !== "completed" || action.result?.pass === false);
-  const passed = failed.length === 0;
   const runLogForAction = (action: RemoteActionRecord) =>
     input.runLogs.find((log) => log.runId === action.result?.runId || log.task.id === action.taskId);
+  const needsRecovery = failed.length > 0 || (input.synthesis ? input.synthesis.outcome !== "pass" : false);
+  const verificationFailed = input.actions.some((action) => actionVerificationFailed(action, runLogForAction(action)));
   const mergeCommands = input.actions
     .map((action) => {
       const runLog = runLogForAction(action);
@@ -1061,26 +1077,27 @@ export function orchestratorPlanResultReport(input: {
   const changedFiles = Array.from(
     new Set(input.runLogs.flatMap((runLog) => runLog.result.evaluation?.changedFiles ?? runLog.result.commit?.files ?? [])),
   );
-  const nextActionLines = passed
-    ? [
-        mergeCommands.length
-          ? `- 통합 gate 확인: ${code("/now")}`
-          : `- 상태 확인: ${code("/check")}`,
-        ...(input.synthesis?.nextActions.length ? input.synthesis.nextActions.map((action) => `- 참고: ${remoteSafeSuggestion(action)}`) : []),
-      ]
-    : [
-        `- 복구 계획 생성: ${code("/recover")}`,
-        ...(input.synthesis?.nextActions.length ? input.synthesis.nextActions.map((action) => `- 참고: ${remoteSafeSuggestion(action)}`) : []),
-        `- 상태 재확인: ${code("/now")}`,
-      ];
+  const reportOnly = input.runLogs.length > 0 && input.runLogs.every((runLog) => runLog.task.resultMode === "report");
+  const outcome = needsRecovery
+    ? verificationFailed
+      ? "검증 실패 - 복구 필요"
+      : "복구 필요"
+    : reportOnly
+      ? "보고 완료"
+      : "구현 통과";
+  const riskLines = [
+    ...(input.synthesis?.risks ?? []),
+    input.synthesis && input.synthesis.outcome !== "pass" ? `종합 결과: ${oneLine(input.synthesis.summary)}` : "",
+    input.synthesisFailure ? `오케스트레이터 종합 실패: ${oneLine(input.synthesisFailure)}` : "",
+    ...failed.map((action) => `${oneLine(action.taskTitle)}: ${oneLine(action.result?.failure ?? action.result?.outcome ?? action.status)}`),
+  ].filter((line): line is string => Boolean(line));
+  const nextCommand = needsRecovery ? "/recover" : mergeCommands.length ? "/now" : "/check";
 
   return [
     "# plan-result",
     "",
-    `계획 결과: ${passed ? "통과" : "확인 필요"}`,
-    `계획: ${code(input.plan.id)}`,
-    `요청: ${code(input.plan.requestId)}`,
-    `완료 action: ${input.actions.length - failed.length}/${input.actions.length}`,
+    `계획 결과: ${outcome}`,
+    `완료 작업: ${input.actions.length - failed.length}/${input.actions.length}`,
     input.synthesis ? `종합 결과: ${code(input.synthesis.outcome)}` : "",
     "",
     input.synthesis ? "오케스트레이터 종합:" : "",
@@ -1090,20 +1107,33 @@ export function orchestratorPlanResultReport(input: {
     "Worker 결과:",
     ...input.actions.flatMap((action) => {
       const runLog = runLogForAction(action);
+      const actionOutcome = actionNeedsRecovery(action)
+        ? actionVerificationFailed(action, runLog)
+          ? "검증 실패"
+          : "실패"
+        : runLog?.task.resultMode === "report"
+          ? "보고 완료"
+          : "통과";
       return [
-        `- ${code(action.taskId)} status=${code(action.status)} outcome=${code(action.result?.outcome ?? "unknown")} pass=${action.result?.pass === true ? "yes" : "no"}`,
+        `- ${oneLine(action.taskTitle)}: ${actionOutcome}`,
         runLog ? `  보고: ${oneLine(workerFinalMessage(runLog))}` : "",
         action.result?.failure ? `  실패 이유: ${oneLine(action.result.failure)}` : "",
       ].filter(Boolean);
     }),
     "",
-    "변경 파일:",
-    ...(changedFiles.length ? changedFiles.map((file) => `- ${code(file)}`) : ["- 없음"]),
+    "산출/변경:",
+    ...(changedFiles.length ? changedFiles.slice(0, 8).map((file) => `- ${code(displayFilePath(file))}`) : ["- 없음"]),
+    changedFiles.length > 8 ? `- 외 ${changedFiles.length - 8}개` : "",
+    "",
+    "남은 리스크:",
+    ...(riskLines.length ? riskLines.slice(0, 5).map((risk) => `- ${remoteSafeSuggestion(risk)}`) : ["- 없음"]),
     "",
     "다음 액션:",
-    ...nextActionLines,
+    `- 텔레그램: ${code(nextCommand)}`,
     ...(mergeCommands.length ? ["", "로컬 merge 후보:", ...mergeCommands] : []),
-  ].join("\n");
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
 }
 
 export function taskDraftAddedReport(draft: TaskDraftRecord): string {

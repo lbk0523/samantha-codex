@@ -8,7 +8,7 @@
     "node": ">=20.x"
   },
   "scripts": {
-    "typecheck": "bunx tsc --noEmit",
+    "typecheck": "bun x tsc --noEmit",
     "test": "bun test --path-ignore-patterns='worktrees/**' tests",
     "check:telegram-ux": "bun run scripts/check-telegram-ux.ts",
     "dispatch-worker": "bun run src/dispatch-worker.ts",

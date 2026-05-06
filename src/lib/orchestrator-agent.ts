@@ -56,6 +56,8 @@ export function buildOrchestratorPrompt(input: {
     "Leave `repoRoot` empty or set it exactly to the selected project profile repo.",
     "Never set `repoRoot` to a path under `.samantha-worktrees`, `runs`, `state`, or a previous worker worktree.",
     "Worker tasks must start from the canonical project repo; do not recover by dispatching a new worker with an old worker worktree as its repo.",
+    "For recovery requests, treat run logs, changed files, and worker worktree paths as evidence only.",
+    "Recovery tasks must use the selected project profile's canonical repoRoot. If unsure, leave `repoRoot` empty and set `projectId` so the control plane applies the profile default.",
     "Each worker task gets its own worktree from the canonical repo. Dependent tasks do not see unmerged file changes from earlier worker tasks.",
     "Do not create a separate verify-only task that depends on files written by an earlier write task. Put verification for a write task in that same task's verifyCommands.",
     "",

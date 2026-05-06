@@ -729,8 +729,13 @@ describe("operator reports", () => {
         userMessage: "완료했습니다.",
       },
     });
-    expect(passedPlanResult).toContain("통합 gate 확인: `/now`");
-    expect(passedPlanResult).toContain("참고: 텔레그램: /now");
+    expect(passedPlanResult).toContain("계획 결과: 구현 통과");
+    expect(passedPlanResult).toContain("완료 작업: 1/1");
+    expect(passedPlanResult).toContain("Pass task: 통과");
+    expect(passedPlanResult).toContain("`README.md`");
+    expect(passedPlanResult).toContain("텔레그램: `/now`");
+    expect(passedPlanResult).not.toContain("plan-1");
+    expect(passedPlanResult).not.toContain("task-pass status=");
 
     const failedPlanResult = orchestratorPlanResultReport({
       plan: { ...orchestratorPlan, status: "materialized", actionIds: ["action-failed"] },
@@ -757,8 +762,9 @@ describe("operator reports", () => {
         userMessage: "복구가 필요합니다.",
       },
     });
-    expect(failedPlanResult).toContain("복구 계획 생성: `/recover`");
-    expect(failedPlanResult).toContain("참고: 검증 실패 원인을 반영해 복구 계획을 만들기");
+    expect(failedPlanResult).toContain("계획 결과: 검증 실패 - 복구 필요");
+    expect(failedPlanResult).toContain("텔레그램: `/recover`");
+    expect(failedPlanResult).toContain("verify failed");
 
     const recovery = orchestratorRecoveryRequestReport({
       request: { ...orchestrationRequest, id: "request-recover", status: "pending_plan" },
@@ -778,7 +784,11 @@ describe("operator reports", () => {
       ],
     });
     expect(recovery).toContain("복구 계획 요청을 만들었습니다.");
+    expect(recovery).toContain("복구 대상: Telegram orchestration flow");
+    expect(recovery).toContain("Pass task: verify failed");
     expect(recovery).toContain("텔레그램: `/plan`");
+    expect(recovery).not.toContain("plan-failed");
+    expect(recovery).not.toContain("action-");
 
     const revision = orchestratorRevisionRequestReport({
       request: { ...orchestrationRequest, id: "request-revision", status: "pending_plan" },
