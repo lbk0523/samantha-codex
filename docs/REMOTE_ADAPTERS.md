@@ -1,10 +1,10 @@
 # Samantha Remote Adapters
 
-Last updated: 2026-05-05
+Last updated: 2026-05-06
 
 ## Policy
 
-Remote adapters are input adapters first. They may create inbox command files and may approve only a prebuilt dispatch action. A separate local action runner executes approved actions. Remote adapters may not execute shell commands, dispatch workers directly, merge, push, or clean worktrees.
+Remote adapters are input adapters first. They may create inbox command files for the narrow supported control-plane transitions. A separate local action runner executes approved actions. Remote adapters may not execute shell commands, dispatch workers directly, merge, push, clean worktrees, or accept internal ids as the normal workflow.
 
 All remote input must pass through:
 
@@ -62,31 +62,9 @@ Supported Telegram commands are operational reports plus orchestration request i
 
 `/problems` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, latest remote command/report context, reply failures, and expected systemd template installation without printing secret values.
 
-Proposal commands are intake/review only:
+Proposal and task draft records still exist as local fallback state, but they are not part of the normal Telegram command surface. Old proposal/draft Telegram commands return deprecated-command guidance and point back to `/work`, `/plan`, `/go`, or `/now`.
 
-- `/propose <text>` writes a pending proposal to `state/proposals.jsonl`
-- `/draft_propose <text>` writes an accepted proposal to `state/proposals.jsonl` and a draft to `state/task-drafts.jsonl`
-- `/proposals` lists recent proposals
-- `/proposal <proposal_id>` shows one proposal
-- `/accept <proposal_id>` marks one proposal accepted
-- `/reject <proposal_id>` marks one proposal rejected
-
-No proposal command dispatches workers or creates commits. Accepted proposals must still be converted into explicit tasks before execution.
-
-Task draft commands are draft-only:
-
-- `/draft <proposal_id>` creates one draft from an accepted proposal
-- `/draft_propose <text>` creates an accepted proposal and one draft in a single command
-- Direct inbox command `drafts:plan-latest` prepares the latest draft with project defaults and a remote scope recipe, then returns the execution plan
-- `/go` can still promote a ready draft only when no active orchestration request or plan exists
-- `/draft_prepare <project_id> [target_file...]` prepares the latest draft with project defaults and optional target files
-- `/draft_approve` promotes the latest ready draft to one pending task
-- `/drafts` lists recent task drafts
-- `/draft <draft_id>` shows one task draft
-
-Drafts use conservative defaults and empty `targetFiles` / `verifyCommands`. Draft creation does not add to `state/tasks.jsonl`, dispatch workers, or create commits.
-
-Task promotion remains safe-gated. Advanced Telegram fallback commands can prepare and approve the latest draft when no active orchestration request or plan exists, but local commands are still available for precise patch edits:
+Local draft commands remain available for precise patch edits and debugging:
 
 ```bash
 bun run samantha drafts:check <draft-id>
@@ -104,7 +82,7 @@ Telegram reports use a consistent next-action shape:
 
 - `Telegram` is the command to send next when remote progress can continue.
 - `Local` is a local shell command that must be run before Telegram can continue safely.
-- `Inspect` is a read-only Telegram command for the confirmation step.
+- Routine inspection should go through `/now`, `/check`, `/problems`, or the read-only dashboard rather than id-based Telegram commands.
 
 Draft patches may include `setupCommands`. Use this for fresh worktree dependencies, for example:
 
@@ -261,7 +239,7 @@ The adapter only reads `outbox/remote-*.md` by default. It does not execute comm
 
 Long outbox reports are split into multiple Telegram messages instead of truncated.
 
-Reports that return proposal, draft, action, run, or task IDs also send each detected ID as its own follow-up message. This keeps iPhone Telegram copy/paste practical; status values, timestamps, and paths are not sent as copy-only messages.
+Telegram replies are compacted before sending. Routine replies hide workflow ids, local fallback commands, and raw report headers unless those details are needed in the human-facing report. Reports are split into multiple Telegram messages when needed, but ids are not sent as separate copy-only follow-up messages.
 
 Sent state is stored in:
 

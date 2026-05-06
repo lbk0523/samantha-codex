@@ -36,9 +36,15 @@ The first useful system is not a general multi-agent platform. It is a safe pers
 5. The Control Plane runs at most one production writer until safety gates are proven.
 6. The Control Plane verifies, merges, pushes, and reports.
 
-## Current Gap
+## Current Status
 
-The current implementation has a useful Control Plane, Orchestrator Agent planning, plan reread/revision/cancelation before approval, dependency-aware plan materialization, Orchestrator Agent completion synthesis, and a first recovery loop. Telegram `/work` stores an orchestration request, `/plan` runs `codex-orchestrator` through the local Codex CLI in read-only mode, `/plan_current` rereads the current unapproved plan without rerunning Codex, `/revise <feedback>` supersedes the current unapproved plan and creates a revised planning request, `/cancel` discards the current pending request or unapproved plan, `/go` validates the plan before creating task/action records, `actions:watch` promotes dependent actions only after prerequisites pass, and `actions:watch` reruns `codex-orchestrator` to write a `# plan-result` report once all actions for a materialized plan finish. If the reported plan result failed, `/recover` creates a new recovery orchestration request for the next `/plan` without retrying or dispatching by itself. The remaining gap is richer recovery automation after that recovery request is planned and executed.
+The current implementation has the first useful Orchestrator Agent workflow on top of the Control Plane. Telegram `/work` stores an orchestration request, `/plan` runs `codex-orchestrator` through the local Codex CLI in read-only mode, `/plan_current` rereads the current unapproved plan without rerunning Codex, `/revise <feedback>` supersedes the current unapproved plan and creates a revised planning request, `/cancel` discards the current pending request or unapproved plan, and `/go` validates the plan before creating task/action records.
+
+The Control Plane materializes approved plans into tasks and dispatch actions, promotes dependent actions only after prerequisites pass, runs approved actions through `actions:watch`, and reruns `codex-orchestrator` to write one `# plan-result` report once all actions for a materialized plan finish. If that plan result failed, `/recover` creates a new recovery orchestration request for the next `/plan` without retrying or dispatching by itself.
+
+Telegram is intentionally small. The routine surface is `/work`, `/plan`, `/plan_current`, `/revise`, `/cancel`, `/go`, `/recover`, `/now`, `/check`, and `/problems`. Older proposal/draft/task/action/run id commands are no longer normal Telegram operations; they return deprecated-command guidance and point back to the orchestrator flow. Local CLI and inbox commands remain available for debugging and recovery.
+
+The remaining gap is not a rewrite. The next work is improving result reporting, recovery execution after `/recover -> /plan -> /go`, and practical dogfood confidence for real remote work.
 
 The existing Control Plane should remain responsible for safety and execution; it should not be discarded.
 
@@ -99,8 +105,12 @@ The current operator surface includes:
 - multi-task plan execution
 - local inbox processing
 - daemon lock, heartbeat, and health check
+- orchestration request and plan state
+- background remote action execution with dependency promotion
+- plan-level result synthesis through `codex-orchestrator`
 - remote command enqueueing into the inbox
 - Telegram polling into the inbox
+- Telegram outbox replies
 - read-only static dashboard generation
 
 ## Worker Result Gate
@@ -120,4 +130,4 @@ Completed worktrees are removed through `worktree:cleanup`, which requires a pas
 
 Worker worktrees default to an external `.samantha-worktrees/<repo>` directory beside the target repo parent. Keeping worktrees outside the target repo prevents broad test commands from accidentally discovering duplicated files inside active worker worktrees.
 
-Remote adapters are input-only. The Telegram adapter polls updates, requires an allowed sender id, maps only the narrow supported command set, and writes inbox files. It does not execute commands directly.
+Remote adapters are input-only. The Telegram adapter polls updates, requires an allowed sender id, maps only the narrow supported command set, and writes inbox files. Deprecated id-based commands produce guidance instead of running the old flow. The adapter does not execute commands directly.

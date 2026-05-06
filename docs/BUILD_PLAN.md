@@ -1,8 +1,8 @@
 # Samantha-Codex Build Plan
 
-Last updated: 2026-05-05
+Last updated: 2026-05-06
 
-Current planning status: MVP control plane built, read-only dogfood completed, the first low-risk writer dogfood passed with a Samantha-owned commit, explicit merge apply/push/cleanup gates are implemented, and the local daemon plus Telegram poll/reply loop are operating. A design correction is now required: the current Telegram workflow is a deterministic single-task draft/dispatch path, not the target Orchestrator Agent workflow.
+Current planning status: MVP control plane built, read-only dogfood completed, the first low-risk writer dogfood passed with a Samantha-owned commit, explicit merge apply/push/cleanup gates are implemented, and the local daemon plus Telegram poll/reply loop are operating. The Orchestrator Agent workflow is now the primary Telegram path: `/work -> /plan -> /go -> /now`.
 
 ## Purpose
 
@@ -23,7 +23,7 @@ This is not a general multi-agent platform first. It is a safety-first operation
 7. Agent output is accepted only after structured result, scope, and verification gates pass.
 8. External skill bundles can guide worker behavior, but cannot own orchestration, worktree allocation, merge, push, or safety policy.
 
-## Design Correction
+## Design Correction Status
 
 The earlier decision that "the orchestrator is deterministic TypeScript code" was too coarse. It protected execution safety, but it collapsed the intended Orchestrator Agent into project-profile templates and a single-worker dispatch path.
 
@@ -32,7 +32,7 @@ Corrected terminology:
 - `Samantha Orchestrator Agent`: LLM agent that discusses the request with BK, creates the task/team plan, and reports plan/result in user language.
 - `Samantha Control Plane`: deterministic TypeScript code that stores state, enforces policy, dispatches approved tasks, verifies results, and controls merge/push/cleanup.
 
-The current implementation mostly belongs to the Control Plane. It is not throwaway work, but it is not the complete Samantha workflow.
+The correction has been implemented for the first useful remote workflow. The Control Plane still owns safety and execution; the Orchestrator Agent now owns Telegram planning and result synthesis.
 
 ## Current State
 
@@ -60,21 +60,21 @@ Already implemented:
 - multi-task plan runner
 - file-backed local inbox/outbox processing
 - daemon lock, heartbeat, health check, and systemd service template
-- local `doctor` diagnostics and remote `/doctor`
+- local `doctor` diagnostics and remote `/problems`
 - narrow remote command enqueueing
 - Telegram polling adapter with legacy `TELEGRAM_CHAT_ID` support
 - Telegram outbox reply adapter
-- remote proposal intake and review state under `state/proposals.jsonl`
-- accepted proposal to task draft flow under `state/task-drafts.jsonl`
+- local proposal intake and review state under `state/proposals.jsonl`
+- accepted proposal to task draft fallback flow under `state/task-drafts.jsonl`
 - local-only task draft check, update, and approval gate
 - task draft readiness summaries and JSON patch templates
 - local-only pending task dispatch into existing worker run logs and run index
 - task draft `setupCommands` promotion into worker setup
 - project profiles for repo-level setup and verify defaults
-- task archival so stale tasks do not pollute `/next_action`
+- task archival so stale tasks do not pollute `/now`
 - existing clean worktree reuse for same-task dispatch retries
 - local `tasks:retry` and `tasks:finalize-worktree` recovery commands
-- read-only `/next_action` Telegram command that mirrors `/now` for remote-safe operation
+- compressed Telegram command surface centered on `/now`
 - run lifecycle ledger for merge/push/cleanup completion state
 - systemd timer templates for Telegram polling and outbox replies
 - read-only static dashboard generation with operations summary
@@ -86,11 +86,13 @@ Already implemented:
 - plan approval that materializes multiple tasks and dependency batches
 - final user-facing synthesis from the Orchestrator Agent after workers finish
 - `/recover -> /plan -> /go` recovery loop for failed materialized plan results
+- deprecated-command guidance for old proposal/draft/task/action/run id Telegram commands
 
 Not yet implemented:
 
 - richer automatic team construction with reviewer/evaluator/spec agents beyond explicit task proposals
 - recovery execution that can safely restore artifacts from prior worker worktrees without relying on a worker-worktree `repoRoot`
+- higher-quality compact result reports for real Telegram use
 
 Important dogfood findings:
 
@@ -98,8 +100,8 @@ Important dogfood findings:
 - `setupCommands` must be set before task approval when the target repo needs dependencies in an isolated worktree.
 - Failed dispatch attempts may leave clean worktrees behind; Samantha can now reuse or finalize them instead of forcing manual branch cleanup.
 - Already-merged runs should report as already integrated, not as generic HEAD mismatch failures.
-- `/next_action` must mirror `/now` for remote operation, or it can recommend stale local retry commands while the safer action is `/recover`.
-- Once Telegram polling and replies work, `/status` and `/doctor` become the main operating surface and must show remote command/report and lifecycle state clearly.
+- `/now` should be the only routine next-action Telegram command; old id-based commands should not appear as recommended actions.
+- `/check` and `/problems` are the Telegram status/diagnostic surface. Local `status` and `doctor` remain useful CLI names.
 - Codex workers should not receive parent `.git` metadata write access.
 - Samantha should create commits itself after worker output passes scope and verify gates.
 - Audit logs are mandatory before 24/7 operation; otherwise Samantha cannot explain what happened after the fact.
@@ -221,7 +223,7 @@ Success criteria:
 
 ### Phase 6: Remote Command Surface
 
-MVP status: implemented as `remote:enqueue` plus `telegram:poll`, both mapping narrow remote input into the local inbox. Telegram supports both `TELEGRAM_ALLOWED_SENDER_ID` and the older Claude-side `TELEGRAM_CHAT_ID` env name.
+MVP status: implemented as `remote:enqueue` plus `telegram:poll`, both mapping narrow remote input into the local inbox. Telegram supports both `TELEGRAM_ALLOWED_SENDER_ID` and the older Claude-side `TELEGRAM_CHAT_ID` env name. The Telegram surface is now intentionally compressed.
 
 Goal: let BK instruct Samantha remotely after local loop safety is proven.
 
@@ -237,6 +239,7 @@ Success criteria:
 - remote interface cannot bypass safety gates
 - every remote command maps to a ledger entry and audit log
 - sender allowlist is mandatory for Telegram
+- old proposal/draft/task/action/run id commands return deprecated guidance instead of running the old flow
 
 ### Phase 7: Dashboard
 
@@ -282,19 +285,20 @@ Do not prioritize these until the Telegram operating surface is stable:
 
 - multi-writer parallelism
 - web dashboard with write controls
-- broad Telegram command surface beyond read-mostly status commands
+- broad id-based Telegram command surface
 - general marketplace-style multi-agent platform
 - complex plugin system beyond pinned skill bundle references
 - autonomous push/deploy behavior
 
 ## Immediate Next Step
 
-Dogfood the current Orchestrator Agent layer on the real Telegram runtime state. The next proof point is:
+Improve result and recovery quality on the compressed Telegram workflow. The next proof point is:
 
 ```text
-/recover -> /plan -> /go -> /action_current -> plan result
+/work <small request> -> /plan -> /go -> /now -> /check
+failed plan result -> /recover -> /plan -> /go -> /now
 ```
 
-Accept the slice only if the recovery plan uses canonical project repo roots, materializes dependency-aware actions, reports results back to Telegram, leaves no stale pending task after dependency failure, and leaves no tmux observer window after workers finish.
+Accept the slice only if BK does not need task ids, action ids, run ids, proposal ids, draft ids, repo paths, or target file paths; reports back to Telegram are short and clear; recovery plans use canonical project repo roots; stale pending tasks do not pollute `/now`; and no tmux observer window remains after workers finish.
 
 The detailed next plan is in [NEXT_PLAN.md](NEXT_PLAN.md).
