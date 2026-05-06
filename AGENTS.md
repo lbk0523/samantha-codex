@@ -25,6 +25,8 @@ This repository builds a Codex-only version of Samantha: a personal 24/7 control
 - Do not run Samantha daemon, watch, poll, reply, worker dispatch, or dashboard runtime processes from Mac.
 - Final automation verification and merge gates are Ubuntu/Samantha-host responsibilities.
 - Mac-side work may edit, test, commit, and push normal repo code, but operational state remains Ubuntu-owned.
+- Mac-side verification should use portable commands such as `bun typecheck`, `bun run test:portable`, `bun run verify:docs`, and `bun run verify:mac`.
+- Host/runtime verification should use Ubuntu-only commands such as `bun run test:host`, `bun run test:all`, and `bun run verify:host`.
 
 ## Safety Priority
 

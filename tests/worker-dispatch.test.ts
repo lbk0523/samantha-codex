@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
@@ -161,7 +161,7 @@ describe("prepareWorkerDispatch", () => {
 
     expect(results).toHaveLength(2);
     expect(results[0]?.exitCode).toBe(0);
-    expect(results[0]?.stdout.trim()).toBe("/tmp");
+    expect(results[0]?.stdout.trim()).toBe(await realpath("/tmp"));
     expect(results[1]?.stdout.trim()).toBe("ready");
   });
 

@@ -69,10 +69,25 @@ Use Bun from the repository root:
 ```bash
 bun typecheck
 bun run test
+bun run test:portable
+bun run verify:docs
+bun run verify:mac
+bun run test:host
+bun run verify:host
 bun run validate-fixture
 bun run dispatch-worker --task=references/tasks/fixture-single-writer.json --agent=references/agent-profiles/codex-worker.json --repo-root=.
 bun run samantha runs:list
 ```
+
+Verification profiles:
+
+- `bun run test` is the same as `bun run test:portable`.
+- `bun run test:portable` runs Mac-safe unit and contract tests.
+- `bun run test:host` runs Ubuntu/Samantha-host tests that depend on host runtime behavior.
+- `bun run test:all` runs both portable and host tests.
+- `bun run verify:docs` checks README cross-links and local absolute path safety.
+- `bun run verify:mac` runs the normal Mac-side verification bundle.
+- `bun run verify:host` runs the automation-host verification bundle.
 
 The local operator CLI is:
 

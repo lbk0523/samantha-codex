@@ -69,10 +69,25 @@ Repository root에서 Bun을 사용합니다.
 ```bash
 bun typecheck
 bun run test
+bun run test:portable
+bun run verify:docs
+bun run verify:mac
+bun run test:host
+bun run verify:host
 bun run validate-fixture
 bun run dispatch-worker --task=references/tasks/fixture-single-writer.json --agent=references/agent-profiles/codex-worker.json --repo-root=.
 bun run samantha runs:list
 ```
+
+검증 profile:
+
+- `bun run test`는 `bun run test:portable`과 같습니다.
+- `bun run test:portable`은 Mac에서 안전하게 실행할 수 있는 unit/contract test를 실행합니다.
+- `bun run test:host`는 Ubuntu/Samantha host runtime behavior에 의존하는 테스트를 실행합니다.
+- `bun run test:all`은 portable test와 host test를 모두 실행합니다.
+- `bun run verify:docs`는 README cross-link와 로컬 절대경로 안전성을 확인합니다.
+- `bun run verify:mac`은 일반적인 Mac-side verification bundle입니다.
+- `bun run verify:host`는 automation-host verification bundle입니다.
 
 Local operator CLI는 다음 entrypoint를 사용합니다.
 
