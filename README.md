@@ -1,34 +1,101 @@
 # samantha-codex
 
-Codex-only Samantha prototype.
+Codex-only Samantha control plane prototype.
 
-Goal: BK talks to one 24/7 orchestrator. The orchestrator assigns work to multiple Codex-based specialist agents, verifies their output, and escalates only when a human decision is required.
+Korean version: [readme-kr.md](readme-kr.md)
 
-## First Milestone
+Samantha-Codex is a personal operations layer where BK talks to one orchestrator surface, the orchestrator turns requests into explicit plans, and deterministic TypeScript control-plane code runs safety, dispatch, verification, integration, and reporting gates.
 
-This repository starts with the control-plane contract, not a full multi-agent runtime.
+The current repository is not a general multi-agent framework. It is the minimum useful control plane for safe Codex-based work.
 
-- `writer` agents change files in isolated worktrees.
-- `reviewer`, `evaluator`, and `spec` agents are non-writers and may run in parallel.
-- deterministic safety checks run before dispatch.
-- worker output is accepted only through `HARNESS_RESULT` plus scope/verify gates.
-- Telegram, Codex CLI process control, and worktree merge are follow-up layers.
+## Current Shape
 
-Architecture correction: the existing TypeScript code is the Samantha Control Plane. It is valuable execution infrastructure, but it is not the full Samantha Orchestrator Agent. The target workflow still requires an LLM Orchestrator Agent above the Control Plane to discuss work with BK, create task/team plans, and synthesize results.
+```text
+BK
+  <-> Telegram / local operator CLI
+Samantha Orchestrator Agent
+  - discusses goals, scope, risk, and next actions
+  - proposes task plans for approval
+  - synthesizes final results
+Samantha Control Plane
+  - stores requests, plans, tasks, actions, runs, and audit logs
+  - validates safety policy before dispatch
+  - dispatches approved Codex CLI agents
+  - evaluates worker output and verification commands
+  - gates merge, push, cleanup, and reporting
+Codex Agents
+  - codex-worker     writer
+  - codex-reviewer   non-writer
+  - codex-evaluator  non-writer
+  - codex-orchestrator planner/synthesizer
+```
 
-## Commands
+The orchestrator proposes work. The control plane owns execution and safety. Agents do not bypass control-plane gates.
+
+## Operating Boundaries
+
+- Ubuntu/WSL is the Samantha automation host.
+- Mac is a development/client machine.
+- Mac-side work may edit, test, commit, and push normal repo code.
+- Do not run Samantha daemon, watch, poll, reply, worker dispatch, or dashboard runtime processes from Mac.
+- Runtime state belongs to the automation host: `state/`, `runs/`, `.samantha-worktrees/`, dashboard runtime output, outbox/archive data, and live logs.
+- Repo code and docs should not hard-code local absolute paths. Prefer repo-relative paths, project ids, environment variables, or project profile resolution.
+
+## Supported Remote Flow
+
+Telegram is intentionally small. The normal remote workflow is:
+
+```text
+/work <request>
+/plan
+/go
+```
+
+Common follow-up commands:
+
+- `/plan_current` shows the current unapproved plan without rerunning Codex.
+- `/revise <feedback>` replaces the current plan request with revised context.
+- `/cancel [reason]` discards the pending request or unapproved plan.
+- `/go` approves a valid plan, then later advances passed work through merge, push, and cleanup gates.
+- `/recover` creates a recovery-oriented request after a failed materialized plan result.
+- `/now`, `/check`, and `/problems` report current operating status.
+
+Telegram input cannot provide shell commands, arbitrary repo paths, merge/push/cleanup paths, or internal task/action/run ids.
+
+## Local Commands
+
+Use Bun from the repository root:
 
 ```bash
 bun typecheck
 bun run test
-bun run src/index.ts validate-fixture
+bun run validate-fixture
 bun run dispatch-worker --task=references/tasks/fixture-single-writer.json --agent=references/agent-profiles/codex-worker.json --repo-root=.
 bun run samantha runs:list
 ```
 
-## Worker Dispatch Dry Run
+The local operator CLI is:
 
-Prepare a Codex worker command without allocating a real worktree:
+```bash
+bun run samantha <command>
+```
+
+Useful command groups:
+
+- `runs:*` reads run logs and compact run indexes.
+- `tasks:*` manages the file-backed task ledger.
+- `plan:run` runs a multi-task local plan with non-writer batching and writer serialization.
+- `actions:*` records and runs approved remote dispatch actions.
+- `merge:check`, `merge:apply`, and `merge:push` split integration into explicit gates.
+- `worktree:cleanup` removes completed worker worktrees after integration.
+- `inbox:*`, `remote:enqueue`, and `telegram:poll` map narrow remote inputs into local inbox records.
+- `health:check` reports daemon heartbeat and lock health.
+- `dashboard:build` writes read-only dashboard HTML.
+- `dashboard:serve` serves the read-only dashboard on the automation host.
+
+## Worker Dispatch
+
+Dry-run a worker dispatch without allocating a real worktree:
 
 ```bash
 bun run dispatch-worker \
@@ -37,9 +104,9 @@ bun run dispatch-worker \
   --repo-root=.
 ```
 
-After the repository has an initial commit, add `--allocate` to create a task worktree.
+Add `--allocate` only when the automation host should create the task worktree.
 
-Add `--execute` to run the prepared `codex exec` command and evaluate the worker output:
+Add `--execute` to run setup commands, run the prepared `codex exec` command, evaluate `HARNESS_RESULT`, run verification commands, and write audit logs:
 
 ```bash
 bun run dispatch-worker \
@@ -49,55 +116,41 @@ bun run dispatch-worker \
   --execute
 ```
 
-Executed runs write audit JSON files to `runs/` by default. Use `--log-dir=<path>` to choose another location, or `--no-log` to disable logging for a one-off run.
+Executed runs write audit JSON files to `runs/` by default. Use `--log-dir=<path>` for another audit location, or `--no-log` for a one-off run.
 
-## Operator CLI
+## Safety Model
 
-The `samantha` CLI is the local operator surface for the current control plane:
+Samantha accepts writer output only when all gates pass:
 
-```bash
-bun run samantha runs:list
-bun run samantha tasks:add references/tasks/fixture-reviewer-readonly.json
-bun run samantha tasks:list
-bun run samantha plan:run references/plans/fixture-review-write-plan.json
-bun run samantha dashboard:build
-bun run samantha dashboard:serve --port=4173
-```
+- worker output contains `HARNESS_RESULT: {...}`
+- `status` is `pass`
+- changed files avoid `forbiddenChanges`
+- changed files stay inside `targetFiles`
+- every `verifyCommand` exits with code `0`
+- Samantha creates the writer commit after gates pass
 
-Available command groups:
+Writer agents do not commit or push. Production code writers use per-task worktrees. Non-writer agents may run in parallel; writer concurrency starts at one until dogfood evidence justifies more.
 
-- `runs:*` reads the compact run index in `state/runs.jsonl`
-- `tasks:*` manages the task ledger in `state/tasks.jsonl`
-- `merge:check` evaluates a passed run log as a safe merge candidate
-- `merge:apply` fast-forwards an approved candidate and runs post-merge verification
-- `merge:push` pushes an accepted clean branch separately from merge application
-- `worktree:cleanup` removes completed worker worktrees after integration
-- `health:check` reports daemon heartbeat and lock health
-- `plan:run` runs a multi-task plan with non-writer batching and writer serialization
-- `inbox:*` processes local file-backed commands
-- `remote:enqueue` maps a narrow remote command JSON into the local inbox
-- `telegram:poll` maps allowlisted Telegram updates into the local inbox
-- `actions:*` records and runs Telegram-approved dispatch actions from `state/remote-actions.jsonl`
-- `dashboard:build` writes read-only `dashboard/index.html` and `dashboard/lane-view.html`
-- `dashboard:serve` serves Overview at `/`, `/index.html`, and `/overview`, and Lane View at `/lane-view` and `/lane-view.html`; each request rebuilds from local state
+## Project Layout
 
-Run the first external read-only canary against `oh-my-health-trainer`:
-
-```bash
-bun run dispatch-worker \
-  --task=references/tasks/omht-readonly-status-canary.json \
-  --agent=references/agent-profiles/codex-reviewer.json \
-  --repo-root=/home/lbk0523/projects/oh-my-health-trainer \
-  --allocate \
-  --execute
-```
-
-By default, worker worktrees are placed outside the target repo under `.samantha-worktrees` beside the repo parent directory. This prevents target-repo test commands from discovering worker worktree files.
-
-For live worker visibility, dispatch through `samantha tasks:dispatch` with `--execute --tmux` or `--execute --live-log`. The browser dashboard reads `runs/live/*.jsonl`: Overview separates current operational problems from historical run failures and shows the reverse-chronological live timeline, Lane View groups the same events by worker/run lane, and the tmux view attaches with `tmux attach -t samantha`.
-
-Telegram's primary operating flow is now `/work <request>`, `/plan`, then `/go`. `/work` records an orchestration request in `state/orchestration-requests.jsonl`; `/plan` runs the local Codex CLI `codex-orchestrator` profile in read-only mode and stores the result in `state/orchestrator-plans.jsonl`; `/plan_current` shows the current unapproved plan again without rerunning Codex; `/go` validates the plan, writes safe task records to `state/tasks.jsonl`, approves dependency-free dispatch actions, and leaves dependent actions waiting in `state/remote-actions.jsonl`. After a worker run passes with a commit, the same `/go` advances only that latest known run through Samantha's merge, push, and cleanup gates using stored run metadata. If the plan is wrong, `/revise <feedback>` supersedes the current plan and creates a new planning request with the previous plan plus BK's feedback. If the pending request or unapproved plan is obsolete, `/cancel` discards it without creating tasks or actions. Worker execution still happens outside `inbox:watch` through `actions:watch`; dependent actions are promoted only after prerequisites pass. After all actions for one materialized plan finish, Samantha reruns `codex-orchestrator` in synthesis mode and writes a compact `# plan-result` Telegram report with outcome, worker notes, changed files or report artifacts, remaining risk, and one next command. If synthesis fails, Samantha writes a deterministic fallback and records the failure on the plan. If that plan result fails, `/recover` creates a new recovery-oriented orchestration request for the next `/plan`, including failed-plan context, changed files or run logs, artifact previews, and an instruction not to retry blindly. Recovery plans still start from canonical project profile repo roots, not worker worktrees. Telegram input cannot supply shell commands, arbitrary merge/push/cleanup paths, arbitrary repo paths, or run/task/action/proposal/draft ids. Use `/now`, `/check`, and `/problems` for remote operation status.
+- `src/samantha.ts` is the local operator CLI entrypoint.
+- `src/dispatch-worker.ts` prepares and optionally executes worker dispatch.
+- `src/lib/` contains control-plane stores, gates, adapters, dispatch, dashboard, and orchestration helpers.
+- `tests/` covers control-plane contracts and operations.
+- `references/agent-profiles/` defines Codex agent contracts.
+- `references/tasks/` and `references/plans/` contain fixtures and canaries.
+- `references/project-profiles/` contains canonical project profile hints.
+- `docs/` contains architecture, operations, remote adapter, dashboard, dogfood, and next-plan notes.
+- `ops/systemd/` contains automation-host service and timer templates.
 
 ## Design Notes
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md), [docs/DASHBOARD_DOGFOOD.md](docs/DASHBOARD_DOGFOOD.md), [docs/DOGFOOD_SCENARIOS.md](docs/DOGFOOD_SCENARIOS.md), [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md), [docs/REMOTE_ADAPTERS.md](docs/REMOTE_ADAPTERS.md), and [docs/NEXT_PLAN.md](docs/NEXT_PLAN.md).
+For deeper context, see:
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/NEXT_PLAN.md](docs/NEXT_PLAN.md)
+- [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md)
+- [docs/REMOTE_ADAPTERS.md](docs/REMOTE_ADAPTERS.md)
+- [docs/DASHBOARD_DOGFOOD.md](docs/DASHBOARD_DOGFOOD.md)
+- [docs/DOGFOOD_SCENARIOS.md](docs/DOGFOOD_SCENARIOS.md)
+- [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)
