@@ -88,53 +88,96 @@ function splitText(input: string, limit: number): string[] {
   return chunks;
 }
 
-function matchFirst(pattern: RegExp, value: string): string | undefined {
-  return pattern.exec(value)?.[1]?.trim();
+function headingTitle(line: string): string | undefined {
+  const heading = line.match(/^#\s+(.+)$/)?.[1]?.trim();
+  if (!heading) return undefined;
+  const titles: Record<string, string> = {
+    now: "현재 상태",
+    plan: "계획",
+    go: "실행 준비",
+    "plan-result": "계획 결과",
+    "execution-result": "실행 결과",
+    recover: "복구 요청",
+    revise: "계획 수정",
+    cancel: "취소",
+    "ops:doctor": "운영 점검",
+    "ops:status": "운영 상태",
+  };
+  return titles[heading] ?? heading.replace(/[-_:]/g, " ");
 }
 
-export function copyableIdsFromReport(report: string): string[] {
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  const push = (value: string | undefined) => {
-    if (!value || seen.has(value)) return;
-    seen.add(value);
-    ids.push(value);
-  };
+function compactLine(rawLine: string): string | undefined {
+  const line = rawLine.trimEnd();
+  const trimmed = line.trim();
+  if (!trimmed) return "";
 
-  for (const rawLine of report.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    push(matchFirst(/^(?:Saved proposal|저장된 제안):\s+`([^`]+)`$/, line));
-    push(matchFirst(/^(?:Saved draft|저장된 드래프트):\s+`([^`]+)`$/, line));
-    push(matchFirst(/^(?:Approved draft|승인된 드래프트):\s+`([^`]+)`$/, line));
-    push(matchFirst(/^(?:Created task|생성된 task):\s+`([^`]+)`$/, line));
-    push(matchFirst(/^(?:Action|액션):\s+`([^`]+)`$/, line));
-    push(matchFirst(/^(?:Proposal|제안):\s+`([^`]+)`$/, line));
-    push(matchFirst(/^(?:Draft|드래프트):\s+`([^`]+)`$/, line));
-    push(matchFirst(/^(?:Source proposal|원본 제안):\s+`([^`]+)`$/, line));
-    push(matchFirst(/^(?:Run|런):\s+`([^`]+)`$/, line));
-    push(matchFirst(/^(?:Task|태스크):\s+`([^`]+)`(?:\s+-.*)?$/, line));
-    push(matchFirst(/^- `([^`]+)`\s+status=`[^`]+`\s+(?:agent|created|source)=/, line));
-    push(matchFirst(/^- `([^`]+)`\s+outcome=`[^`]+`/, line));
-    push(matchFirst(/^- latest:\s+`([^`]+)`\s+outcome=`[^`]+`/, line));
+  const heading = headingTitle(trimmed);
+  if (heading) return heading;
+
+  const taskWithTitle = trimmed.match(/^태스크:\s+`[^`]+`\s+-\s+(.+)$/);
+  if (taskWithTitle) return `작업: ${taskWithTitle[1].trim()}`;
+
+  const taskCandidate = trimmed.match(/^- `[^`]+`\s+(.+?)(?:\s+agent=`[^`]+`)?(?:\s+mode=`[^`]+`)?$/);
+  if (taskCandidate && !taskCandidate[1].includes("status=`") && !taskCandidate[1].includes("outcome=`")) {
+    return `- ${taskCandidate[1].trim()}`;
   }
 
-  return ids;
+  if (/^(?:요청|계획|액션|런|커밋|기록|Run log|Live log|Tmux|Source proposal|원본 제안):/.test(trimmed)) {
+    return undefined;
+  }
+  if (/^(?:Saved proposal|저장된 제안|Saved draft|저장된 드래프트|Approved draft|승인된 드래프트|Created task|생성된 task):/.test(trimmed)) {
+    return undefined;
+  }
+  if (/^(?:Action|Run|Task|Proposal|Draft):\s+`/.test(trimmed)) return undefined;
+  if (/^- `[^`]+`\s+(?:status|outcome)=/.test(trimmed)) return undefined;
+  if (/^- latest:\s+`[^`]+`\s+outcome=/.test(trimmed)) return undefined;
+  if (/^- 텔레그램: `\/action_current`$/.test(trimmed)) return "- 텔레그램: `/now`";
+  if (trimmed.startsWith("`bun run ")) return undefined;
+
+  return line;
 }
 
-export function telegramReplyMessages(file: string, report: string, limit = 3900): string[] {
-  const body = report.trim() || "(empty report)";
-  const header = `Samantha outbox: ${file}`;
-  const single = [header, "", body].join("\n");
-  const idMessages = copyableIdsFromReport(body);
-  if (single.length <= limit) return [single, ...idMessages];
+export function compactTelegramReport(report: string): string {
+  const skipSectionHeadings = new Set([
+    "기록:",
+    "로컬 fallback:",
+    "생성된 task:",
+    "생성된 action:",
+    "안전장치:",
+  ]);
+  const lines: string[] = [];
+  let skippingSection = false;
 
-  const partHeader = `Samantha outbox: ${file} (part 999/999)\n\n`;
+  for (const rawLine of report.split(/\r?\n/)) {
+    const trimmed = rawLine.trim();
+    if (skipSectionHeadings.has(trimmed)) {
+      skippingSection = true;
+      continue;
+    }
+    if (skippingSection) {
+      if (!trimmed) skippingSection = false;
+      continue;
+    }
+
+    const compacted = compactLine(rawLine);
+    if (compacted === undefined) continue;
+    lines.push(compacted);
+  }
+
+  return lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function telegramReplyMessages(_file: string, report: string, limit = 3900): string[] {
+  const body = compactTelegramReport(report) || "(empty report)";
+  if (body.length <= limit) return [body];
+
+  const partHeader = "Samantha (part 999/999)\n\n";
   const bodyLimit = Math.max(1, limit - partHeader.length);
   const chunks = splitText(body, bodyLimit);
-  return [
-    ...chunks.map((chunk, index) => [`Samantha outbox: ${file} (part ${index + 1}/${chunks.length})`, "", chunk].join("\n")),
-    ...idMessages,
-  ];
+  return chunks.map((chunk, index) => [`Samantha (part ${index + 1}/${chunks.length})`, "", chunk].join("\n"));
 }
 
 export function telegramReplyText(file: string, report: string, limit = 3900): string {

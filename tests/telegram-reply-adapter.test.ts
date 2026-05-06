@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { copyableIdsFromReport, sendOutboxReplies, telegramReplyMessages } from "../src/lib/telegram-reply-adapter";
+import { compactTelegramReport, sendOutboxReplies, telegramReplyMessages } from "../src/lib/telegram-reply-adapter";
 
 let tmpRoots: string[] = [];
 
@@ -78,7 +78,7 @@ describe("sendOutboxReplies", () => {
     expect(sentBodies).toEqual([
       {
         chat_id: "12345",
-        text: "Samantha outbox: remote-new.md\n\n# new",
+        text: "new",
         disable_web_page_preview: true,
       },
     ]);
@@ -109,7 +109,7 @@ describe("sendOutboxReplies", () => {
     expect(result.sent[0]?.file).toBe("remote-existing.md");
   });
 
-  test("sends copyable id messages as separate Telegram sends", async () => {
+  test("does not send copyable id messages as separate Telegram sends", async () => {
     const root = await makeRoot();
     const outbox = join(root, "outbox");
     const statePath = join(root, "state", "telegram-replies.json");
@@ -144,17 +144,13 @@ describe("sendOutboxReplies", () => {
       fetchImpl,
     });
 
-    expect(result.sent[0]?.messages).toBe(2);
+    expect(result.sent[0]?.messages).toBe(1);
     expect(sentBodies.map((body) => (body as { text: string }).text)).toEqual([
       [
-        "Samantha outbox: remote-propose.md",
+        "proposals add",
         "",
-        "# proposals:add",
-        "",
-        "Saved proposal: `proposal-2026-05-04t10-00-00.000z-10`",
         "Status: `pending_review`",
       ].join("\n"),
-      "proposal-2026-05-04t10-00-00.000z-10",
     ]);
   });
 
@@ -166,29 +162,30 @@ describe("sendOutboxReplies", () => {
     expect(messages[0]).toContain("part 1/");
   });
 
-  test("extracts copyable ids without status or timestamp values", () => {
-    const ids = copyableIdsFromReport(
+  test("compacts Telegram reports without exposing workflow ids", () => {
+    const report = compactTelegramReport(
       [
-        "# proposals:list",
+        "# execution-result",
         "",
-        "- `proposal-1` status=`pending_review` created=`2026-05-04T10:00:00.000Z` text=Improve UX",
-        "- `proposal-2` status=`accepted` created=`2026-05-04T10:01:00.000Z` text=Add retries",
-        "- `draft-1` status=`drafted` source=`proposal-1` created=`2026-05-04T10:02:00.000Z` title=Improve UX",
-        "Saved draft: `draft-2`",
-        "저장된 드래프트: `draft-3`",
-        "생성된 task: `task-1`",
-        "Action: `action-1`",
-        "액션: `action-2`",
-        "Source proposal: `proposal-2`",
-        "Status: `accepted`",
-        "Created: `2026-05-04T10:00:00.000Z`",
+        "액션: `action-1`",
+        "태스크: `task-1` - 보고서 작성",
+        "런: `run-1`",
+        "결과: `pass`",
+        "다음 액션:",
+        "- 텔레그램: `/go`",
       ].join("\n"),
     );
 
-    expect(ids).toEqual(["proposal-1", "proposal-2", "draft-1", "draft-2", "draft-3", "task-1", "action-1", "action-2"]);
+    expect(report).toContain("실행 결과");
+    expect(report).toContain("작업: 보고서 작성");
+    expect(report).toContain("결과: `pass`");
+    expect(report).toContain("텔레그램: `/go`");
+    expect(report).not.toContain("action-1");
+    expect(report).not.toContain("task-1");
+    expect(report).not.toContain("run-1");
   });
 
-  test("sends id-only Telegram messages after reports that return ids", () => {
+  test("does not send id-only Telegram messages after reports that return ids", () => {
     const messages = telegramReplyMessages(
       "remote-propose.md",
       [
@@ -199,9 +196,9 @@ describe("sendOutboxReplies", () => {
       ].join("\n"),
     );
 
-    expect(messages).toHaveLength(2);
-    expect(messages[0]).toContain("Saved proposal:");
-    expect(messages[1]).toBe("proposal-2026-05-04t10-00-00.000z-10");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain("proposals add");
+    expect(messages[0]).not.toContain("proposal-2026-05-04t10-00-00.000z-10");
   });
 
   test("records failed sends for retry without marking the file sent", async () => {

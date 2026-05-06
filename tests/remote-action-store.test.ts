@@ -34,7 +34,7 @@ describe("RemoteActionStore", () => {
     });
 
     expect(action).toMatchObject({
-      id: "action-remote-message-1-remote-action-task-dispatch",
+      id: expect.stringMatching(/^action-20260505-100000-remote-action-task-[0-9a-f]{8}$/),
       kind: "dispatch_task",
       status: "pending",
       taskId: "remote-action-task",

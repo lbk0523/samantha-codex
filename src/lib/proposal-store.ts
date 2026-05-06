@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { sanitizeTaskId } from "./worktree";
+import { compactEntityId } from "./ids";
 
 export type ProposalStatus = "pending_review" | "accepted" | "rejected";
 
@@ -35,8 +35,13 @@ async function writeJsonLines<T>(path: string, items: T[]): Promise<void> {
 }
 
 export function buildProposalId(receivedAt: string, disambiguator?: string | number): string {
-  const idSource = disambiguator === undefined ? receivedAt : `${receivedAt}-${disambiguator}`;
-  return `proposal-${sanitizeTaskId(idSource)}`;
+  const source = disambiguator === undefined ? receivedAt : `${receivedAt}-${disambiguator}`;
+  return compactEntityId({
+    prefix: "proposal",
+    createdAt: receivedAt,
+    label: "proposal",
+    source,
+  });
 }
 
 export class ProposalStore {

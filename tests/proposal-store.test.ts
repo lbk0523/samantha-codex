@@ -76,7 +76,7 @@ describe("ProposalStore", () => {
   });
 
   test("builds stable proposal ids from timestamps", () => {
-    expect(buildProposalId("2026-05-03T10:00:00.000Z")).toBe("proposal-2026-05-03t10-00-00.000z");
-    expect(buildProposalId("2026-05-03T10:00:00.000Z", 123)).toBe("proposal-2026-05-03t10-00-00.000z-123");
+    expect(buildProposalId("2026-05-03T10:00:00.000Z")).toBe("proposal-20260503-100000-proposal-407d7c53");
+    expect(buildProposalId("2026-05-03T10:00:00.000Z", 123)).toBe("proposal-20260503-100000-proposal-c9ad5446");
   });
 });

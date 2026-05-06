@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { CommandRunResult } from "./worker-dispatch";
-import { sanitizeTaskId } from "./worktree";
+import { compactEntityId } from "./ids";
 
 export type OrchestrationRequestStatus = "pending_plan" | "planned" | "discarded";
 export type OrchestratorPlanStatus = "planned" | "questions" | "failed" | "approved" | "materialized" | "superseded" | "canceled";
@@ -97,13 +97,22 @@ async function writeJsonLines<T>(path: string, items: T[]): Promise<void> {
 }
 
 export function buildOrchestrationRequestId(receivedAt: string, disambiguator?: string | number): string {
-  const idSource = disambiguator === undefined ? receivedAt : `${receivedAt}-${disambiguator}`;
-  return `request-${sanitizeTaskId(idSource)}`;
+  const source = disambiguator === undefined ? receivedAt : `${receivedAt}-${disambiguator}`;
+  return compactEntityId({
+    prefix: "request",
+    createdAt: receivedAt,
+    label: disambiguator === undefined ? "work" : String(disambiguator),
+    source,
+  });
 }
 
 export function buildOrchestratorPlanId(input: { requestId: string; createdAt: string }): string {
-  const requestToken = input.requestId.replace(/^request-/, "");
-  return `plan-${sanitizeTaskId(requestToken)}-${sanitizeTaskId(input.createdAt)}`;
+  return compactEntityId({
+    prefix: "plan",
+    createdAt: input.createdAt,
+    label: input.requestId.replace(/^request-/, ""),
+    source: `${input.createdAt}-${input.requestId}`,
+  });
 }
 
 export class OrchestrationRequestStore {

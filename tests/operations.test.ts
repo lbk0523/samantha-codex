@@ -328,7 +328,7 @@ describe("inbox and remote commands", () => {
     ).toMatchObject({
       type: "drafts:add-from-proposal-text",
       args: {
-        proposalId: "proposal-2026-05-03t10-06-00.000z",
+        proposalId: expect.stringMatching(/^proposal-20260503-100600-proposal-[0-9a-f]{8}$/),
         text: "Improve task flow",
         senderId: "bk",
       },
@@ -386,7 +386,7 @@ describe("inbox and remote commands", () => {
     ).toMatchObject({
       type: "orchestrator:add-request",
       args: {
-        requestId: "request-2026-05-03t10-06-00.000z",
+        requestId: expect.stringMatching(/^request-20260503-100600-work-[0-9a-f]{8}$/),
         text: "Improve task flow",
         senderId: "bk",
       },
@@ -399,7 +399,7 @@ describe("inbox and remote commands", () => {
     ).toMatchObject({
       type: "proposals:add",
       args: {
-        id: "proposal-2026-05-03t10-00-00.000z",
+        id: expect.stringMatching(/^proposal-20260503-100000-proposal-[0-9a-f]{8}$/),
         text: "Improve status reports",
         senderId: "bk",
       },
@@ -410,9 +410,9 @@ describe("inbox and remote commands", () => {
         "bk",
       ),
     ).toMatchObject({
-      id: "remote-2026-05-03t10-00-00.000z-99-propose",
+      id: expect.stringMatching(/^remote-20260503-100000-propose-[0-9a-f]{8}-propose$/),
       args: {
-        id: "proposal-2026-05-03t10-00-00.000z-99",
+        id: expect.stringMatching(/^proposal-20260503-100000-proposal-[0-9a-f]{8}$/),
       },
     });
     expect(() => commandFromRemoteInput({ senderId: "other", text: "/runs" }, "bk")).toThrow("not allowed");
@@ -1772,7 +1772,7 @@ describe("inbox and remote commands", () => {
     expect(report).toContain("텔레그램: `/plan`");
     const requests = await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).list();
     expect(requests.at(-1)).toMatchObject({
-      id: "request-2026-05-06t10-22-00.000z-recover-plan-failed-result",
+      id: expect.stringMatching(/^request-20260506-102200-recover-plan-failed-result-[0-9a-f]{8}$/),
       status: "pending_plan",
       text: expect.stringContaining("무작정 retry하지 말고 복구 계획을 제안하세요."),
     });

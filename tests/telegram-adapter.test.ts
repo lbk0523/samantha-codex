@@ -52,7 +52,7 @@ describe("pollTelegramToInbox", () => {
     expect(result.nextOffset).toBe(11);
     expect(result.enqueued).toHaveLength(1);
     expect(result.enqueued[0]?.command.type).toBe("ops:next-action");
-    expect(result.enqueued[0]?.command.id?.endsWith("-10-next-action")).toBe(true);
+    expect(result.enqueued[0]?.command.id).toMatch(/^remote-\d{8}-\d{6}-next_action-[0-9a-f]{8}-next-action$/);
     expect(await readFile(result.enqueued[0]?.path ?? "", "utf8")).toContain("ops:next-action");
   });
 

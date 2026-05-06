@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
 import { writeDashboard, type LiveRunEvent, type LiveRunStatus } from "./lib/dashboard";
+import { compactOutboxFileName } from "./lib/ids";
 import { processInbox, type InboxCommand } from "./lib/inbox";
 import { RunIndex, summarizeWorkerRun, type RunSummary } from "./lib/ledger";
 import { buildWorkerLiveLogPath, formatWorkerLiveLogLine, startTmuxObserver, stopTmuxObserver, type TmuxObserverResult } from "./lib/live-log";
@@ -91,7 +92,7 @@ import { TaskStore } from "./lib/task-store";
 import { pollTelegramToInbox } from "./lib/telegram-adapter";
 import { sendOutboxReplies } from "./lib/telegram-reply-adapter";
 import { cleanupCompletedWorktree } from "./lib/worktree-cleanup";
-import { branchForTask, sanitizeTaskId, worktreePathForTask } from "./lib/worktree";
+import { branchForTask, worktreePathForTask } from "./lib/worktree";
 import { executeWorkerDispatch, prepareWorkerDispatch, commitWorkerChanges } from "./lib/worker-dispatch";
 import { evaluateWorkerResult } from "./lib/worker-result";
 import { gitHead, gitTopLevel } from "./lib/git";
@@ -566,7 +567,12 @@ async function executeTaskDispatch(input: {
 
 async function writeRemoteActionResultOutbox(args: ParsedArgs, action: RemoteActionRecord): Promise<void> {
   const completedAt = action.completedAt ?? new Date().toISOString();
-  const file = `remote-${completedAt.replace(/[:.]/g, "-").toLowerCase()}-result-${sanitizeTaskId(action.id)}.md`;
+  const file = compactOutboxFileName({
+    createdAt: completedAt,
+    kind: "result",
+    label: action.taskTitle,
+    source: action.id,
+  });
   let runLog: WorkerRunLog | undefined;
 
   if (action.result?.runLogPath) {
@@ -664,7 +670,12 @@ async function writeOrchestratorPlanResultOutbox(args: ParsedArgs, plan: Orchest
     }
   })();
   const reportedAt = new Date().toISOString();
-  const file = `remote-${reportedAt.replace(/[:.]/g, "-").toLowerCase()}-plan-result-${sanitizeTaskId(plan.id)}.md`;
+  const file = compactOutboxFileName({
+    createdAt: reportedAt,
+    kind: "plan-result",
+    label: plan.payload?.summary ?? plan.requestId,
+    source: plan.id,
+  });
   await mkdir(outboxDir(args), { recursive: true });
   await writeFile(
     join(outboxDir(args), file),

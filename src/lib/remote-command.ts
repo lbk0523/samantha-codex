@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { InboxCommand } from "./inbox";
+import { compactEntityId } from "./ids";
 import { buildOrchestrationRequestId } from "./orchestrator-store";
 import { buildProposalId } from "./proposal-store";
 import { sanitizeTaskId } from "./worktree";
@@ -34,7 +35,12 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
 
   const text = input.text.trim();
   const receivedAt = input.receivedAt ?? new Date().toISOString();
-  const commandToken = sanitizeTaskId(input.remoteId === undefined ? receivedAt : `${receivedAt}-${input.remoteId}`);
+  const commandToken = compactEntityId({
+    prefix: "remote",
+    createdAt: receivedAt,
+    label: text.split(/\s+/, 1)[0]?.replace(/^\//, "") || "command",
+    source: `${receivedAt}-${input.remoteId ?? text}`,
+  }).replace(/^remote-/, "");
 
   if (isCommand(text, "/help", "/start")) {
     return { id: `remote-${commandToken}-help`, type: "remote:help", args: { source: "remote", mode: "basic" } };
@@ -91,7 +97,7 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       id: `remote-${commandToken}-revise`,
       type: "orchestrator:revise-latest",
       args: {
-        requestId: buildOrchestrationRequestId(receivedAt, `revise-${input.remoteId ?? commandToken}`),
+        requestId: buildOrchestrationRequestId(receivedAt, "revise"),
         feedback,
         senderId: input.senderId,
         source: "remote",
@@ -207,7 +213,7 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       id: `remote-${commandToken}-work`,
       type: "orchestrator:add-request",
       args: {
-        requestId: buildOrchestrationRequestId(receivedAt, input.remoteId),
+        requestId: buildOrchestrationRequestId(receivedAt, "work"),
         text: requestText,
         senderId: input.senderId,
         source: "remote",

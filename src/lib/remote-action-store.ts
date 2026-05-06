@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { TaskSpec } from "./contracts";
-import { sanitizeTaskId } from "./worktree";
+import { compactEntityId } from "./ids";
 
 export type RemoteActionStatus = "pending" | "waiting" | "approved" | "running" | "completed" | "failed";
 export type RemoteActionKind = "dispatch_task";
@@ -39,10 +39,6 @@ export interface RemoteActionRecord {
   result?: RemoteActionResult;
 }
 
-function timestampToken(value: string): string {
-  return value.replace(/[:.]/g, "-").toLowerCase();
-}
-
 async function writeActions(path: string, actions: RemoteActionRecord[]): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const next = actions.map((item) => JSON.stringify(item)).join("\n") + "\n";
@@ -50,8 +46,12 @@ async function writeActions(path: string, actions: RemoteActionRecord[]): Promis
 }
 
 export function buildRemoteDispatchActionId(input: { createdAt: string; taskId: string; commandId?: string }): string {
-  const token = input.commandId ? sanitizeTaskId(input.commandId) : timestampToken(input.createdAt);
-  return `action-${token}-${sanitizeTaskId(input.taskId)}-dispatch`;
+  return compactEntityId({
+    prefix: "action",
+    createdAt: input.createdAt,
+    label: input.taskId.replace(/^task-/, ""),
+    source: `${input.createdAt}-${input.commandId ?? ""}-${input.taskId}`,
+  });
 }
 
 export function createRemoteDispatchAction(input: {
