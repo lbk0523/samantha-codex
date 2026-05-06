@@ -835,7 +835,7 @@ describe("inbox and remote commands", () => {
     expect(approveReport).toContain("아직 worker는 실행하지 않았습니다.");
     expect(approveReport).toContain("텔레그램: `/go`");
     const actionReport = await readFile(join(outbox, "004-run-next.md"), "utf8");
-    expect(actionReport).toContain("Repo: `/repo`");
+    expect(actionReport).toContain("대상 repo: `repo`");
     expect(actionReport).toContain("--repo-root=/repo");
 
     const taskRecords = (await readFile(join(state, "tasks.jsonl"), "utf8"))

@@ -370,6 +370,7 @@ describe("operator reports", () => {
     expect(remoteActionPreparedReport(action)).toContain("텔레그램: `/go`");
     expect(remoteActionPreparedReport(action)).not.toContain("/approve_action");
     expect(remoteActionPreparedReport(action)).toContain("아직 worker는 실행하지 않았습니다.");
+    expect(remoteActionPreparedReport(action)).toContain("대상 repo: `repo`");
     expect(remoteActionsListReport([action])).toContain("dispatch_task");
     expect(remoteActionShowReport(action.id, action)).toContain("tasks:dispatch task-pass");
     expect(remoteActionShowReport(action.id, action)).toContain("텔레그램: `/go`");
@@ -441,6 +442,8 @@ describe("operator reports", () => {
     const resultReport = remoteActionResultReport({ action: completed, runLog });
     expect(resultReport).toContain("# execution-result");
     expect(resultReport).toContain("실행 결과: 통과");
+    expect(resultReport).toContain("대상 repo: `repo`");
+    expect(resultReport).toContain("작업 유형: 구현/수정 - 커밋 생성, merge 필요");
     expect(resultReport).toContain("작업 완료 보고");
     expect(resultReport).not.toContain("HARNESS_RESULT");
     expect(resultReport).toContain("`README.md`");
@@ -452,6 +455,7 @@ describe("operator reports", () => {
       artifactPreviews: [{ file: "01 Design/(C) 2026-05-05 fixture-report.md", text: "# 원격 보고서\n\n핵심 내용입니다." }],
     });
     expect(reportModeResult).toContain("산출물 미리보기");
+    expect(reportModeResult).toContain("작업 유형: 계획/보고 - 커밋 없음 정상");
     expect(reportModeResult).toContain("파일: `01 Design/(C) 2026-05-05 fixture-report.md`");
     expect(reportModeResult).toContain("# 원격 보고서");
     expect(
@@ -730,12 +734,53 @@ describe("operator reports", () => {
       },
     });
     expect(passedPlanResult).toContain("계획 결과: 구현 통과");
+    expect(passedPlanResult).toContain("대상 repo: `repo`");
+    expect(passedPlanResult).toContain("작업 유형: 구현/수정 - merge 필요");
     expect(passedPlanResult).toContain("완료 작업: 1/1");
     expect(passedPlanResult).toContain("Pass task: 통과");
+    expect(passedPlanResult).toContain("대상: repo / 구현/수정");
     expect(passedPlanResult).toContain("`README.md`");
     expect(passedPlanResult).toContain("텔레그램: `/now`");
     expect(passedPlanResult).not.toContain("plan-1");
     expect(passedPlanResult).not.toContain("task-pass status=");
+
+    const reportOnlyPlanResult = orchestratorPlanResultReport({
+      plan: { ...orchestratorPlan, status: "materialized", actionIds: [passedPlanAction.id] },
+      actions: [passedPlanAction],
+      runLogs: [
+        {
+          schemaVersion: 1,
+          runId: "run-pass",
+          startedAt: "2026-05-05T10:02:00.000Z",
+          finishedAt: "2026-05-05T10:03:00.000Z",
+          task: { ...task, resultMode: "report" },
+          agent,
+          input: { repoRoot: "/repo/oh-my-health-trainer", allocate: true, execute: true },
+          result: {
+            preparation: {
+              taskId: task.id,
+              agentId: agent.id,
+              worktreePath: "/worktree",
+              codex: { prompt: "prompt", command: ["codex", "exec"] },
+            },
+            setupResults: [],
+            command: { command: ["codex", "exec"], exitCode: 0, stdout: "", stderr: "" },
+            evaluation: {
+              pass: true,
+              harness: { status: "pass", note: "report-only", commit: "" },
+              changedFiles: [],
+              scopeViolations: [],
+              verifyResults: [],
+            },
+            pass: true,
+          },
+        },
+      ],
+    });
+    expect(reportOnlyPlanResult).toContain("계획 결과: 보고 완료");
+    expect(reportOnlyPlanResult).toContain("대상 repo: `oh-my-health-trainer`");
+    expect(reportOnlyPlanResult).toContain("작업 유형: 계획/보고 - 커밋 없음 정상");
+    expect(reportOnlyPlanResult).not.toContain("로컬 merge 후보");
 
     const failedPlanResult = orchestratorPlanResultReport({
       plan: { ...orchestratorPlan, status: "materialized", actionIds: ["action-failed"] },
@@ -763,6 +808,7 @@ describe("operator reports", () => {
       },
     });
     expect(failedPlanResult).toContain("계획 결과: 검증 실패 - 복구 필요");
+    expect(failedPlanResult).toContain("작업 유형: 구현/수정 - 복구 필요");
     expect(failedPlanResult).toContain("텔레그램: `/recover`");
     expect(failedPlanResult).toContain("verify failed");
 

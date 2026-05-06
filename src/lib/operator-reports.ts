@@ -117,6 +117,31 @@ function resultModeLabel(mode: string | undefined): string {
   return mode === "report" ? "계획/보고" : "구현/수정";
 }
 
+function repoName(repoRoot: string | undefined): string {
+  const normalized = oneLine(repoRoot ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalized.split("/").filter(Boolean).at(-1) ?? "unknown";
+}
+
+function repoSummaryLine(repoRoot: string | undefined): string {
+  return `대상 repo: ${code(repoName(repoRoot))}`;
+}
+
+function workTypeLine(input: { mode?: string; pass?: boolean; commit?: string }): string {
+  if (input.mode === "report") return "작업 유형: 계획/보고 - 커밋 없음 정상";
+  if (input.commit) return "작업 유형: 구현/수정 - 커밋 생성, merge 필요";
+  if (input.pass) return "작업 유형: 구현/수정 - 커밋 없음 확인 필요";
+  return "작업 유형: 구현/수정";
+}
+
+function planWorkTypeLine(input: { runLogs: WorkerRunLog[]; mergeCommands: string[]; needsRecovery: boolean }): string {
+  if (input.runLogs.length > 0 && input.runLogs.every((runLog) => runLog.task.resultMode === "report")) {
+    return "작업 유형: 계획/보고 - 커밋 없음 정상";
+  }
+  if (input.mergeCommands.length > 0) return "작업 유형: 구현/수정 - merge 필요";
+  if (input.needsRecovery) return "작업 유형: 구현/수정 - 복구 필요";
+  return "작업 유형: 구현/수정";
+}
+
 function draftNextLines(draft: TaskDraftRecord): string[] {
   if (draft.status !== "drafted") {
     return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
@@ -1092,11 +1117,16 @@ export function orchestratorPlanResultReport(input: {
     ...failed.map((action) => `${oneLine(action.taskTitle)}: ${oneLine(action.result?.failure ?? action.result?.outcome ?? action.status)}`),
   ].filter((line): line is string => Boolean(line));
   const nextCommand = needsRecovery ? "/recover" : mergeCommands.length ? "/now" : "/check";
+  const repoNames = Array.from(
+    new Set(input.actions.map((action) => repoName(runLogForAction(action)?.input.repoRoot ?? action.repoRoot))),
+  );
 
   return [
     "# plan-result",
     "",
     `계획 결과: ${outcome}`,
+    `대상 repo: ${repoNames.map(code).join(", ")}`,
+    planWorkTypeLine({ runLogs: input.runLogs, mergeCommands, needsRecovery }),
     `완료 작업: ${input.actions.length - failed.length}/${input.actions.length}`,
     input.synthesis ? `종합 결과: ${code(input.synthesis.outcome)}` : "",
     "",
@@ -1116,6 +1146,7 @@ export function orchestratorPlanResultReport(input: {
           : "통과";
       return [
         `- ${oneLine(action.taskTitle)}: ${actionOutcome}`,
+        `  대상: ${repoName(runLog?.input.repoRoot ?? action.repoRoot)} / ${resultModeLabel(runLog?.task.resultMode)}`,
         runLog ? `  보고: ${oneLine(workerFinalMessage(runLog))}` : "",
         action.result?.failure ? `  실패 이유: ${oneLine(action.result.failure)}` : "",
       ].filter(Boolean);
@@ -1339,7 +1370,7 @@ export function remoteActionPreparedReport(action: RemoteActionRecord): string {
     `상태: ${code(action.status)}`,
     `태스크: ${code(action.taskId)} - ${oneLine(action.taskTitle)}`,
     `Agent: ${code(action.targetAgent)}`,
-    `Repo: ${code(action.repoRoot)}`,
+    repoSummaryLine(action.repoRoot),
     "",
     "실행 예정 명령:",
     code(remoteActionCommand(action)),
@@ -1363,7 +1394,8 @@ export function remoteGoReport(input: {
     input.task ? `태스크: ${code(input.task.id)} - ${oneLine(input.task.title)}` : `태스크: ${code(input.action.taskId)} - ${oneLine(input.action.taskTitle)}`,
     `액션: ${code(input.action.id)}`,
     `상태: ${code(input.action.status)}`,
-    `Repo: ${code(input.action.repoRoot)}`,
+    repoSummaryLine(input.action.repoRoot),
+    input.task?.resultMode ? workTypeLine({ mode: input.task.resultMode }) : "",
     "",
     "실행을 승인했습니다.",
     "runner가 `actions:watch` 또는 `actions:run-pending`에서 실행을 이어갑니다.",
@@ -1398,6 +1430,8 @@ export function remoteIntegrationReport(input: {
     `결과: ${input.ok ? "통과" : "차단"}`,
     `런: ${code(input.run.runId)}`,
     `태스크: ${code(input.run.taskId)} - ${oneLine(input.run.taskTitle)}`,
+    repoSummaryLine(input.run.repoRoot),
+    workTypeLine({ pass: input.run.pass, commit: input.run.commit }),
     input.lifecycle ? `lifecycle: ${lifecycleText(input.lifecycle)}` : "",
     "",
     "세부:",
@@ -1428,7 +1462,7 @@ export function remoteActionShowReport(actionId: string, action: RemoteActionRec
     `상태: ${code(action.status)}`,
     `태스크: ${code(action.taskId)} - ${oneLine(action.taskTitle)}`,
     `Agent: ${code(action.targetAgent)}`,
-    `Repo: ${code(action.repoRoot)}`,
+    repoSummaryLine(action.repoRoot),
     `생성: ${code(action.createdAt)}`,
     action.approvedAt ? `승인: ${code(action.approvedAt)}` : "",
     action.startedAt ? `시작: ${code(action.startedAt)}` : "",
@@ -1457,6 +1491,7 @@ export function remoteActionApprovedReport(action: RemoteActionRecord): string {
     `액션: ${code(action.id)}`,
     `상태: ${code(action.status)}`,
     `태스크: ${code(action.taskId)}`,
+    repoSummaryLine(action.repoRoot),
     result?.runId ? `런: ${code(result.runId)}` : "",
     result?.outcome ? `결과: ${code(result.outcome)}` : "",
     result?.pass !== undefined ? `통과: ${result.pass ? "yes" : "no"}` : "",
@@ -1487,7 +1522,9 @@ export function remoteActionResultReport(input: {
     `실행 결과: ${pass ? "통과" : "실패"}`,
     `액션: ${code(action.id)}`,
     `태스크: ${code(action.taskId)} - ${oneLine(action.taskTitle)}`,
+    repoSummaryLine(runLog?.input.repoRoot ?? action.repoRoot),
     runLog?.task.resultMode ? `모드: ${resultModeLabel(runLog.task.resultMode)}` : "",
+    workTypeLine({ mode: runLog?.task.resultMode, pass, commit }),
     result?.runId ? `런: ${code(result.runId)}` : "",
     result?.outcome ? `결과: ${code(result.outcome)}` : "",
     action.completedAt ? `완료: ${code(action.completedAt)}` : "",

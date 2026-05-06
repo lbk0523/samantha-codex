@@ -481,12 +481,9 @@ Pass criteria:
 - `state/telegram-offset.json` is updated after a successful poll
 - `state/telegram-replies.json` prevents duplicate Telegram replies
 - long remote outbox replies are split into multiple Telegram messages instead of truncated
-- reports that return proposal, draft, action, run, or task IDs also send each ID as a separate copy-only Telegram message
-- `/propose <text>` writes only to `state/proposals.jsonl` and does not dispatch a worker
+- Telegram replies hide routine proposal, draft, action, run, task, request, and plan IDs instead of sending copy-only follow-up messages
+- old proposal/draft Telegram commands such as `/propose`, `/draft_propose`, `/accept`, `/reject`, and `/draft` return deprecated-command guidance instead of running the old flow
 - `/work <text>` writes only to `state/orchestration-requests.jsonl` and does not dispatch a worker
-- `/draft_propose <text>` writes only to `state/proposals.jsonl` and `state/task-drafts.jsonl` and does not dispatch a worker
-- `/accept <id>` and `/reject <id>` update proposal review state only and do not dispatch workers
-- `/draft <proposal-id>` writes only to `state/task-drafts.jsonl`; unaccepted proposals are rejected
 - `drafts:check`, `drafts:update`, and `drafts:approve` stay local-only
 - `drafts:approve` writes one pending task to `state/tasks.jsonl` only after `targetFiles`, `verifyCommands`, `instructions`, and `targetAgent` pass checks
 - direct `tasks:dispatch` stays local-only; dry-run prints the prepared Codex command, and `--execute` writes run logs and run index entries
@@ -516,11 +513,8 @@ Stop dogfood and fix Samantha before continuing if any of these happen:
 - Telegram reply sends local non-remote outbox files unexpectedly
 - Telegram reply resends the same outbox file repeatedly
 - Telegram reply sends status values, timestamps, or file paths as copy-only ID messages
-- `/propose` dispatches a worker, creates a commit, or changes project files
-- `/draft_propose` dispatches a worker, creates a commit, writes `state/tasks.jsonl`, or changes project files
-- `/accept` or `/reject` dispatches a worker, creates a commit, or changes project files
-- `/draft` dispatches a worker, creates a commit, writes `state/tasks.jsonl`, or changes project files
-- any remote Telegram command can run `drafts:approve` or write `state/tasks.jsonl`
+- deprecated proposal/draft Telegram commands such as `/propose`, `/draft_propose`, `/accept`, `/reject`, or `/draft` execute the old flow instead of returning replacement guidance
+- any remote Telegram command runs `drafts:approve` or writes `state/tasks.jsonl` outside `/go` materializing a safe orchestrator plan
 - any remote Telegram command can run `tasks:dispatch` directly, bypass `actions:watch`, or change the repo root/flags for an approved action
 - remote command can create arbitrary shell execution
 - writer task modifies files outside `targetFiles`

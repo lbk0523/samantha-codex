@@ -170,6 +170,8 @@ describe("sendOutboxReplies", () => {
         "저장된 요청: `request-20260506-090000-work-abc12345`",
         "액션: `action-1`",
         "태스크: `task-1` - 보고서 작성",
+        "대상 repo: `oh-my-health-trainer`",
+        "작업 유형: 계획/보고 - 커밋 없음 정상",
         "런: `run-1`",
         "결과: `pass`",
         "변경 파일:",
@@ -185,6 +187,8 @@ describe("sendOutboxReplies", () => {
 
     expect(report).toContain("실행 결과");
     expect(report).toContain("작업: 보고서 작성");
+    expect(report).toContain("대상 repo: `oh-my-health-trainer`");
+    expect(report).toContain("작업 유형: 계획/보고 - 커밋 없음 정상");
     expect(report).toContain("결과: `pass`");
     expect(report).toContain("텔레그램: `/go`");
     expect(report).not.toContain("action-1");
@@ -203,6 +207,8 @@ describe("sendOutboxReplies", () => {
         "계획 결과: 구현 통과",
         "계획: `plan-20260506-090100-work-def67890`",
         "요청: `request-20260506-090000-work-abc12345`",
+        "대상 repo: `samantha-codex`",
+        "작업 유형: 구현/수정 - merge 필요",
         "완료 작업: 1/1",
         "Worker 결과:",
         "- Telegram UX 정리: 통과",
@@ -220,6 +226,8 @@ describe("sendOutboxReplies", () => {
 
     expect(report).toContain("계획 결과");
     expect(report).toContain("계획 결과: 구현 통과");
+    expect(report).toContain("대상 repo: `samantha-codex`");
+    expect(report).toContain("작업 유형: 구현/수정 - merge 필요");
     expect(report).toContain("Telegram 보고 메시지를 짧게 정리했습니다.");
     expect(report).toContain("`src > lib > operator-reports.ts`");
     expect(report).toContain("남은 리스크:");
