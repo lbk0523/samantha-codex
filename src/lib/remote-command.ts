@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { InboxCommand } from "./inbox";
+import { buildOrchestrationRequestId } from "./orchestrator-store";
 import { buildProposalId } from "./proposal-store";
 import { sanitizeTaskId } from "./worktree";
 
@@ -44,12 +45,15 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   if (text === "/now") {
     return { id: `remote-${commandToken}-now`, type: "ops:now", args: { source: "remote" } };
   }
+  if (text === "/plan_current") {
+    return { id: `remote-${commandToken}-plan-current`, type: "orchestrator:show-current-plan", args: { source: "remote" } };
+  }
   const planArgs = commandArgument(text, "/plan");
   if (text === "/plan" || planArgs !== undefined) {
     const [projectId = "", scopeId = ""] = planArgs ? commandParts(planArgs) : [];
     return {
       id: `remote-${commandToken}-plan`,
-      type: "drafts:plan-latest",
+      type: "orchestrator:plan-latest",
       args: {
         ...(projectId ? { projectId } : {}),
         ...(scopeId ? { scopeId } : {}),
@@ -60,6 +64,40 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   }
   if (text === "/go") {
     return { id: `remote-${commandToken}-go`, type: "actions:go", args: { source: "remote", receivedAt } };
+  }
+  if (text === "/recover") {
+    return {
+      id: `remote-${commandToken}-recover`,
+      type: "orchestrator:recover-latest",
+      args: { source: "remote", senderId: input.senderId, receivedAt },
+    };
+  }
+  const cancelReason = commandArgument(text, "/cancel");
+  if (text === "/cancel" || cancelReason !== undefined) {
+    return {
+      id: `remote-${commandToken}-cancel`,
+      type: "orchestrator:cancel-current",
+      args: {
+        ...(cancelReason ? { reason: cancelReason } : {}),
+        source: "remote",
+        receivedAt,
+      },
+    };
+  }
+  if (text.startsWith("/revise ")) {
+    const feedback = text.slice("/revise ".length).trim();
+    if (!feedback) throw new Error("missing revision feedback");
+    return {
+      id: `remote-${commandToken}-revise`,
+      type: "orchestrator:revise-latest",
+      args: {
+        requestId: buildOrchestrationRequestId(receivedAt, `revise-${input.remoteId ?? commandToken}`),
+        feedback,
+        senderId: input.senderId,
+        source: "remote",
+        receivedAt,
+      },
+    };
   }
   if (text === "/check") {
     return { id: `remote-${commandToken}-check`, type: "status:show", args: { source: "remote" } };
@@ -163,14 +201,14 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
     };
   }
   if (text.startsWith("/work ")) {
-    const proposalText = text.slice("/work ".length).trim();
-    if (!proposalText) throw new Error("missing work text");
+    const requestText = text.slice("/work ".length).trim();
+    if (!requestText) throw new Error("missing work text");
     return {
       id: `remote-${commandToken}-work`,
-      type: "drafts:add-from-proposal-text",
+      type: "orchestrator:add-request",
       args: {
-        proposalId: buildProposalId(receivedAt, input.remoteId),
-        text: proposalText,
+        requestId: buildOrchestrationRequestId(receivedAt, input.remoteId),
+        text: requestText,
         senderId: input.senderId,
         source: "remote",
         receivedAt,

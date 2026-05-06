@@ -46,6 +46,16 @@ describe("validateDispatch", () => {
     expect(result.violations).toContain("writer tasks must declare targetFiles");
   });
 
+  test("allows report-only writer tasks without target files", () => {
+    const result = validateDispatch(
+      { ...validTask, resultMode: "report", targetFiles: [], forbiddenChanges: ["**/*"] },
+      worker,
+    );
+
+    expect(result.mayDispatch).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
   test("blocks writer profiles that do not reserve worktrees for Samantha", () => {
     const result = validateDispatch(validTask, { ...worker, worktreePolicy: "none" });
 

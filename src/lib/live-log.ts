@@ -38,6 +38,7 @@ export interface TmuxObserverResult {
   started: boolean;
   sessionName: string;
   windowName: string;
+  windowId?: string;
   liveLogPath: string;
   attachCommand: string;
   warning?: string;
@@ -167,16 +168,17 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-async function runTmux(args: string[]): Promise<{ exitCode: number; stderr: string }> {
+async function runTmux(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const child = Bun.spawn(["tmux", ...args], {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
     new Response(child.stderr).text(),
     child.exited,
   ]);
-  return { exitCode, stderr };
+  return { exitCode, stdout, stderr };
 }
 
 export async function startTmuxObserver(input: {
@@ -210,16 +212,23 @@ export async function startTmuxObserver(input: {
   const hasSession = await runTmux(["has-session", "-t", input.sessionName]);
   const start =
     hasSession.exitCode === 0
-      ? await runTmux(["new-window", "-t", input.sessionName, "-n", windowName, "-c", input.cwd, command])
-      : await runTmux(["new-session", "-d", "-s", input.sessionName, "-n", windowName, "-c", input.cwd, command]);
+      ? await runTmux(["new-window", "-P", "-F", "#{window_id}", "-t", input.sessionName, "-n", windowName, "-c", input.cwd, command])
+      : await runTmux(["new-session", "-d", "-P", "-F", "#{window_id}", "-s", input.sessionName, "-n", windowName, "-c", input.cwd, command]);
+  const windowId = start.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
 
   return {
     enabled: true,
     started: start.exitCode === 0,
     sessionName: input.sessionName,
     windowName,
+    ...(windowId ? { windowId } : {}),
     liveLogPath: input.liveLogPath,
     attachCommand,
     ...(start.exitCode === 0 ? {} : { warning: start.stderr.trim() || "tmux observer failed to start" }),
   };
+}
+
+export async function stopTmuxObserver(observer: TmuxObserverResult): Promise<void> {
+  if (!observer.started || !observer.windowId) return;
+  await runTmux(["kill-window", "-t", observer.windowId]);
 }

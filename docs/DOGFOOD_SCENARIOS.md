@@ -472,7 +472,7 @@ bun run samantha telegram:reply
 
 Pass criteria:
 
-- allowed practical commands `/help`, `/start`, `/now`, `/work <text>`, `/plan`, `/go`, `/check`, and `/problems` create inbox files
+- allowed practical commands `/help`, `/start`, `/now`, `/work <text>`, `/plan`, `/plan_current`, `/go`, `/revise <feedback>`, `/cancel`, `/recover`, `/check`, and `/problems` create inbox files
 - allowed advanced commands `/help_advanced`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/draft_propose <text>`, `/proposals`, `/proposal <id>`, `/accept <id>`, `/reject <id>`, `/draft <proposal_id>`, `/drafts`, `/draft <draft_id>`, `/tasks`, `/dashboard`, `/task <id>`, `/prepare_dispatch <task_id>`, `/actions`, `/action <action_id>`, and `/approve_action <action_id>` create inbox files
 - legacy hyphenated aliases still normalize, but Telegram reports and docs prefer underscore commands
 - `/help` shows the short `/work <request> -> /plan -> /go` operating flow instead of a long command catalog
@@ -483,18 +483,21 @@ Pass criteria:
 - long remote outbox replies are split into multiple Telegram messages instead of truncated
 - reports that return proposal, draft, action, run, or task IDs also send each ID as a separate copy-only Telegram message
 - `/propose <text>` writes only to `state/proposals.jsonl` and does not dispatch a worker
-- `/work <text>` and `/draft_propose <text>` write only to `state/proposals.jsonl` and `state/task-drafts.jsonl` and do not dispatch a worker
+- `/work <text>` writes only to `state/orchestration-requests.jsonl` and does not dispatch a worker
+- `/draft_propose <text>` writes only to `state/proposals.jsonl` and `state/task-drafts.jsonl` and does not dispatch a worker
 - `/accept <id>` and `/reject <id>` update proposal review state only and do not dispatch workers
 - `/draft <proposal-id>` writes only to `state/task-drafts.jsonl`; unaccepted proposals are rejected
 - `drafts:check`, `drafts:update`, and `drafts:approve` stay local-only
 - `drafts:approve` writes one pending task to `state/tasks.jsonl` only after `targetFiles`, `verifyCommands`, `instructions`, and `targetAgent` pass checks
 - direct `tasks:dispatch` stays local-only; dry-run prints the prepared Codex command, and `--execute` writes run logs and run index entries
-- `/plan` prepares the latest draft and returns a detailed execution plan without dispatching a worker
-- `/go` approves the ready draft or pending action without running inside `inbox:watch`
+- `/plan` runs `codex-orchestrator` in read-only mode and returns a detailed plan without dispatching a worker
+- `/go` materializes safe orchestrator plans into tasks and approved actions; unsafe plans are blocked before task/action creation
+- dependent materialized actions wait until prerequisite actions complete successfully
+- completed materialized plans rerun `codex-orchestrator` in synthesis mode and produce one `# plan-result` outbox report in addition to per-action reports
 - `/run_next` and `/prepare_dispatch <task_id>` create only a pending action in `state/remote-actions.jsonl`
 - `/yes` and `/approve_action <action_id>` only mark an existing pending dispatch action approved
 - `actions:watch` executes approved dispatch action ids with fixed `--allocate --execute --tmux` flags and locally configured repo root
-- no remote path executes shell, merge, push, cleanup, or direct worker dispatch
+- no remote path accepts shell, arbitrary repo paths, arbitrary merge/push/cleanup paths, or direct worker dispatch
 - `inbox:watch` processes the created inbox commands later
 - `telegram:reply` sends only `outbox/remote-*.md` report text to Telegram
 - the systemd timer can be enabled after one manual real-token poll passes

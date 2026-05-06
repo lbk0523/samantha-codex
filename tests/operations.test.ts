@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import type { DaemonHeartbeat } from "../src/lib/daemon";
 import { renderDashboard, renderLaneViewDashboard, writeDashboard } from "../src/lib/dashboard";
+import { git, gitHead } from "../src/lib/git";
 import { processInbox } from "../src/lib/inbox";
 import type { RunSummary } from "../src/lib/ledger";
 import { buildPlanBatches, type LoadedPlanTask } from "../src/lib/plan-runner";
+import { OrchestrationRequestStore, OrchestratorPlanStore, type OrchestratorPlanPayload } from "../src/lib/orchestrator-store";
+import { materializeOrchestratorPlan } from "../src/lib/orchestrator-materializer";
 import { createRemoteDispatchAction, RemoteActionStore } from "../src/lib/remote-action-store";
 import { commandFromRemoteInput, enqueueRemoteCommand } from "../src/lib/remote-command";
+import type { WorkerRunLog } from "../src/lib/run-log";
 
 let tmpRoots: string[] = [];
 
@@ -32,6 +36,12 @@ const reviewer: AgentProfile = {
   mergePolicy: "none",
 };
 
+const orchestrator: AgentProfile = {
+  ...reviewer,
+  id: "codex-orchestrator",
+  role: "spec",
+};
+
 const task: TaskSpec = {
   id: "fixture",
   title: "Fixture",
@@ -42,6 +52,121 @@ const task: TaskSpec = {
   instructions: "Fixture.",
   status: "pending",
 };
+
+async function writeFakeCodex(root: string, payload: OrchestratorPlanPayload): Promise<string> {
+  const path = join(root, "fake-codex");
+  await writeFile(
+    path,
+    [
+      "#!/usr/bin/env bun",
+      `const payload = ${JSON.stringify(payload)};`,
+      'const text = "계획 생성 완료\\n\\nORCHESTRATOR_PLAN: " + JSON.stringify(payload);',
+      'console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text } }));',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await chmod(path, 0o755);
+  return path;
+}
+
+async function makeMergeCandidate(): Promise<{ repo: string; workerCommit: string; logPath: string; summary: RunSummary }> {
+  const repo = await mkdtemp(join(tmpdir(), "samantha-codex-remote-merge-"));
+  tmpRoots.push(repo);
+  await git(["init", "-b", "main"], repo);
+  await git(["config", "user.email", "samantha@example.local"], repo);
+  await git(["config", "user.name", "Samantha Test"], repo);
+  await writeFile(join(repo, "allowed.txt"), "base\n", "utf8");
+  await git(["add", "allowed.txt"], repo);
+  await git(["commit", "-m", "chore: initial"], repo);
+  const baseCommit = await gitHead(repo);
+  await git(["checkout", "-b", "samantha/remote-merge"], repo);
+  await writeFile(join(repo, "allowed.txt"), "changed\n", "utf8");
+  await git(["add", "allowed.txt"], repo);
+  await git(["commit", "-m", "feat: worker change"], repo);
+  const workerCommit = await gitHead(repo);
+  await git(["checkout", "main"], repo);
+
+  const log: WorkerRunLog = {
+    schemaVersion: 1,
+    runId: "run-remote-merge",
+    startedAt: "2026-05-05T10:00:00.000Z",
+    finishedAt: "2026-05-05T10:01:00.000Z",
+    task: {
+      ...task,
+      id: "remote-merge-fixture",
+      title: "Remote merge fixture",
+      verifyCommands: ["grep -q changed allowed.txt"],
+    },
+    agent: writer,
+    input: { repoRoot: repo, allocate: true, execute: true },
+    result: {
+      preparation: {
+        taskId: "remote-merge-fixture",
+        agentId: "codex-worker",
+        worktreePath: join(repo, "worktrees/remote-merge-fixture"),
+        allocation: {
+          taskId: "remote-merge-fixture",
+          repoRoot: repo,
+          worktreePath: join(repo, "worktrees/remote-merge-fixture"),
+          branch: "samantha/remote-merge",
+          baseCommit,
+        },
+        codex: { prompt: "prompt", command: ["codex", "exec"] },
+      },
+      setupResults: [],
+      command: { command: ["codex", "exec"], exitCode: 0, stdout: "", stderr: "" },
+      evaluation: {
+        pass: true,
+        harness: { status: "pass", note: "ok", commit: "" },
+        changedFiles: ["allowed.txt"],
+        scopeViolations: [],
+        verifyResults: [],
+      },
+      commit: {
+        subject: "feat: worker change",
+        files: ["allowed.txt"],
+        add: { command: ["git", "add", "--", "allowed.txt"], exitCode: 0, stdout: "", stderr: "" },
+        commit: { command: ["git", "commit", "-m", "feat: worker change"], exitCode: 0, stdout: "", stderr: "" },
+        commitHash: workerCommit,
+      },
+      pass: true,
+    },
+  };
+  const logRoot = await mkdtemp(join(tmpdir(), "samantha-codex-remote-merge-log-"));
+  tmpRoots.push(logRoot);
+  const logPath = join(logRoot, "run.json");
+  await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
+  return {
+    repo,
+    workerCommit,
+    logPath,
+    summary: {
+      schemaVersion: 1,
+      runId: log.runId,
+      taskId: log.task.id,
+      taskTitle: log.task.title,
+      agentId: log.agent.id,
+      repoRoot: repo,
+      worktreePath: join(repo, "worktrees/remote-merge-fixture"),
+      logPath,
+      startedAt: log.startedAt,
+      finishedAt: log.finishedAt,
+      outcome: "pass",
+      pass: true,
+      commit: workerCommit,
+    },
+  };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 afterEach(async () => {
   await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
@@ -119,15 +244,31 @@ describe("inbox and remote commands", () => {
     });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/help advanced" }, "bk").type).toBe("remote:help");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/now" }, "bk").type).toBe("ops:now");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/plan" }, "bk").type).toBe("drafts:plan-latest");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/plan_current" }, "bk").type).toBe("orchestrator:show-current-plan");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/plan" }, "bk").type).toBe("orchestrator:plan-latest");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/plan omht planning_report" }, "bk")).toMatchObject({
-      type: "drafts:plan-latest",
+      type: "orchestrator:plan-latest",
       args: {
         projectId: "omht",
         scopeId: "planning_report",
       },
     });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/go" }, "bk").type).toBe("actions:go");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/recover" }, "bk")).toMatchObject({
+      type: "orchestrator:recover-latest",
+      args: { senderId: "bk" },
+    });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/revise 구현 범위를 줄여줘" }, "bk")).toMatchObject({
+      type: "orchestrator:revise-latest",
+      args: {
+        feedback: "구현 범위를 줄여줘",
+        senderId: "bk",
+      },
+    });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/cancel stale plan" }, "bk")).toMatchObject({
+      type: "orchestrator:cancel-current",
+      args: { reason: "stale plan" },
+    });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/check" }, "bk").type).toBe("status:show");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/problems" }, "bk").type).toBe("ops:doctor");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/status" }, "bk").type).toBe("status:show");
@@ -243,9 +384,9 @@ describe("inbox and remote commands", () => {
         "bk",
       ),
     ).toMatchObject({
-      type: "drafts:add-from-proposal-text",
+      type: "orchestrator:add-request",
       args: {
-        proposalId: "proposal-2026-05-03t10-06-00.000z",
+        requestId: "request-2026-05-03t10-06-00.000z",
         text: "Improve task flow",
         senderId: "bk",
       },
@@ -351,7 +492,7 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const report = await readFile(join(outbox, "001.md"), "utf8");
     const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
-    expect(report).toContain("No worker was dispatched yet.");
+    expect(report).toContain("아직 worker는 실행하지 않았습니다.");
     expect(report).toContain("/approve_action");
     expect(actions).toHaveLength(1);
     expect(actions[0]).toMatchObject({
@@ -430,7 +571,7 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const report = await readFile(join(outbox, "001.md"), "utf8");
     const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
-    expect(report).toContain("Telegram: `/go`");
+    expect(report).toContain("텔레그램: `/go`");
     expect(actions[0]).toMatchObject({
       status: "pending",
       taskId: "task-pass",
@@ -487,8 +628,8 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const report = await readFile(join(outbox, "001.md"), "utf8");
     const approved = await store.find(action.id);
-    expect(report).toContain("Status: `approved`");
-    expect(report).toContain("waiting for `actions:watch`");
+    expect(report).toContain("상태: `approved`");
+    expect(report).toContain("actions:watch");
     expect(approved).toMatchObject({
       status: "approved",
       approvedAt: "2026-05-03T10:08:00.000Z",
@@ -543,11 +684,11 @@ describe("inbox and remote commands", () => {
     ]);
 
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-    expect(await readFile(join(outbox, "001.md"), "utf8")).toContain("Status: `approved`");
+    expect(await readFile(join(outbox, "001.md"), "utf8")).toContain("상태: `approved`");
     expect(await store.find(action.id)).toMatchObject({ status: "approved" });
   });
 
-  test("surfaces a work-created draft in now instead of reporting no action", async () => {
+  test("surfaces a work-created orchestration request in now instead of reporting no action", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-work-now-"));
     tmpRoots.push(root);
     const inbox = join(root, "inbox");
@@ -597,9 +738,9 @@ describe("inbox and remote commands", () => {
       join(inbox, "001-work.json"),
       JSON.stringify({
         id: "remote-work",
-        type: "drafts:add-from-proposal-text",
+        type: "orchestrator:add-request",
         args: {
-          proposalId: "proposal-work-now",
+          requestId: "request-work-now",
           text: "Improve Telegram now flow",
           senderId: "bk",
           receivedAt: "2026-05-05T10:40:00.000Z",
@@ -617,10 +758,10 @@ describe("inbox and remote commands", () => {
       "utf8",
     );
     await writeFile(
-      join(inbox, "003-draft-next.json"),
+      join(inbox, "003-go.json"),
       JSON.stringify({
-        id: "remote-draft-next",
-        type: "drafts:show-latest",
+        id: "remote-go",
+        type: "actions:go",
         args: { receivedAt: "2026-05-05T10:42:00.000Z" },
       }),
       "utf8",
@@ -646,14 +787,19 @@ describe("inbox and remote commands", () => {
     ]);
 
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const workReport = await readFile(join(outbox, "001-work.md"), "utf8");
+    expect(workReport).toContain("저장된 요청: `request-work-now`");
+    expect(workReport).toContain("텔레그램: `/plan`");
     const report = await readFile(join(outbox, "002-now.md"), "utf8");
-    expect(report).toContain("Draft is waiting for preparation");
-    expect(report).toContain("Telegram: `/plan`");
-    expect(report).not.toContain("No immediate remote action");
-    const draftReport = await readFile(join(outbox, "003-draft-next.md"), "utf8");
-    expect(draftReport).toContain("Draft: `draft-work-now`");
-    expect(draftReport).toContain("Improve Telegram now flow");
-    expect(draftReport).toContain("Telegram: `/plan`");
+    expect(report).toContain("작업 요청이 오케스트레이터 계획 생성을 기다리고 있습니다.");
+    expect(report).toContain("텔레그램: `/plan`");
+    expect(report).not.toContain("지금 바로 필요한 원격 액션은 없습니다.");
+    const goReport = await readFile(join(outbox, "003-go.md"), "utf8");
+    expect(goReport).toContain("작업 요청이 오케스트레이터 계획 생성을 기다리고 있습니다.");
+    expect(await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).latestPending()).toMatchObject({
+      id: "request-work-now",
+      status: "pending_plan",
+    });
   });
 
   test("prepares and approves the latest draft from remote commands without dispatching a worker", async () => {
@@ -772,12 +918,12 @@ describe("inbox and remote commands", () => {
     ]);
 
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-    expect(await readFile(join(outbox, "002-prepare.md"), "utf8")).toContain("Ready: yes");
-    expect(await readFile(join(outbox, "002-prepare.md"), "utf8")).toContain("Telegram: `/go`");
+    expect(await readFile(join(outbox, "002-prepare.md"), "utf8")).toContain("준비 상태: 가능");
+    expect(await readFile(join(outbox, "002-prepare.md"), "utf8")).toContain("텔레그램: `/go`");
     const approveReport = await readFile(join(outbox, "003-approve.md"), "utf8");
-    expect(approveReport).toContain("Created task: `task-remote-draft`");
-    expect(approveReport).toContain("No worker was dispatched yet.");
-    expect(approveReport).toContain("Telegram: `/go`");
+    expect(approveReport).toContain("생성된 task: `task-remote-draft`");
+    expect(approveReport).toContain("아직 worker는 실행하지 않았습니다.");
+    expect(approveReport).toContain("텔레그램: `/go`");
     const actionReport = await readFile(join(outbox, "004-run-next.md"), "utf8");
     expect(actionReport).toContain("Repo: `/repo`");
     expect(actionReport).toContain("--repo-root=/repo");
@@ -804,7 +950,7 @@ describe("inbox and remote commands", () => {
     });
   });
 
-  test("plans and approves execution through compressed remote commands", async () => {
+  test("plans through the orchestrator and materializes tasks/actions on go", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-plan-go-"));
     tmpRoots.push(root);
     const inbox = join(root, "inbox");
@@ -817,6 +963,36 @@ describe("inbox and remote commands", () => {
     await mkdir(state, { recursive: true });
     await mkdir(agents, { recursive: true });
     await mkdir(projects, { recursive: true });
+    const fakeCodex = await writeFakeCodex(root, {
+      summary: "텔레그램 작업 흐름을 계획합니다.",
+      assumptions: ["기존 Telegram UX 테스트를 유지합니다."],
+      questions: [],
+      scope: ["operator report와 remote command 경로를 점검합니다."],
+      nonScope: ["worker dispatch는 이번 단계에서 하지 않습니다."],
+      risks: ["worker 검증 실패 시 후속 확인이 필요합니다."],
+      tasks: [
+        {
+          id: "telegram-orchestration-plan",
+          title: "Telegram orchestration planning flow",
+          targetAgent: "codex-worker",
+          projectId: "omht",
+          resultMode: "write",
+          targetFiles: ["src/lib/operator-reports.ts", "src/samantha.ts", "tests/operations.test.ts"],
+          forbiddenChanges: ["state/**"],
+          setupCommands: [],
+          verifyCommands: ["bun test tests/operations.test.ts"],
+          instructions: "Implement the Telegram orchestration planning flow.",
+          dependencies: [],
+        },
+      ],
+      batches: [["telegram-orchestration-plan"]],
+      userMessage: "계획을 만들었습니다. `/go`로 실행 큐에 등록할 수 있습니다.",
+    });
+    await writeFile(
+      join(agents, "codex-orchestrator.json"),
+      `${JSON.stringify(orchestrator, null, 2)}\n`,
+      "utf8",
+    );
     await writeFile(
       join(agents, "codex-worker.json"),
       `${JSON.stringify(
@@ -870,9 +1046,9 @@ describe("inbox and remote commands", () => {
       join(inbox, "001-work.json"),
       JSON.stringify({
         id: "remote-work",
-        type: "drafts:add-from-proposal-text",
+        type: "orchestrator:add-request",
         args: {
-          proposalId: "proposal-remote-plan-go",
+          requestId: "request-remote-plan-go",
           text: "다음 작업 계획 보고",
           senderId: "bk",
           receivedAt: "2026-05-05T10:40:00.000Z",
@@ -884,13 +1060,176 @@ describe("inbox and remote commands", () => {
       join(inbox, "002-plan.json"),
       JSON.stringify({
         id: "remote-plan",
-        type: "drafts:plan-latest",
+        type: "orchestrator:plan-latest",
         args: { receivedAt: "2026-05-05T10:41:00.000Z" },
       }),
       "utf8",
     );
     await writeFile(
       join(inbox, "003-go.json"),
+      JSON.stringify({
+        id: "remote-go",
+        type: "actions:go",
+        args: { receivedAt: "2026-05-05T10:42:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+        `--codex-bin=${fakeCodex}`,
+        `--orchestrator-repo-root=${root}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const planReport = await readFile(join(outbox, "002-plan.md"), "utf8");
+    expect(planReport).toContain("# plan");
+    expect(planReport).toContain("상태: `planned`");
+    expect(planReport).toContain("계획을 만들었습니다.");
+    expect(planReport).toContain("작업 후보:");
+    expect(planReport).toContain("`telegram-orchestration-plan`");
+    expect(planReport).toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
+
+    const goReport = await readFile(join(outbox, "003-go.md"), "utf8");
+    expect(goReport).toContain("# go");
+    expect(goReport).toContain("오케스트레이터 계획을 승인했고 worker 실행 큐에 등록했습니다.");
+    expect(goReport).toContain("`task-telegram-orchestration-plan`");
+    expect(goReport).toContain("status=`approved`");
+    const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
+    expect(actions[0]).toMatchObject({
+      status: "approved",
+      taskId: "task-telegram-orchestration-plan",
+      repoRoot: "/repo/omht",
+    });
+    const taskRecords = (await readFile(join(state, "tasks.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as TaskSpec);
+    expect(taskRecords[0]).toMatchObject({
+      id: "task-telegram-orchestration-plan",
+      projectId: "omht",
+      repoRoot: "/repo/omht",
+      status: "pending",
+      verifyCommands: ["bun test tests/operations.test.ts"],
+    });
+    expect(await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).find("request-remote-plan-go")).toMatchObject({
+      status: "planned",
+    });
+    expect((await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).list())[0]).toMatchObject({
+      requestId: "request-remote-plan-go",
+      status: "materialized",
+      taskIds: ["task-telegram-orchestration-plan"],
+      payload: {
+        tasks: [{ id: "telegram-orchestration-plan" }],
+      },
+    });
+  });
+
+  test("blocks unsafe orchestrator plan materialization before creating tasks or actions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-plan-block-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const agents = join(root, "agents");
+    const projects = join(root, "projects");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      `${JSON.stringify(
+        {
+          ...writer,
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(projects, "omht.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "omht",
+          repoRoot: "/repo/omht",
+          setupCommands: [],
+          verifyCommands: [],
+          forbiddenChanges: ["state/**"],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    const invalidPayload: OrchestratorPlanPayload = {
+      summary: "Unsafe plan",
+      assumptions: [],
+      questions: [],
+      scope: ["unsafe write"],
+      nonScope: [],
+      risks: [],
+      tasks: [
+        {
+          id: "unsafe-plan",
+          title: "Unsafe plan",
+          targetAgent: "codex-worker",
+          projectId: "omht",
+          repoRoot: "/repo/.samantha-worktrees/oh-my-health-trainer/task-unsafe-plan",
+          resultMode: "write",
+          targetFiles: ["state/secret.json"],
+          forbiddenChanges: ["state/**"],
+          setupCommands: [],
+          verifyCommands: [],
+          instructions: "Change forbidden state.",
+          dependencies: ["missing-task"],
+        },
+      ],
+      batches: [["missing-task"], ["unsafe-plan"]],
+      userMessage: "Unsafe.",
+    };
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "plan-unsafe",
+        requestId: "request-unsafe",
+        status: "planned",
+        createdAt: "2026-05-05T10:41:00.000Z",
+        payload: invalidPayload,
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-go.json"),
       JSON.stringify({
         id: "remote-go",
         type: "actions:go",
@@ -921,30 +1260,1640 @@ describe("inbox and remote commands", () => {
     ]);
 
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-    const planReport = await readFile(join(outbox, "002-plan.md"), "utf8");
-    expect(planReport).toContain("# plan");
-    expect(planReport).toContain("Project: `omht` (inferred)");
-    expect(planReport).toContain("Scope: `planning_report` - Planning report");
-    expect(planReport).toContain("Result mode: `report`");
-    expect(planReport).toContain("Execution Plan:");
-    expect(planReport).toContain("Will Change:");
-    expect(planReport).toContain("Telegram: `/go`");
+    const goReport = await readFile(join(outbox, "001-go.md"), "utf8");
+    expect(goReport).toContain("오케스트레이터 계획을 실행 큐에 등록하지 못했습니다.");
+    expect(goReport).toContain("verifyCommands must not be empty");
+    expect(goReport).toContain("matches state/**");
+    expect(goReport).toContain("dependency references unknown task proposal: missing-task");
+    expect(goReport).toContain("repoRoot must not point to a Samantha worker worktree");
+    expect(goReport).toContain("repoRoot must match project profile repoRoot for project omht");
+    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    expect(await new RemoteActionStore(join(state, "remote-actions.jsonl")).list()).toEqual([]);
+  });
 
-    const goReport = await readFile(join(outbox, "003-go.md"), "utf8");
-    expect(goReport).toContain("# go");
-    expect(goReport).toContain("Approved draft: `draft-remote-plan-go`");
-    expect(goReport).toContain("Status: `approved`");
-    expect(goReport).toContain("Telegram: `/action_current`");
-    expect((await new RemoteActionStore(join(state, "remote-actions.jsonl")).list())[0]).toMatchObject({
-      status: "approved",
-      taskId: "task-remote-plan-go",
+  test("materializes report-only writer tasks without target files", () => {
+    const result = materializeOrchestratorPlan({
+      plan: {
+        schemaVersion: 1,
+        id: "plan-report-only",
+        requestId: "request-report-only",
+        status: "planned",
+        createdAt: "2026-05-06T01:00:00.000Z",
+        payload: {
+          summary: "감사 task를 실행합니다.",
+          assumptions: [],
+          questions: [],
+          scope: ["read-only audit"],
+          nonScope: [],
+          risks: [],
+          tasks: [
+            {
+              id: "read-only-audit",
+              title: "Read-only audit",
+              targetAgent: "codex-worker",
+              projectId: "omht",
+              repoRoot: "/repo/omht",
+              resultMode: "report",
+              targetFiles: [],
+              forbiddenChanges: ["**/*"],
+              setupCommands: [],
+              verifyCommands: ["git status --short"],
+              instructions: "Inspect files only and report the result.",
+              dependencies: [],
+            },
+          ],
+          batches: [["read-only-audit"]],
+          userMessage: "감사 task를 만들었습니다.",
+        },
+      },
+      agents: [
+        {
+          ...writer,
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+      ],
+      projects: [
+        {
+          schemaVersion: 1,
+          id: "omht",
+          repoRoot: "/repo/omht",
+          setupCommands: [],
+          verifyCommands: ["bun typecheck"],
+          forbiddenChanges: ["state/**"],
+        },
+      ],
+      createdAt: "2026-05-06T01:01:00.000Z",
+      commandId: "remote-go",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.tasks[0]).toMatchObject({
+      id: "task-read-only-audit",
+      resultMode: "report",
+      targetFiles: [],
+      forbiddenChanges: ["**/*"],
+    });
+    expect(result.actions[0]).toMatchObject({
+      taskId: "task-read-only-audit",
       repoRoot: "/repo/omht",
+      status: "pending",
+    });
+  });
+
+  test("revises the latest orchestrator plan into a new pending request", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-revise-plan-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+
+    const planPayload: OrchestratorPlanPayload = {
+      summary: "너무 넓은 구현 계획",
+      assumptions: [],
+      questions: [],
+      scope: ["전체 구현"],
+      nonScope: [],
+      risks: ["범위가 큼"],
+      tasks: [
+        {
+          id: "large-implementation",
+          title: "Large implementation",
+          targetAgent: "codex-worker",
+          projectId: "samantha",
+          repoRoot: "/repo/samantha",
+          resultMode: "write",
+          targetFiles: ["src/**"],
+          forbiddenChanges: ["state/**"],
+          setupCommands: [],
+          verifyCommands: ["bun run typecheck"],
+          instructions: "Implement everything.",
+          dependencies: [],
+        },
+      ],
+      batches: [["large-implementation"]],
+      userMessage: "넓은 구현 계획입니다.",
+    };
+    await writeFile(
+      join(state, "orchestration-requests.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "request-wide-plan",
+        source: "remote",
+        senderId: "bk",
+        text: "사만다 원격 업무 시스템 개선",
+        status: "planned",
+        createdAt: "2026-05-06T13:00:00.000Z",
+        plannedAt: "2026-05-06T13:01:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "plan-wide",
+        requestId: "request-wide-plan",
+        status: "planned",
+        createdAt: "2026-05-06T13:01:00.000Z",
+        payload: planPayload,
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-revise.json"),
+      JSON.stringify({
+        id: "remote-revise",
+        type: "orchestrator:revise-latest",
+        args: {
+          feedback: "범위가 너무 넓음. Telegram 계획 수정 루프만 먼저 구현해줘.",
+          senderId: "bk",
+          receivedAt: "2026-05-06T13:02:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "002-now.json"),
+      JSON.stringify({ id: "remote-now-after-revise", type: "ops:now", args: { source: "remote" } }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const report = await readFile(join(outbox, "001-revise.md"), "utf8");
+    expect(report).toContain("# revise");
+    expect(report).toContain("현재 계획을 폐기하고 수정 요청을 만들었습니다.");
+    expect(report).toContain("텔레그램: `/plan`");
+
+    const requests = await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).list();
+    expect(requests.at(-1)).toMatchObject({
+      status: "pending_plan",
+      text: expect.stringContaining("Telegram 계획 수정 루프만 먼저 구현해줘."),
+    });
+    expect(await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).find("plan-wide")).toMatchObject({
+      status: "superseded",
+      supersededByRequestId: requests.at(-1)?.id,
+    });
+    expect(await readFile(join(outbox, "002-now.md"), "utf8")).toContain("텔레그램: `/plan`");
+  });
+
+  test("shows the current orchestrator plan without rerunning the orchestrator", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-plan-current-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+
+    const planPayload: OrchestratorPlanPayload = {
+      summary: "현재 계획 재조회",
+      assumptions: [],
+      questions: [],
+      scope: ["현재 계획을 다시 보여준다."],
+      nonScope: [],
+      risks: [],
+      tasks: [
+        {
+          id: "show-current-plan",
+          title: "Show current plan",
+          targetAgent: "codex-worker",
+          projectId: "samantha",
+          repoRoot: "/repo/samantha",
+          resultMode: "report",
+          targetFiles: ["docs/**"],
+          forbiddenChanges: ["state/**"],
+          setupCommands: [],
+          verifyCommands: ["bun run typecheck"],
+          instructions: "Report only.",
+          dependencies: [],
+        },
+      ],
+      batches: [["show-current-plan"]],
+      userMessage: "현재 계획 전문입니다.",
+    };
+    await writeFile(
+      join(state, "orchestration-requests.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "request-plan-current",
+        source: "remote",
+        senderId: "bk",
+        text: "현재 계획 다시 보여줘",
+        status: "planned",
+        createdAt: "2026-05-06T15:00:00.000Z",
+        plannedAt: "2026-05-06T15:01:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "plan-current",
+        requestId: "request-plan-current",
+        status: "planned",
+        createdAt: "2026-05-06T15:01:00.000Z",
+        payload: planPayload,
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-plan-current.json"),
+      JSON.stringify({ id: "remote-plan-current", type: "orchestrator:show-current-plan", args: { source: "remote" } }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const report = await readFile(join(outbox, "001-plan-current.md"), "utf8");
+    expect(report).toContain("# plan");
+    expect(report).toContain("현재 계획 전문입니다.");
+    expect(report).toContain("계획 다시 보기: `/plan_current`");
+    expect((await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).list())).toHaveLength(1);
+  });
+
+  test("cancels the current unapproved orchestrator plan before pending requests", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-cancel-plan-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+
+    await writeFile(
+      join(state, "orchestration-requests.jsonl"),
+      [
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "request-planned",
+          source: "remote",
+          senderId: "bk",
+          text: "계획 완료 요청",
+          status: "planned",
+          createdAt: "2026-05-06T14:00:00.000Z",
+          plannedAt: "2026-05-06T14:01:00.000Z",
+        }),
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "request-pending-after-plan",
+          source: "remote",
+          senderId: "bk",
+          text: "대기 중 요청",
+          status: "pending_plan",
+          createdAt: "2026-05-06T14:02:00.000Z",
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "plan-cancel-me",
+        requestId: "request-planned",
+        status: "planned",
+        createdAt: "2026-05-06T14:01:00.000Z",
+        payload: {
+          summary: "취소 대상 계획",
+          assumptions: [],
+          questions: [],
+          scope: [],
+          nonScope: [],
+          risks: [],
+          tasks: [],
+          batches: [],
+          userMessage: "취소 대상",
+        },
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-cancel.json"),
+      JSON.stringify({
+        id: "remote-cancel",
+        type: "orchestrator:cancel-current",
+        args: {
+          reason: "stale",
+          receivedAt: "2026-05-06T14:03:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "002-now.json"),
+      JSON.stringify({ id: "remote-now-after-cancel", type: "ops:now", args: { source: "remote" } }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(await readFile(join(outbox, "001-cancel.md"), "utf8")).toContain("승인 전 계획을 취소했습니다.");
+    expect(await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).find("plan-cancel-me")).toMatchObject({
+      status: "canceled",
+      cancelReason: "stale",
+    });
+    expect(await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).find("request-pending-after-plan")).toMatchObject({
+      status: "pending_plan",
+    });
+    expect(await readFile(join(outbox, "002-now.md"), "utf8")).toContain("요청: `request-pending-after-plan`");
+  });
+
+  test("creates a recovery orchestration request from the latest failed plan result", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-recover-plan-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+
+    const failedAction = {
+      ...createRemoteDispatchAction({
+        task: { ...task, id: "task-failed-plan", title: "Failed plan task" },
+        repoRoot: "/repo/samantha",
+        createdAt: "2026-05-06T10:10:00.000Z",
+        source: "remote" as const,
+        commandId: "remote-go-recover",
+      }),
+      status: "failed" as const,
+      completedAt: "2026-05-06T10:20:00.000Z",
+      result: {
+        pass: false,
+        outcome: "fail",
+        failure: "typecheck failed",
+        runLogPath: "/runs/failed-plan.json",
+      },
+    };
+    await writeFile(
+      join(state, "orchestration-requests.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "request-failed-plan",
+        source: "remote",
+        senderId: "bk",
+        text: "사만다 실패 복구 테스트",
+        status: "planned",
+        createdAt: "2026-05-06T10:00:00.000Z",
+        plannedAt: "2026-05-06T10:05:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(join(state, "remote-actions.jsonl"), `${JSON.stringify(failedAction)}\n`, "utf8");
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "plan-failed-result",
+        requestId: "request-failed-plan",
+        status: "materialized",
+        createdAt: "2026-05-06T10:05:00.000Z",
+        materializedAt: "2026-05-06T10:10:00.000Z",
+        resultReportedAt: "2026-05-06T10:21:00.000Z",
+        actionIds: [failedAction.id],
+        taskIds: [failedAction.taskId],
+        payload: { summary: "실패 복구 대상 계획" },
+        synthesis: {
+          outcome: "failed",
+          summary: "typecheck 실패",
+          nextActions: ["복구 계획 작성"],
+          risks: [],
+          userMessage: "worker 검증 실패를 복구해야 합니다.",
+        },
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-recover.json"),
+      JSON.stringify({
+        id: "remote-recover",
+        type: "orchestrator:recover-latest",
+        args: {
+          senderId: "bk",
+          receivedAt: "2026-05-06T10:22:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const report = await readFile(join(outbox, "001-recover.md"), "utf8");
+    expect(report).toContain("# recover");
+    expect(report).toContain("복구 계획 요청을 만들었습니다.");
+    expect(report).toContain("원 계획: `plan-failed-result`");
+    expect(report).toContain("텔레그램: `/plan`");
+    const requests = await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).list();
+    expect(requests.at(-1)).toMatchObject({
+      id: "request-2026-05-06t10-22-00.000z-recover-plan-failed-result",
+      status: "pending_plan",
+      text: expect.stringContaining("무작정 retry하지 말고 복구 계획을 제안하세요."),
+    });
+  });
+
+  test("remote next action uses recoverable orchestrator plan context", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-next-recover-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+
+    const failedAction = {
+      ...createRemoteDispatchAction({
+        task: { ...task, id: "task-failed-next-action", title: "Failed next action" },
+        repoRoot: "/repo/samantha",
+        createdAt: "2026-05-06T11:00:00.000Z",
+        source: "remote" as const,
+        commandId: "remote-go-next-recover",
+      }),
+      status: "failed" as const,
+      completedAt: "2026-05-06T11:10:00.000Z",
+      result: {
+        pass: false,
+        outcome: "blocked",
+        failure: "worker blocked",
+      },
+    };
+    await writeFile(join(state, "remote-actions.jsonl"), `${JSON.stringify(failedAction)}\n`, "utf8");
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "plan-next-recover",
+        requestId: "request-next-recover",
+        status: "materialized",
+        createdAt: "2026-05-06T11:00:00.000Z",
+        materializedAt: "2026-05-06T11:01:00.000Z",
+        resultReportedAt: "2026-05-06T11:11:00.000Z",
+        actionIds: [failedAction.id],
+        taskIds: [failedAction.taskId],
+        synthesis: {
+          outcome: "failed",
+          summary: "worker blocked",
+          nextActions: ["복구 계획 필요"],
+          risks: [],
+          userMessage: "복구가 필요합니다.",
+        },
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-next-action.json"),
+      JSON.stringify({ id: "remote-next-action", type: "ops:next-action", args: { source: "remote" } }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect({
+      stdout: await new Response(proc.stdout).text(),
+      stderr: await new Response(proc.stderr).text(),
+      exitCode: await proc.exited,
+    }).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "001-next-action.md"), "utf8");
+    expect(report).toContain("# now");
+    expect(report).toContain("실패한 오케스트레이터 계획 결과가 있습니다.");
+    expect(report).toContain("텔레그램: `/recover`");
+    expect(report).not.toContain("tasks:retry");
+  });
+
+  test("runs dependent orchestrator actions only after prerequisite actions pass", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-dependent-actions-"));
+    tmpRoots.push(root);
+    const repo = join(root, "repo");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const agents = join(root, "agents");
+    const projects = join(root, "projects");
+    const logs = join(root, "runs");
+    await mkdir(repo, { recursive: true });
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await mkdir(projects, { recursive: true });
+
+    await git(["init"], repo);
+    await git(["config", "user.email", "samantha@example.com"], repo);
+    await git(["config", "user.name", "Samantha Test"], repo);
+    await writeFile(join(repo, "README.md"), "fixture\n", "utf8");
+    await git(["add", "README.md"], repo);
+    await git(["commit", "-m", "initial"], repo);
+
+    const fakeCodex = join(root, "fake-codex");
+    const agentMessage = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "의존 작업 완료\n\nHARNESS_RESULT: {\"status\":\"pass\",\"note\":\"done\",\"commit\":\"\"}",
+      },
+    });
+    await writeFile(fakeCodex, `#!/usr/bin/env bash\nprintf '%s\\n' '${agentMessage}'\n`, "utf8");
+    await chmod(fakeCodex, 0o755);
+
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      `${JSON.stringify(
+        {
+          ...writer,
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(projects, "omht.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "omht",
+          repoRoot: repo,
+          setupCommands: [],
+          verifyCommands: ["test -f README.md"],
+          forbiddenChanges: ["state/**"],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    const planPayload: OrchestratorPlanPayload = {
+      summary: "Dependent action plan",
+      assumptions: [],
+      questions: [],
+      scope: ["run two dependent report tasks"],
+      nonScope: [],
+      risks: [],
+      tasks: [
+        {
+          id: "prepare-context",
+          title: "Prepare context",
+          targetAgent: "codex-worker",
+          projectId: "omht",
+          repoRoot: repo,
+          resultMode: "report",
+          targetFiles: ["README.md"],
+          forbiddenChanges: ["state/**"],
+          setupCommands: [],
+          verifyCommands: ["test -f README.md"],
+          instructions: "Read context.",
+          dependencies: [],
+        },
+        {
+          id: "use-context",
+          title: "Use context",
+          targetAgent: "codex-worker",
+          projectId: "omht",
+          repoRoot: repo,
+          resultMode: "report",
+          targetFiles: ["README.md"],
+          forbiddenChanges: ["state/**"],
+          setupCommands: [],
+          verifyCommands: ["test -f README.md"],
+          instructions: "Use prepared context.",
+          dependencies: ["prepare-context"],
+        },
+      ],
+      batches: [["prepare-context"], ["use-context"]],
+      userMessage: "의존 작업 계획입니다.",
+    };
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "plan-dependent",
+        requestId: "request-dependent",
+        status: "planned",
+        createdAt: "2026-05-06T10:00:00.000Z",
+        payload: planPayload,
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-go.json"),
+      JSON.stringify({
+        id: "remote-go-dependent",
+        type: "actions:go",
+        args: { receivedAt: "2026-05-06T10:01:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const processGo = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect({
+      stdout: await new Response(processGo.stdout).text(),
+      stderr: await new Response(processGo.stderr).text(),
+      exitCode: await processGo.exited,
+    }).toMatchObject({ exitCode: 0 });
+
+    let actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
+    expect(actions.map((action) => ({ taskId: action.taskId, status: action.status }))).toEqual([
+      { taskId: "task-prepare-context", status: "approved" },
+      { taskId: "task-use-context", status: "waiting" },
+    ]);
+    expect(actions[1]?.dependsOnActionIds).toEqual([actions[0]?.id]);
+
+    for (let index = 0; index < 2; index += 1) {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          "run",
+          "src/samantha.ts",
+          "actions:run-pending",
+          "--limit=1",
+          `--state-dir=${state}`,
+          `--outbox-dir=${outbox}`,
+          `--agent-profiles-dir=${agents}`,
+          `--log-dir=${logs}`,
+          `--codex-bin=${fakeCodex}`,
+        ],
+        { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+      );
+      expect({
+        stdout: await new Response(proc.stdout).text(),
+        stderr: await new Response(proc.stderr).text(),
+        exitCode: await proc.exited,
+      }).toMatchObject({ exitCode: 0 });
+
+      if (index === 0) {
+        const midwayActions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
+        expect(midwayActions.map((action) => action.status)).toEqual(["completed", "waiting"]);
+        const midwayReports = await Promise.all((await readdir(outbox)).map((file) => readFile(join(outbox, file), "utf8")));
+        expect(midwayReports.some((report) => report.includes("# plan-result"))).toBe(false);
+      }
+    }
+
+    actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
+    expect(actions.map((action) => action.status)).toEqual(["completed", "completed"]);
+    const reports = await Promise.all((await readdir(outbox)).map((file) => readFile(join(outbox, file), "utf8")));
+    expect(reports.some((report) => report.includes("# plan-result"))).toBe(true);
+  });
+
+  test("marks waiting task failed when its prerequisite action fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-dependent-action-fail-"));
+    tmpRoots.push(root);
+    const state = join(root, "state");
+    const outbox = join(root, "outbox");
+    await mkdir(state, { recursive: true });
+
+    const firstTask: TaskSpec = {
+      ...task,
+      id: "task-prerequisite-failed",
+      title: "Prerequisite failed",
+      status: "failed",
+    };
+    const secondTask: TaskSpec = {
+      ...task,
+      id: "task-dependent-waiting",
+      title: "Dependent waiting",
+      status: "pending",
+    };
+    const firstAction = {
+      ...createRemoteDispatchAction({
+        task: firstTask,
+        repoRoot: "/repo",
+        createdAt: "2026-05-06T10:00:00.000Z",
+        source: "remote" as const,
+        commandId: "remote-first",
+      }),
+      status: "failed" as const,
+      completedAt: "2026-05-06T10:01:00.000Z",
+      result: { pass: false, outcome: "rework", failure: "prerequisite failed" },
+    };
+    const secondAction = {
+      ...createRemoteDispatchAction({
+        task: secondTask,
+        repoRoot: "/repo",
+        createdAt: "2026-05-06T10:02:00.000Z",
+        source: "remote" as const,
+        commandId: "remote-second",
+        dependsOnActionIds: [firstAction.id],
+      }),
+      status: "waiting" as const,
+      dependsOnActionIds: [firstAction.id],
+    };
+    await writeFile(
+      join(state, "tasks.jsonl"),
+      `${JSON.stringify(firstTask)}\n${JSON.stringify(secondTask)}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(state, "remote-actions.jsonl"),
+      `${JSON.stringify(firstAction)}\n${JSON.stringify(secondAction)}\n`,
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "actions:run-pending",
+        "--limit=1",
+        `--state-dir=${state}`,
+        `--outbox-dir=${outbox}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect({
+      stdout: await new Response(proc.stdout).text(),
+      stderr: await new Response(proc.stderr).text(),
+      exitCode: await proc.exited,
+    }).toMatchObject({ exitCode: 0 });
+
+    const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
+    expect(actions[1]).toMatchObject({
+      status: "failed",
+      result: {
+        pass: false,
+        outcome: "dependency_failed",
+        failure: expect.stringContaining(firstAction.id),
+      },
     });
     const taskRecords = (await readFile(join(state, "tasks.jsonl"), "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as TaskSpec);
-    expect(taskRecords[0]).toMatchObject({ resultMode: "report", targetFiles: ["docs/**"] });
+    expect(taskRecords[1]).toMatchObject({
+      id: "task-dependent-waiting",
+      status: "failed",
+    });
+
+    const next = Bun.spawn(
+      ["bun", "run", "src/samantha.ts", "next-action", `--state-dir=${state}`],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const nextOutput = await new Response(next.stdout).text();
+    expect(await next.exited).toBe(0);
+    expect(nextOutput).not.toContain("Pending task found.");
+    expect(nextOutput).not.toContain("task-dependent-waiting --repo-root");
+  });
+
+  test("plans Samantha requests against the Samantha project profile instead of the OMHT fallback", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-project-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const agents = join(root, "agents");
+    const projects = join(root, "projects");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      `${JSON.stringify({ ...writer, skillPolicy: { requiredBundles: [], blockedSkills: [] } }, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(projects, "omht.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "omht",
+          repoRoot: "/repo/omht",
+          keywords: ["omht", "ohmt"],
+          setupCommands: ["bun install"],
+          verifyCommands: ["bun typecheck"],
+          forbiddenChanges: ["state/**"],
+          defaultRemoteScopeId: "planning_report",
+          remoteScopes: [
+            {
+              id: "planning_report",
+              label: "OMHT report",
+              description: "OMHT docs.",
+              risk: "low",
+              resultMode: "report",
+              targetFiles: ["omht-docs/**"],
+              keywords: ["계획", "보고"],
+              planSteps: ["Read OMHT docs."],
+              successCriteria: ["Report is actionable."],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(projects, "samantha.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "samantha",
+          repoRoot: "/repo/samantha",
+          keywords: ["samantha", "samantha-codex", "사만다"],
+          setupCommands: ["bun install"],
+          verifyCommands: ["bun typecheck"],
+          forbiddenChanges: ["state/**"],
+          defaultRemoteScopeId: "planning_report",
+          remoteScopes: [
+            {
+              id: "planning_report",
+              label: "Samantha report",
+              description: "Samantha docs.",
+              risk: "low",
+              resultMode: "report",
+              targetFiles: ["samantha-docs/**"],
+              keywords: ["계획", "보고"],
+              planSteps: ["Read Samantha docs."],
+              successCriteria: ["Report is actionable."],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(state, "task-drafts.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "draft-samantha-plan",
+        sourceProposalId: "proposal-samantha-plan",
+        status: "drafted",
+        title: "samantha 프로젝트 대시보드 디자인 개선 계획 보고",
+        targetAgent: "codex-worker",
+        targetFiles: ["omht-docs/**"],
+        forbiddenChanges: ["omht-state/**"],
+        setupCommands: ["omht setup"],
+        verifyCommands: ["omht verify"],
+        instructions: "samantha 프로젝트 대시보드 디자인 개선 계획 보고",
+        createdAt: "2026-05-05T13:28:23.000Z",
+        projectId: "omht",
+        repoRoot: "/repo/omht",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-plan.json"),
+      JSON.stringify({
+        id: "remote-plan",
+        type: "drafts:plan-latest",
+        args: { receivedAt: "2026-05-05T13:28:36.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const planReport = await readFile(join(outbox, "001-plan.md"), "utf8");
+    expect(planReport).toContain("프로젝트: `samantha` (자동 선택)");
+    expect(planReport).toContain("분류: 계획/보고 (`planning_report` - Samantha report)");
+    expect(planReport).toContain("변경 허용 범위:");
+    expect(planReport).toContain("`samantha-docs/**`");
+    const draftRecords = (await readFile(join(state, "task-drafts.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(draftRecords[0]).toMatchObject({
+      projectId: "samantha",
+      repoRoot: "/repo/samantha",
+      targetFiles: ["samantha-docs/**"],
+      forbiddenChanges: ["state/**"],
+      setupCommands: ["bun install"],
+      verifyCommands: ["bun typecheck"],
+      resultMode: "report",
+    });
+  });
+
+  test("writes a Telegram outbox result report when an approved remote action finishes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-result-"));
+    tmpRoots.push(root);
+    const repo = join(root, "repo");
+    const state = join(root, "state");
+    const outbox = join(root, "outbox");
+    const agents = join(root, "agents");
+    const logs = join(root, "runs");
+    await mkdir(repo, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+
+    await git(["init"], repo);
+    await git(["config", "user.email", "samantha@example.com"], repo);
+    await git(["config", "user.name", "Samantha Test"], repo);
+    await writeFile(join(repo, "README.md"), "fixture\n", "utf8");
+    await git(["add", "README.md"], repo);
+    await git(["commit", "-m", "initial"], repo);
+
+    const fakeCodex = join(root, "fake-codex");
+    const workerMessage = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "계획 보고 완료\n\n- 확인: README.md\n\nHARNESS_RESULT: {\"status\":\"pass\",\"note\":\"report done\",\"commit\":\"\"}",
+      },
+    });
+    const synthesisMessage = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text:
+          "최종 종합 완료\n\nORCHESTRATOR_SYNTHESIS: {\"outcome\":\"pass\",\"summary\":\"계획 완료\",\"nextActions\":[\"텔레그램: /run_latest\"],\"risks\":[],\"userMessage\":\"오케스트레이터 최종 종합입니다.\"}",
+      },
+    });
+    await writeFile(
+      fakeCodex,
+      [
+        "#!/usr/bin/env bash",
+        'args="$*"',
+        'cwd=""',
+        'while [[ $# -gt 0 ]]; do',
+        '  if [[ "$1" == "--cd" ]]; then cwd="$2"; shift 2; else shift; fi',
+        "done",
+        'if [[ -n "$cwd" ]]; then cd "$cwd"; fi',
+        `if [[ "$args" == *ORCHESTRATOR_SYNTHESIS* ]]; then printf '%s\\n' '${synthesisMessage}'; else`,
+        "  mkdir -p docs",
+        "  printf '# 원격 보고서\\n\\nTelegram에서 읽을 수 있어야 하는 산출물입니다.\\n' > docs/remote-report.md",
+        `  printf '%s\\n' '${workerMessage}'`,
+        "fi",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(fakeCodex, 0o755);
+
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      `${JSON.stringify(
+        {
+          ...writer,
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(join(agents, "codex-orchestrator.json"), `${JSON.stringify(orchestrator, null, 2)}\n`, "utf8");
+    const remoteTask: TaskSpec = {
+      ...task,
+      id: "task-report-result",
+      title: "Remote report result",
+      targetFiles: ["docs/**"],
+      forbiddenChanges: ["state/**"],
+      verifyCommands: ["test -f README.md"],
+      resultMode: "report",
+      status: "pending",
+    };
+    await writeFile(join(state, "tasks.jsonl"), `${JSON.stringify(remoteTask)}\n`, "utf8");
+    const store = new RemoteActionStore(join(state, "remote-actions.jsonl"));
+    const action = createRemoteDispatchAction({
+      task: remoteTask,
+      repoRoot: repo,
+      createdAt: "2026-05-05T10:45:00.000Z",
+      source: "remote",
+      commandId: "remote-go",
+    });
+    await store.append(action);
+    await store.markApproved(action.id, "2026-05-05T10:46:00.000Z");
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "plan-report-result",
+        requestId: "request-report-result",
+        status: "materialized",
+        createdAt: "2026-05-05T10:44:00.000Z",
+        materializedAt: "2026-05-05T10:46:00.000Z",
+        taskIds: [remoteTask.id],
+        actionIds: [action.id],
+      })}\n`,
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "actions:run-pending",
+        "--limit=1",
+        `--state-dir=${state}`,
+        `--outbox-dir=${outbox}`,
+        `--agent-profiles-dir=${agents}`,
+        `--log-dir=${logs}`,
+        `--codex-bin=${fakeCodex}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect((await new RemoteActionStore(join(state, "remote-actions.jsonl")).list())[0]).toMatchObject({
+      status: "completed",
+      taskId: "task-report-result",
+      result: { pass: true, outcome: "pass" },
+    });
+    const remoteReports = (await readdir(outbox)).filter((file) => file.startsWith("remote-") && file.endsWith(".md"));
+    expect(remoteReports).toHaveLength(2);
+    const reports = await Promise.all(remoteReports.map((file) => readFile(join(outbox, file), "utf8")));
+    const report = reports.find((item) => item.includes("# execution-result")) ?? "";
+    expect(report).toContain("# execution-result");
+    expect(report).toContain("실행 결과: 통과");
+    expect(report).toContain("계획 보고 완료");
+    expect(report).not.toContain("HARNESS_RESULT");
+    expect(report).toContain("`docs/remote-report.md`");
+    expect(report).toContain("산출물 미리보기");
+    expect(report).toContain("# 원격 보고서");
+    expect(report).toContain("Telegram에서 읽을 수 있어야 하는 산출물입니다.");
+    expect(report).toContain("텔레그램: `/run_latest`");
+    const planReport = reports.find((item) => item.includes("# plan-result")) ?? "";
+    expect(planReport).toContain("계획 결과: 통과");
+    expect(planReport).toContain("오케스트레이터 종합:");
+    expect(planReport).toContain("오케스트레이터 최종 종합입니다.");
+    expect(planReport).toContain("완료 action: 1/1");
+    expect(planReport).toContain("계획 보고 완료");
+    const reportedPlan = await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).find("plan-report-result");
+    expect(typeof reportedPlan?.resultReportedAt).toBe("string");
+    expect(reportedPlan?.synthesis).toMatchObject({ outcome: "pass", summary: "계획 완료" });
+  });
+
+  test("includes report artifact previews even when verification is blocked", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-blocked-report-result-"));
+    tmpRoots.push(root);
+    const repo = join(root, "repo");
+    const state = join(root, "state");
+    const outbox = join(root, "outbox");
+    const agents = join(root, "agents");
+    const logs = join(root, "runs");
+    await mkdir(repo, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+
+    await git(["init"], repo);
+    await git(["config", "user.email", "samantha@example.com"], repo);
+    await git(["config", "user.name", "Samantha Test"], repo);
+    await writeFile(join(repo, "README.md"), "fixture\n", "utf8");
+    await git(["add", "README.md"], repo);
+    await git(["commit", "-m", "initial"], repo);
+
+    const fakeCodex = join(root, "fake-codex");
+    const workerMessage = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text:
+          "보고서는 작성됐지만 검증은 막혔습니다.\n\nHARNESS_RESULT: {\"status\":\"blocked\",\"note\":\"report written; verification unavailable\",\"commit\":\"\"}",
+      },
+    });
+    await writeFile(
+      fakeCodex,
+      [
+        "#!/usr/bin/env bash",
+        'cwd=""',
+        'while [[ $# -gt 0 ]]; do',
+        '  if [[ "$1" == "--cd" ]]; then cwd="$2"; shift 2; else shift; fi',
+        "done",
+        'if [[ -n "$cwd" ]]; then cd "$cwd"; fi',
+        "mkdir -p docs",
+        "printf '# Blocked Report\\n\\n검증은 막혔지만 Telegram에서 읽어야 하는 산출물입니다.\\n' > docs/blocked-report.md",
+        `printf '%s\\n' '${workerMessage}'`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(fakeCodex, 0o755);
+
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      `${JSON.stringify(
+        {
+          ...writer,
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    const remoteTask: TaskSpec = {
+      ...task,
+      id: "task-blocked-report-result",
+      title: "Blocked report result",
+      targetFiles: ["docs/**"],
+      forbiddenChanges: ["state/**"],
+      verifyCommands: [],
+      resultMode: "report",
+      status: "pending",
+    };
+    await writeFile(join(state, "tasks.jsonl"), `${JSON.stringify(remoteTask)}\n`, "utf8");
+    const store = new RemoteActionStore(join(state, "remote-actions.jsonl"));
+    const action = createRemoteDispatchAction({
+      task: remoteTask,
+      repoRoot: repo,
+      createdAt: "2026-05-05T10:55:00.000Z",
+      source: "remote",
+      commandId: "remote-go",
+    });
+    await store.append(action);
+    await store.markApproved(action.id, "2026-05-05T10:56:00.000Z");
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "actions:run-pending",
+        "--limit=1",
+        `--state-dir=${state}`,
+        `--outbox-dir=${outbox}`,
+        `--agent-profiles-dir=${agents}`,
+        `--log-dir=${logs}`,
+        `--codex-bin=${fakeCodex}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect((await new RemoteActionStore(join(state, "remote-actions.jsonl")).list())[0]).toMatchObject({
+      status: "failed",
+      taskId: "task-blocked-report-result",
+      result: { pass: false, outcome: "blocked" },
+    });
+    const remoteReports = (await readdir(outbox)).filter((file) => file.startsWith("remote-") && file.endsWith(".md"));
+    expect(remoteReports).toHaveLength(1);
+    const report = await readFile(join(outbox, remoteReports[0]), "utf8");
+    expect(report).toContain("실행 결과: 실패");
+    expect(report).toContain("산출물 미리보기");
+    expect(report).toContain("파일: `docs/blocked-report.md`");
+    expect(report).toContain("# Blocked Report");
+    expect(report).toContain("검증은 막혔지만 Telegram에서 읽어야 하는 산출물입니다.");
+  });
+
+  test("go advances the latest unmerged passed run through the remote merge gate", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-integration-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const { repo, workerCommit, summary } = await makeMergeCandidate();
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await writeFile(
+      join(state, "runs.jsonl"),
+      `${JSON.stringify(summary)}\n${JSON.stringify({
+        ...summary,
+        runId: "run-later-failed-verify",
+        pass: false,
+        outcome: "rework",
+        commit: "",
+        failureReason: "later verify failed",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(state, "task-drafts.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "draft-stale",
+        sourceProposalId: "proposal-stale",
+        status: "drafted",
+        title: "Stale draft",
+        targetAgent: "codex-worker",
+        targetFiles: ["README.md"],
+        forbiddenChanges: ["state/**"],
+        verifyCommands: ["test -f README.md"],
+        instructions: "This stale draft must not block integration closure.",
+        createdAt: "2026-05-05T10:05:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-go.json"),
+      JSON.stringify({
+        id: "remote-go-integration",
+        type: "actions:go",
+        args: { receivedAt: "2026-05-05T10:10:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(await gitHead(repo)).toBe(workerCommit);
+    const report = await readFile(join(outbox, "001-go.md"), "utf8");
+    expect(report).toContain("# integration-result");
+    expect(report).toContain("단계: merge 적용");
+    expect(report).toContain("결과: 통과");
+    expect(report).toContain("텔레그램: `/now`");
+    const lifecycles = (await readFile(join(state, "run-lifecycle.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(lifecycles[0]).toMatchObject({ runId: "run-remote-merge" });
+    expect(typeof lifecycles[0]?.mergedAt).toBe("string");
+  });
+
+  test("go advances the latest merged run through the remote push gate", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-push-"));
+    const remote = await mkdtemp(join(tmpdir(), "samantha-codex-remote-push-origin-"));
+    tmpRoots.push(root, remote);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const { repo, workerCommit, summary } = await makeMergeCandidate();
+    await git(["init", "--bare"], remote);
+    await git(["remote", "add", "origin", remote], repo);
+    await git(["push", "origin", "main"], repo);
+    await git(["merge", "--ff-only", workerCommit], repo);
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await writeFile(join(state, "runs.jsonl"), `${JSON.stringify(summary)}\n`, "utf8");
+    await writeFile(
+      join(state, "run-lifecycle.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        runId: summary.runId,
+        taskId: summary.taskId,
+        repoRoot: summary.repoRoot,
+        runLogPath: summary.logPath,
+        commit: summary.commit,
+        mergedAt: "2026-05-05T10:09:00.000Z",
+        updatedAt: "2026-05-05T10:09:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-go.json"),
+      JSON.stringify({
+        id: "remote-go-push",
+        type: "actions:go",
+        args: { receivedAt: "2026-05-05T10:10:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(await git(["rev-parse", "refs/heads/main"], remote)).toBe(workerCommit);
+    const report = await readFile(join(outbox, "001-go.md"), "utf8");
+    expect(report).toContain("단계: push");
+    expect(report).toContain("결과: 통과");
+    const lifecycles = (await readFile(join(state, "run-lifecycle.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(typeof lifecycles[0]?.pushedAt).toBe("string");
+  });
+
+  test("go advances the latest pushed run through the remote cleanup gate", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-cleanup-"));
+    tmpRoots.push(root);
+    const repo = join(root, "repo");
+    const worktree = join(root, "worker-worktree");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const logDir = join(root, "logs");
+    await mkdir(repo, { recursive: true });
+    await mkdir(logDir, { recursive: true });
+    await git(["init", "-b", "main"], repo);
+    await git(["config", "user.email", "samantha@example.local"], repo);
+    await git(["config", "user.name", "Samantha Test"], repo);
+    await writeFile(join(repo, "allowed.txt"), "base\n", "utf8");
+    await git(["add", "allowed.txt"], repo);
+    await git(["commit", "-m", "chore: initial"], repo);
+    const baseCommit = await gitHead(repo);
+    await git(["worktree", "add", "-b", "samantha/remote-cleanup", worktree], repo);
+    await writeFile(join(worktree, "allowed.txt"), "changed\n", "utf8");
+    await git(["add", "allowed.txt"], worktree);
+    await git(["commit", "-m", "feat: worker cleanup"], worktree);
+    const workerCommit = await gitHead(worktree);
+    await git(["merge", "--ff-only", workerCommit], repo);
+
+    const log: WorkerRunLog = {
+      schemaVersion: 1,
+      runId: "run-remote-cleanup",
+      startedAt: "2026-05-05T10:00:00.000Z",
+      finishedAt: "2026-05-05T10:01:00.000Z",
+      task: {
+        ...task,
+        id: "remote-cleanup-fixture",
+        title: "Remote cleanup fixture",
+        verifyCommands: [],
+      },
+      agent: writer,
+      input: { repoRoot: repo, allocate: true, execute: true },
+      result: {
+        preparation: {
+          taskId: "remote-cleanup-fixture",
+          agentId: "codex-worker",
+          worktreePath: worktree,
+          allocation: {
+            taskId: "remote-cleanup-fixture",
+            repoRoot: repo,
+            worktreePath: worktree,
+            branch: "samantha/remote-cleanup",
+            baseCommit,
+          },
+          codex: { prompt: "prompt", command: ["codex", "exec"] },
+        },
+        setupResults: [],
+        command: { command: ["codex", "exec"], exitCode: 0, stdout: "", stderr: "" },
+        evaluation: {
+          pass: true,
+          harness: { status: "pass", note: "ok", commit: "" },
+          changedFiles: ["allowed.txt"],
+          scopeViolations: [],
+          verifyResults: [],
+        },
+        commit: {
+          subject: "feat: worker cleanup",
+          files: ["allowed.txt"],
+          add: { command: ["git", "add", "--", "allowed.txt"], exitCode: 0, stdout: "", stderr: "" },
+          commit: { command: ["git", "commit", "-m", "feat: worker cleanup"], exitCode: 0, stdout: "", stderr: "" },
+          commitHash: workerCommit,
+        },
+        pass: true,
+      },
+    };
+    const logPath = join(logDir, "run.json");
+    const summary: RunSummary = {
+      schemaVersion: 1,
+      runId: log.runId,
+      taskId: log.task.id,
+      taskTitle: log.task.title,
+      agentId: log.agent.id,
+      repoRoot: repo,
+      worktreePath: worktree,
+      logPath,
+      startedAt: log.startedAt,
+      finishedAt: log.finishedAt,
+      outcome: "pass",
+      pass: true,
+      commit: workerCommit,
+    };
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
+    await writeFile(join(state, "runs.jsonl"), `${JSON.stringify(summary)}\n`, "utf8");
+    await writeFile(
+      join(state, "run-lifecycle.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        runId: summary.runId,
+        taskId: summary.taskId,
+        repoRoot: summary.repoRoot,
+        runLogPath: summary.logPath,
+        commit: summary.commit,
+        mergedAt: "2026-05-05T10:08:00.000Z",
+        pushedAt: "2026-05-05T10:09:00.000Z",
+        updatedAt: "2026-05-05T10:09:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-go.json"),
+      JSON.stringify({
+        id: "remote-go-cleanup",
+        type: "actions:go",
+        args: { receivedAt: "2026-05-05T10:10:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(await pathExists(worktree)).toBe(false);
+    const report = await readFile(join(outbox, "001-go.md"), "utf8");
+    expect(report).toContain("단계: worktree cleanup");
+    expect(report).toContain("결과: 통과");
+    const lifecycles = (await readFile(join(state, "run-lifecycle.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(typeof lifecycles[0]?.cleanedAt).toBe("string");
   });
 });
 

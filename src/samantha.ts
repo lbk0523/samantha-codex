@@ -1,17 +1,25 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
 import { writeDashboard, type LiveRunEvent, type LiveRunStatus } from "./lib/dashboard";
 import { processInbox, type InboxCommand } from "./lib/inbox";
-import { RunIndex, summarizeWorkerRun } from "./lib/ledger";
-import { buildWorkerLiveLogPath, formatWorkerLiveLogLine, startTmuxObserver, type TmuxObserverResult } from "./lib/live-log";
+import { RunIndex, summarizeWorkerRun, type RunSummary } from "./lib/ledger";
+import { buildWorkerLiveLogPath, formatWorkerLiveLogLine, startTmuxObserver, stopTmuxObserver, type TmuxObserverResult } from "./lib/live-log";
 import { applyMerge, evaluateMergeGate, pushMerge, readWorkerRunLog } from "./lib/merge-gate";
 import {
   doctorReport,
   draftProposeAddedReport,
   failuresReport,
   healthReport,
+  orchestrationRequestAddedReport,
+  orchestratorCancelReport,
+  orchestratorGoBlockedReport,
+  orchestratorGoMaterializedReport,
+  orchestratorPlanReport,
+  orchestratorPlanResultReport,
+  orchestratorRecoveryRequestReport,
+  orchestratorRevisionRequestReport,
   proposalAddedReport,
   proposalsListReport,
   proposalReviewedReport,
@@ -21,7 +29,10 @@ import {
   remoteHelpReport,
   remoteActionApprovedReport,
   remoteGoReport,
+  remoteIntegrationReport,
+  type RemoteActionArtifactPreview,
   remoteActionPreparedReport,
+  remoteActionResultReport,
   remoteActionShowReport,
   remoteActionsListReport,
   runsListReport,
@@ -39,21 +50,32 @@ import {
   taskShowReport,
 } from "./lib/operator-reports";
 import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnostics";
+import { runOrchestratorPlan, runOrchestratorSynthesis } from "./lib/orchestrator-agent";
+import { materializeOrchestratorPlan } from "./lib/orchestrator-materializer";
+import {
+  buildOrchestrationRequestId,
+  buildOrchestratorPlanId,
+  OrchestrationRequestStore,
+  OrchestratorPlanStore,
+  type OrchestrationRequestRecord,
+  type OrchestratorPlanRecord,
+} from "./lib/orchestrator-store";
 import { runPlan } from "./lib/plan-runner";
 import { validateDispatch } from "./lib/policy";
 import {
   applyProjectDefaults,
   applyProjectRemoteScopeDefaults,
+  inferProjectProfile,
   loadProjectProfile,
   loadProjectProfiles,
   selectProjectRemoteScope,
   type ProjectProfile,
 } from "./lib/project-profile";
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
-import { createRemoteDispatchAction, RemoteActionStore } from "./lib/remote-action-store";
+import { createRemoteDispatchAction, RemoteActionStore, type RemoteActionRecord } from "./lib/remote-action-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
-import { lifecycleBaseFromRunLog, RunLifecycleStore } from "./lib/run-lifecycle-store";
-import { buildWorkerRunId, writeWorkerRunLog } from "./lib/run-log";
+import { lifecycleBaseFromRunLog, RunLifecycleStore, type RunLifecycleRecord } from "./lib/run-lifecycle-store";
+import { buildWorkerRunId, writeWorkerRunLog, type WorkerRunLog } from "./lib/run-log";
 import {
   checkTaskDraft,
   parseTaskDraftUpdatePatch,
@@ -62,13 +84,14 @@ import {
   taskDraftReadiness,
   taskDraftFromProposal,
   taskSpecFromDraft,
+  type TaskDraftRecord,
   validateTaskTargetFiles,
 } from "./lib/task-draft-store";
 import { TaskStore } from "./lib/task-store";
 import { pollTelegramToInbox } from "./lib/telegram-adapter";
 import { sendOutboxReplies } from "./lib/telegram-reply-adapter";
 import { cleanupCompletedWorktree } from "./lib/worktree-cleanup";
-import { branchForTask, worktreePathForTask } from "./lib/worktree";
+import { branchForTask, sanitizeTaskId, worktreePathForTask } from "./lib/worktree";
 import { executeWorkerDispatch, prepareWorkerDispatch, commitWorkerChanges } from "./lib/worker-dispatch";
 import { evaluateWorkerResult } from "./lib/worker-result";
 import { gitHead, gitTopLevel } from "./lib/git";
@@ -127,6 +150,14 @@ function taskDraftsPath(args: ParsedArgs): string {
   return join(stateDir(args), "task-drafts.jsonl");
 }
 
+function orchestrationRequestsPath(args: ParsedArgs): string {
+  return join(stateDir(args), "orchestration-requests.jsonl");
+}
+
+function orchestratorPlansPath(args: ParsedArgs): string {
+  return join(stateDir(args), "orchestrator-plans.jsonl");
+}
+
 function runLifecyclePath(args: ParsedArgs): string {
   return join(stateDir(args), "run-lifecycle.jsonl");
 }
@@ -141,6 +172,10 @@ function actionRunnerLockPath(args: ParsedArgs): string {
 
 function logDir(args: ParsedArgs): string {
   return resolve(flag(args, "log-dir", join(root, "runs")));
+}
+
+function outboxDir(args: ParsedArgs): string {
+  return resolve(flag(args, "outbox-dir", join(root, "outbox")));
 }
 
 function agentProfilesDir(args: ParsedArgs): string {
@@ -186,6 +221,16 @@ async function readOptionalJson<T>(path: string): Promise<T | undefined> {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function compactLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function clipText(value: string, maxLength = 1200): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, maxLength).trimEnd()}\n...[truncated]`;
 }
 
 function printJson(value: unknown): void {
@@ -235,6 +280,18 @@ async function loadAgentProfile(args: ParsedArgs, agentId: string): Promise<Agen
     if (agent.id === agentId) return agent;
   }
   throw new Error(`agent profile not found: ${agentId}`);
+}
+
+async function loadAgentProfilesById(args: ParsedArgs, agentIds: string[]): Promise<AgentProfile[]> {
+  const agents: AgentProfile[] = [];
+  for (const agentId of new Set(agentIds)) {
+    try {
+      agents.push(await loadAgentProfile(args, agentId));
+    } catch {
+      // Materialization reports unknown target agents as validation violations.
+    }
+  }
+  return agents;
 }
 
 async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
@@ -421,6 +478,10 @@ function remoteDispatchRepoRoot(args: ParsedArgs): string {
   return resolve(repoRoot);
 }
 
+function orchestratorRepoRoot(args: ParsedArgs): string {
+  return resolve(flag(args, "orchestrator-repo-root", process.env.SAMANTHA_ORCHESTRATOR_REPO_ROOT ?? root));
+}
+
 function codexBin(args: ParsedArgs): string {
   return flag(args, "codex-bin", process.env.SAMANTHA_CODEX_BIN ?? "codex");
 }
@@ -435,6 +496,7 @@ async function executeTaskDispatch(input: {
   worktreesDir?: string;
   tmuxSession?: string;
   codexBin?: string;
+  startedAt?: string;
 }) {
   const taskStore = new TaskStore(tasksPath(input.args));
   const task = await taskStore.find(input.taskId);
@@ -444,7 +506,7 @@ async function executeTaskDispatch(input: {
   const agent = await loadAgentProfile(input.args, task.targetAgent);
   const allocate = input.allocate === true || agent.worktreePolicy === "per-task";
   const baseLogDir = logDir(input.args);
-  const startedAt = new Date().toISOString();
+  const startedAt = input.startedAt ?? new Date().toISOString();
   const runId = buildWorkerRunId({ startedAt, taskId: task.id });
   const liveLogPath = input.tmux === true || input.liveLog === true
     ? buildWorkerLiveLogPath(baseLogDir, runId)
@@ -470,7 +532,18 @@ async function executeTaskDispatch(input: {
       formatterCommand: "bun run src/samantha.ts live:format",
     });
   }
-  const execution = await executeWorkerDispatch(dispatchInput);
+  let execution;
+  try {
+    execution = await executeWorkerDispatch(dispatchInput);
+  } finally {
+    if (tmux?.started) {
+      try {
+        await stopTmuxObserver(tmux);
+      } catch (err) {
+        console.error(`failed to stop tmux observer: ${errorMessage(err)}`);
+      }
+    }
+  }
   const finishedAt = new Date().toISOString();
   const logInput = {
     ...dispatchInput,
@@ -491,14 +564,285 @@ async function executeTaskDispatch(input: {
   };
 }
 
+async function writeRemoteActionResultOutbox(args: ParsedArgs, action: RemoteActionRecord): Promise<void> {
+  const completedAt = action.completedAt ?? new Date().toISOString();
+  const file = `remote-${completedAt.replace(/[:.]/g, "-").toLowerCase()}-result-${sanitizeTaskId(action.id)}.md`;
+  let runLog: WorkerRunLog | undefined;
+
+  if (action.result?.runLogPath) {
+    try {
+      runLog = await readWorkerRunLog(action.result.runLogPath);
+    } catch {
+      runLog = undefined;
+    }
+  }
+
+  const dir = outboxDir(args);
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    join(dir, file),
+    `${remoteActionResultReport({ action, runLog, artifactPreviews: await collectReportArtifactPreviews(runLog) })}\n`,
+    "utf8",
+  );
+}
+
+function isPreviewableReportArtifact(file: string): boolean {
+  return /\.(md|mdx|txt)$/i.test(file);
+}
+
+async function collectReportArtifactPreviews(runLog: WorkerRunLog | undefined): Promise<RemoteActionArtifactPreview[]> {
+  if (!runLog || runLog.task.resultMode !== "report") return [];
+
+  const worktreePath = runLog.result.preparation.worktreePath;
+  const files = (runLog.result.evaluation?.changedFiles ?? runLog.result.commit?.files ?? [])
+    .filter(isPreviewableReportArtifact)
+    .slice(0, 3);
+  const previews: RemoteActionArtifactPreview[] = [];
+
+  for (const file of files) {
+    const absolutePath = resolve(worktreePath, file);
+    const relativePath = relative(worktreePath, absolutePath);
+    if (relativePath.startsWith("..") || isAbsolute(relativePath)) continue;
+
+    try {
+      previews.push({ file, text: await readFile(absolutePath, "utf8") });
+    } catch {
+      // The worker result report should still be sent even if an artifact was removed.
+    }
+  }
+
+  return previews;
+}
+
+async function tryWriteRemoteActionResultOutbox(args: ParsedArgs, action: RemoteActionRecord): Promise<void> {
+  try {
+    await writeRemoteActionResultOutbox(args, action);
+  } catch (err) {
+    console.error(`failed to write remote action result report: ${errorMessage(err)}`);
+  }
+}
+
+async function writeOrchestratorPlanResultOutbox(args: ParsedArgs, plan: OrchestratorPlanRecord): Promise<void> {
+  const actionIds = plan.actionIds ?? [];
+  if (actionIds.length === 0 || plan.resultReportedAt) return;
+
+  const actions = (await new RemoteActionStore(remoteActionsPath(args)).list()).filter((action) =>
+    actionIds.includes(action.id),
+  );
+  if (actions.length !== actionIds.length) return;
+  if (actions.some((action) =>
+    action.status === "pending" || action.status === "waiting" || action.status === "approved" || action.status === "running"
+  )) {
+    return;
+  }
+
+  const runLogs = (
+    await Promise.all(
+      actions.map(async (action) => {
+        if (!action.result?.runLogPath) return undefined;
+        try {
+          return await readWorkerRunLog(action.result.runLogPath);
+        } catch {
+          return undefined;
+        }
+      }),
+    )
+  ).filter((log): log is WorkerRunLog => log !== undefined);
+  const synthesis = await (async () => {
+    try {
+      return await runOrchestratorSynthesis({
+        plan,
+        request: await new OrchestrationRequestStore(orchestrationRequestsPath(args)).find(plan.requestId),
+        actions,
+        runLogs,
+        agent: await loadAgentProfile(args, "codex-orchestrator"),
+        repoRoot: orchestratorRepoRoot(args),
+        codexBin: codexBin(args),
+      });
+    } catch (err) {
+      return { rawOutput: "", payload: undefined, failure: errorMessage(err) };
+    }
+  })();
+  const reportedAt = new Date().toISOString();
+  const file = `remote-${reportedAt.replace(/[:.]/g, "-").toLowerCase()}-plan-result-${sanitizeTaskId(plan.id)}.md`;
+  await mkdir(outboxDir(args), { recursive: true });
+  await writeFile(
+    join(outboxDir(args), file),
+    `${orchestratorPlanResultReport({
+      plan,
+      actions,
+      runLogs,
+      synthesis: synthesis.payload,
+      synthesisFailure: synthesis.failure,
+    })}\n`,
+    "utf8",
+  );
+  await new OrchestratorPlanStore(orchestratorPlansPath(args)).markResultReported(plan.id, {
+    resultReportedAt: reportedAt,
+    synthesisAt: synthesis.payload || synthesis.failure ? reportedAt : undefined,
+    synthesis: synthesis.payload,
+    synthesisFailure: synthesis.failure,
+  });
+}
+
+async function tryWriteOrchestratorPlanResultOutbox(args: ParsedArgs, action: RemoteActionRecord): Promise<void> {
+  try {
+    const plan = (await new OrchestratorPlanStore(orchestratorPlansPath(args)).list())
+      .slice()
+      .reverse()
+      .find((item) => item.status === "materialized" && !item.resultReportedAt && (item.actionIds ?? []).includes(action.id));
+    if (plan) await writeOrchestratorPlanResultOutbox(args, plan);
+  } catch (err) {
+    console.error(`failed to write orchestrator plan result report: ${errorMessage(err)}`);
+  }
+}
+
+async function tryWriteReadyOrchestratorPlanResultOutboxes(args: ParsedArgs): Promise<void> {
+  try {
+    const plans = (await new OrchestratorPlanStore(orchestratorPlansPath(args)).list()).filter(
+      (plan) => plan.status === "materialized" && !plan.resultReportedAt,
+    );
+    for (const plan of plans) {
+      await writeOrchestratorPlanResultOutbox(args, plan);
+    }
+  } catch (err) {
+    console.error(`failed to write ready orchestrator plan result reports: ${errorMessage(err)}`);
+  }
+}
+
+function actionNeedsRecovery(action: RemoteActionRecord): boolean {
+  return action.status === "failed" || action.result?.pass === false;
+}
+
+async function latestRecoverableOrchestratorPlan(args: ParsedArgs): Promise<
+  | {
+      plan: OrchestratorPlanRecord;
+      actions: RemoteActionRecord[];
+      failedActions: RemoteActionRecord[];
+      request?: OrchestrationRequestRecord;
+    }
+  | undefined
+> {
+  const [plans, actions, requests] = await Promise.all([
+    new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
+    new RemoteActionStore(remoteActionsPath(args)).list(),
+    new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
+  ]);
+  const actionsById = new Map(actions.map((action) => [action.id, action]));
+  const requestsById = new Map(requests.map((request) => [request.id, request]));
+
+  for (const plan of plans.slice().reverse()) {
+    const actionIds = plan.actionIds ?? [];
+    if (plan.status !== "materialized" || !plan.resultReportedAt || actionIds.length === 0) continue;
+
+    const planActions = actionIds.map((id) => actionsById.get(id));
+    if (planActions.some((action) => !action)) continue;
+    if (planActions.some((action) => action?.status !== "completed" && action?.status !== "failed")) continue;
+
+    const finalActions = planActions.filter((action): action is RemoteActionRecord => action !== undefined);
+    const failedActions = finalActions.filter(actionNeedsRecovery);
+    const synthesisNeedsRecovery = plan.synthesis ? plan.synthesis.outcome !== "pass" : false;
+    if (failedActions.length > 0 || synthesisNeedsRecovery) {
+      return {
+        plan,
+        actions: finalActions,
+        failedActions,
+        request: requestsById.get(plan.requestId),
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function recoveryRequestText(input: {
+  plan: OrchestratorPlanRecord;
+  actions: RemoteActionRecord[];
+  failedActions: RemoteActionRecord[];
+  request?: OrchestrationRequestRecord;
+}): string {
+  const plan = input.plan;
+  const failedActions = input.failedActions.length ? input.failedActions : input.actions.filter(actionNeedsRecovery);
+  const lines = [
+    "복구 계획 요청입니다.",
+    "",
+    `실패한 계획: ${plan.id}`,
+    `원 요청 ID: ${plan.requestId}`,
+    input.request?.text ? `원 요청: ${compactLine(input.request.text)}` : "",
+    plan.payload?.summary ? `원 계획 요약: ${compactLine(plan.payload.summary)}` : "",
+    plan.synthesis?.summary ? `결과 종합: ${compactLine(plan.synthesis.summary)}` : "",
+    plan.synthesis?.userMessage ? `결과 메시지: ${compactLine(plan.synthesis.userMessage)}` : "",
+    "",
+    "실패 action:",
+    ...(failedActions.length
+      ? failedActions.map((action) =>
+          [
+            `- ${action.id}`,
+            `task=${action.taskId}`,
+            `status=${action.status}`,
+            `outcome=${action.result?.outcome ?? "unknown"}`,
+            action.result?.failure ? `failure=${compactLine(action.result.failure)}` : "",
+            action.result?.runLogPath ? `runLog=${action.result.runLogPath}` : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        )
+      : ["- action 자체 실패는 없지만 오케스트레이터 종합 결과가 복구 필요 상태입니다."]),
+    "",
+    "요청:",
+    "위 실패 원인을 먼저 재검토하고, 무작정 retry하지 말고 복구 계획을 제안하세요.",
+    "필요하면 원인 확인용 report task를 먼저 두고, 수정/검증 task는 의존 관계로 분리하세요.",
+  ];
+
+  return clipText(lines.join("\n"), 4000);
+}
+
+function revisionRequestText(input: {
+  plan: OrchestratorPlanRecord;
+  request?: OrchestrationRequestRecord;
+  feedback: string;
+}): string {
+  const taskLines = input.plan.payload?.tasks.map((task) =>
+    `- ${task.id}: ${task.title} agent=${task.targetAgent} mode=${task.resultMode ?? "write"}`,
+  ) ?? [];
+  const lines = [
+    "계획 수정 요청입니다.",
+    "",
+    `기존 계획: ${input.plan.id}`,
+    `원 요청 ID: ${input.plan.requestId}`,
+    input.request?.text ? `원 요청: ${compactLine(input.request.text)}` : "",
+    input.plan.payload?.summary ? `기존 계획 요약: ${compactLine(input.plan.payload.summary)}` : "",
+    input.plan.payload?.questions.length ? `기존 확인 질문: ${input.plan.payload.questions.map(compactLine).join(" / ")}` : "",
+    taskLines.length ? "기존 작업 후보:" : "",
+    ...taskLines,
+    "",
+    "사용자 피드백:",
+    compactLine(input.feedback),
+    "",
+    "요청:",
+    "이전 계획을 그대로 재사용하지 말고, 사용자 피드백을 반영해 새 계획을 다시 제안하세요.",
+    "새 계획이 안전하지 않거나 모호하면 tasks를 비우고 questions에 확인 질문을 남기세요.",
+  ];
+
+  return clipText(lines.filter((line) => line !== "").join("\n"), 4000);
+}
+
 async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promise<{ actionId: string; status: string }[]> {
   const store = new RemoteActionStore(remoteActionsPath(args));
   const results: { actionId: string; status: string }[] = [];
 
   while (results.length < limit) {
+    await promoteReadyWaitingActions(args, store);
     const action = (await store.list()).find((item) => item.status === "approved");
     if (!action) break;
-    const running = await store.markRunning(action.id, new Date().toISOString());
+    const startedAt = new Date().toISOString();
+    const runId = buildWorkerRunId({ startedAt, taskId: action.taskId });
+    const tmuxSession = flag(args, "tmux-session", "samantha");
+    const running = await store.markRunning(action.id, startedAt, {
+      runId,
+      liveLogPath: buildWorkerLiveLogPath(logDir(args), runId),
+      tmuxSession,
+    });
     if (running.kind !== "dispatch_task") throw new Error(`unsupported remote action kind: ${running.kind}`);
 
     try {
@@ -508,6 +852,8 @@ async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promis
         repoRoot: running.repoRoot,
         allocate: true,
         tmux: true,
+        tmuxSession,
+        startedAt,
       });
       const finished = await store.markFinished(running.id, {
         status: result.runSummary.pass ? "completed" : "failed",
@@ -522,6 +868,8 @@ async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promis
           failure: result.runSummary.failureReason,
         },
       });
+      await tryWriteRemoteActionResultOutbox(args, finished);
+      await tryWriteOrchestratorPlanResultOutbox(args, finished);
       results.push({ actionId: finished.id, status: finished.status });
     } catch (err) {
       const failed = await store.markFinished(running.id, {
@@ -529,11 +877,55 @@ async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promis
         completedAt: new Date().toISOString(),
         result: { failure: errorMessage(err) },
       });
+      await markActionTaskFailed(args, failed);
+      await tryWriteRemoteActionResultOutbox(args, failed);
+      await tryWriteOrchestratorPlanResultOutbox(args, failed);
       results.push({ actionId: failed.id, status: failed.status });
     }
   }
 
+  await tryWriteReadyOrchestratorPlanResultOutboxes(args);
   return results;
+}
+
+async function promoteReadyWaitingActions(args: ParsedArgs, store: RemoteActionStore): Promise<void> {
+  const actions = await store.list();
+  const byId = new Map(actions.map((action) => [action.id, action]));
+  const waiting = actions.filter((action) => action.status === "waiting");
+
+  for (const action of waiting) {
+    const dependencyIds = action.dependsOnActionIds ?? [];
+    const dependencies = dependencyIds.map((id) => byId.get(id));
+    const missingDependency = dependencyIds.find((id, index) => !dependencies[index]);
+    const failedDependency = dependencies.find(
+      (dependency) => dependency?.status === "failed" || (dependency?.status === "completed" && dependency.result?.pass === false),
+    );
+
+    if (missingDependency || failedDependency) {
+      const reason = missingDependency
+        ? `dependency action missing: ${missingDependency}`
+        : `dependency action failed: ${failedDependency?.id}`;
+      const failed = await store.markFailed(action.id, {
+        completedAt: new Date().toISOString(),
+        result: { pass: false, outcome: "dependency_failed", failure: reason },
+      });
+      await markActionTaskFailed(args, failed);
+      await tryWriteRemoteActionResultOutbox(args, failed);
+      await tryWriteOrchestratorPlanResultOutbox(args, failed);
+      continue;
+    }
+
+    if (dependencies.every((dependency) => dependency?.status === "completed" && dependency.result?.pass === true)) {
+      await store.markDependenciesSatisfied(action.id, new Date().toISOString());
+    }
+  }
+}
+
+async function markActionTaskFailed(args: ParsedArgs, action: RemoteActionRecord): Promise<void> {
+  const taskStore = new TaskStore(tasksPath(args));
+  const task = await taskStore.find(action.taskId);
+  if (!task || (task.status !== "pending" && task.status !== "in_progress")) return;
+  await taskStore.updateStatus(task.id, "failed");
 }
 
 async function prepareDispatchActionForTask(input: {
@@ -566,6 +958,7 @@ async function projectProfileForRemotePlan(input: {
   args: ParsedArgs;
   draftProjectId?: string;
   requestedProjectId?: string;
+  requestText?: string;
 }): Promise<{ profile: ProjectProfile; inferred: boolean }> {
   if (input.requestedProjectId) {
     return {
@@ -573,6 +966,11 @@ async function projectProfileForRemotePlan(input: {
       inferred: false,
     };
   }
+
+  const profiles = await loadProjectProfiles(projectProfilesDir(input.args));
+  const inferred = inferProjectProfile(profiles, { requestText: input.requestText });
+  if (inferred && inferred.id !== input.draftProjectId) return { profile: inferred, inferred: true };
+
   if (input.draftProjectId) {
     return {
       profile: await loadProjectProfile(projectProfilesDir(input.args), input.draftProjectId),
@@ -580,19 +978,21 @@ async function projectProfileForRemotePlan(input: {
     };
   }
 
-  const profiles = await loadProjectProfiles(projectProfilesDir(input.args));
+  if (inferred) return { profile: inferred, inferred: true };
   if (profiles.length === 1 && profiles[0]) return { profile: profiles[0], inferred: true };
   if (profiles.length === 0) throw new Error("project profile is required, but no project profiles are configured");
   throw new Error("project id is required: send /plan <project_id>");
 }
 
 async function nowReportForInbox(args: ParsedArgs): Promise<string> {
-  const [runs, tasks, actions, proposals, drafts, ops, lifecycles] = await Promise.all([
+  const [runs, tasks, actions, proposals, drafts, orchestrationRequests, orchestratorPlans, ops, lifecycles] = await Promise.all([
     new RunIndex(runsPath(args)).list(),
     new TaskStore(tasksPath(args)).listActive(),
     new RemoteActionStore(remoteActionsPath(args)).list(),
     new ProposalStore(proposalsPath(args)).list(),
     new TaskDraftStore(taskDraftsPath(args)).list(),
+    new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
+    new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
     collectOps(args),
     new RunLifecycleStore(runLifecyclePath(args)).list(),
   ]);
@@ -602,9 +1002,185 @@ async function nowReportForInbox(args: ParsedArgs): Promise<string> {
     actions,
     proposals,
     drafts,
+    orchestrationRequests,
+    orchestratorPlans,
     ops: withoutActiveInboxCommand(ops),
     lifecycles,
   });
+}
+
+function lifecycleBaseInput(input: { log: WorkerRunLog; run: RunSummary; updatedAt: string }) {
+  return lifecycleBaseFromRunLog({
+    log: input.log,
+    runLogPath: input.run.logPath,
+    repoRoot: input.run.repoRoot,
+    updatedAt: input.updatedAt,
+  });
+}
+
+async function markRunLifecycle(args: ParsedArgs, run: RunSummary, stage: "merged" | "pushed" | "cleaned", updatedAt: string) {
+  const log = await readWorkerRunLog(run.logPath);
+  return new RunLifecycleStore(runLifecyclePath(args)).mark(
+    lifecycleBaseInput({ log, run, updatedAt }),
+    stage,
+    updatedAt,
+  );
+}
+
+function timestamp(value: string | undefined): number {
+  return value ? Date.parse(value) || 0 : 0;
+}
+
+function latestRunNeedingIntegration(runs: RunSummary[], lifecycles: RunLifecycleRecord[]): RunSummary | undefined {
+  const lifecyclesByRunId = new Map(lifecycles.map((record) => [record.runId, record]));
+  const latestLifecycleUpdate = Math.max(0, ...lifecycles.map((record) => Date.parse(record.updatedAt) || 0));
+  return runs
+    .slice()
+    .reverse()
+    .find((run) => {
+      const lifecycle = lifecyclesByRunId.get(run.runId);
+      if (!run.pass || !run.commit) return false;
+      if (lifecycle?.mergedAt && lifecycle.pushedAt && lifecycle.cleanedAt) return false;
+      if (lifecycle) return true;
+      return latestLifecycleUpdate === 0 || (Date.parse(run.finishedAt) || 0) > latestLifecycleUpdate;
+    });
+}
+
+async function latestPrimaryWorkflowTimestamp(args: ParsedArgs): Promise<number> {
+  const [runs, actions, requests, plans, lifecycles] = await Promise.all([
+    new RunIndex(runsPath(args)).list(),
+    new RemoteActionStore(remoteActionsPath(args)).list(),
+    new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
+    new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
+    new RunLifecycleStore(runLifecyclePath(args)).list(),
+  ]);
+  return Math.max(
+    0,
+    ...runs.map((run) => timestamp(run.finishedAt)),
+    ...actions.flatMap((action) => [
+      timestamp(action.createdAt),
+      timestamp(action.approvedAt),
+      timestamp(action.startedAt),
+      timestamp(action.completedAt),
+    ]),
+    ...requests.flatMap((request) => [
+      timestamp(request.createdAt),
+      timestamp(request.plannedAt),
+      timestamp(request.discardedAt),
+    ]),
+    ...plans.flatMap((plan) => [
+      timestamp(plan.createdAt),
+      timestamp(plan.completedAt),
+      timestamp(plan.approvedAt),
+      timestamp(plan.materializedAt),
+      timestamp(plan.resultReportedAt),
+      timestamp(plan.synthesisAt),
+      timestamp(plan.canceledAt),
+      timestamp(plan.supersededAt),
+    ]),
+    ...lifecycles.map((lifecycle) => timestamp(lifecycle.updatedAt)),
+  );
+}
+
+function latestRelevantDraft(drafts: TaskDraftRecord[], primaryWorkflowTimestamp: number): TaskDraftRecord | undefined {
+  return drafts
+    .slice()
+    .reverse()
+    .find((item) => item.status === "drafted" && timestamp(item.updatedAt ?? item.createdAt) >= primaryWorkflowTimestamp);
+}
+
+async function advanceLatestPassedRunIntegration(args: ParsedArgs): Promise<string | undefined> {
+  const runs = await new RunIndex(runsPath(args)).list();
+  const lifecycles = await new RunLifecycleStore(runLifecyclePath(args)).list();
+  const run = latestRunNeedingIntegration(runs, lifecycles);
+  if (!run) return undefined;
+
+  const lifecycle = lifecycles.find((record) => record.runId === run.runId);
+  const updatedAt = new Date().toISOString();
+
+  if (!lifecycle?.mergedAt) {
+    const result = await applyMerge({
+      runLogPath: run.logPath,
+      repoRoot: run.repoRoot,
+      targetBranch: "main",
+    });
+    const ok = (result.applied && result.verified) || (result.gate.alreadyMerged && result.violations.length === 0);
+    const nextLifecycle = ok ? await markRunLifecycle(args, run, "merged", updatedAt) : undefined;
+    return remoteIntegrationReport({
+      stage: "merge",
+      run,
+      ok,
+      lifecycle: nextLifecycle,
+      details: [
+        result.gate.alreadyMerged ? "이미 merge된 run입니다." : "",
+        result.applied ? "fast-forward merge를 적용했습니다." : "merge는 적용하지 않았습니다.",
+        result.verified ? "post-merge 검증을 통과했습니다." : "",
+        ...result.violations,
+      ].filter(Boolean),
+    });
+  }
+
+  if (!lifecycle.pushedAt) {
+    const preflight = await evaluateMergeGate({
+      runLogPath: run.logPath,
+      repoRoot: run.repoRoot,
+      targetBranch: "main",
+    });
+    if (!preflight.alreadyMerged || preflight.violations.length > 0) {
+      return remoteIntegrationReport({
+        stage: "push",
+        run,
+        ok: false,
+        lifecycle,
+        details: [
+          ...preflight.violations,
+          preflight.alreadyMerged ? "" : "run commit이 아직 target repo에 통합되지 않았습니다.",
+        ].filter(Boolean),
+      });
+    }
+
+    const result = await pushMerge({
+      repoRoot: run.repoRoot,
+      remote: "origin",
+      branch: "main",
+    });
+    const nextLifecycle = result.mayPush ? await markRunLifecycle(args, run, "pushed", updatedAt) : undefined;
+    return remoteIntegrationReport({
+      stage: "push",
+      run,
+      ok: result.mayPush,
+      lifecycle: nextLifecycle ?? lifecycle,
+      details: [
+        result.mayPush ? "origin main push를 완료했습니다." : "",
+        result.push ? `push exit ${result.push.exitCode}` : "",
+        ...result.violations,
+      ].filter(Boolean),
+    });
+  }
+
+  if (!lifecycle.cleanedAt) {
+    const result = await cleanupCompletedWorktree({
+      runLogPath: run.logPath,
+      repoRoot: run.repoRoot,
+      targetBranch: "main",
+      deleteBranch: true,
+    });
+    const nextLifecycle = result.cleaned ? await markRunLifecycle(args, run, "cleaned", updatedAt) : undefined;
+    return remoteIntegrationReport({
+      stage: "cleanup",
+      run,
+      ok: result.cleaned,
+      lifecycle: nextLifecycle ?? lifecycle,
+      details: [
+        result.cleaned ? "worker worktree 정리를 완료했습니다." : "",
+        result.worktreePath ? `worktree=${result.worktreePath}` : "",
+        result.branch ? `branch=${result.branch}` : "",
+        ...result.violations,
+      ].filter(Boolean),
+    });
+  }
+
+  return nowReportForInbox(args);
 }
 
 async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Promise<string> {
@@ -700,6 +1276,140 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     );
     return proposalReviewedReport(action, proposal);
   }
+  if (command.type === "orchestrator:add-request") {
+    const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
+    const text = String(command.args?.text ?? "");
+    if (!text.trim()) throw new Error("orchestration request text is required");
+    const request: OrchestrationRequestRecord = {
+      schemaVersion: 1,
+      id: String(command.args?.requestId ?? buildOrchestrationRequestId(receivedAt, command.id)),
+      source: command.args?.source === "local" ? "local" : "remote",
+      senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
+      text,
+      status: "pending_plan",
+      createdAt: receivedAt,
+    };
+    if (!request.id) throw new Error("orchestration request id is required");
+    await new OrchestrationRequestStore(orchestrationRequestsPath(args)).append(request);
+    return orchestrationRequestAddedReport(request);
+  }
+  if (command.type === "orchestrator:recover-latest") {
+    const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
+    const recoverable = await latestRecoverableOrchestratorPlan(args);
+    if (!recoverable) return nowReportForInbox(args);
+
+    const request: OrchestrationRequestRecord = {
+      schemaVersion: 1,
+      id: String(command.args?.requestId ?? buildOrchestrationRequestId(receivedAt, `recover-${recoverable.plan.id}`)),
+      source: command.args?.source === "local" ? "local" : "remote",
+      senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
+      text: recoveryRequestText(recoverable),
+      status: "pending_plan",
+      createdAt: receivedAt,
+    };
+    await new OrchestrationRequestStore(orchestrationRequestsPath(args)).append(request);
+    return orchestratorRecoveryRequestReport({
+      request,
+      sourcePlan: recoverable.plan,
+      failedActions: recoverable.failedActions,
+    });
+  }
+  if (command.type === "orchestrator:revise-latest") {
+    const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
+    const feedback = String(command.args?.feedback ?? "");
+    if (!feedback.trim()) throw new Error("revision feedback is required");
+
+    const planStore = new OrchestratorPlanStore(orchestratorPlansPath(args));
+    const plan = await planStore.latestActionable();
+    if (!plan) return nowReportForInbox(args);
+
+    const requestStore = new OrchestrationRequestStore(orchestrationRequestsPath(args));
+    const originalRequest = await requestStore.find(plan.requestId);
+    const request: OrchestrationRequestRecord = {
+      schemaVersion: 1,
+      id: String(command.args?.requestId ?? buildOrchestrationRequestId(receivedAt, `revise-${plan.id}`)),
+      source: command.args?.source === "local" ? "local" : "remote",
+      senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
+      text: revisionRequestText({ plan, request: originalRequest, feedback }),
+      status: "pending_plan",
+      createdAt: receivedAt,
+    };
+    await requestStore.append(request);
+    const supersededPlan = await planStore.markSuperseded(plan.id, {
+      supersededAt: receivedAt,
+      supersededByRequestId: request.id,
+    });
+    return orchestratorRevisionRequestReport({ request, supersededPlan });
+  }
+  if (command.type === "orchestrator:cancel-current") {
+    const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
+    const reason = typeof command.args?.reason === "string" ? command.args.reason : undefined;
+    const planStore = new OrchestratorPlanStore(orchestratorPlansPath(args));
+    const plan = await planStore.latestActionable();
+    if (plan) {
+      const canceled = await planStore.markCanceled(plan.id, { canceledAt: receivedAt, cancelReason: reason });
+      return orchestratorCancelReport({ plan: canceled });
+    }
+
+    const requestStore = new OrchestrationRequestStore(orchestrationRequestsPath(args));
+    const request = await requestStore.latestPending();
+    if (request) {
+      const discarded = await requestStore.markDiscarded(request.id, { discardedAt: receivedAt });
+      return orchestratorCancelReport({ request: discarded });
+    }
+
+    return nowReportForInbox(args);
+  }
+  if (command.type === "orchestrator:plan-latest") {
+    const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
+    const requestStore = new OrchestrationRequestStore(orchestrationRequestsPath(args));
+    const request = await requestStore.latestPending();
+    if (!request) return nowReportForInbox(args);
+
+    const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
+    const requestedScopeId = typeof command.args?.scopeId === "string" ? command.args.scopeId : undefined;
+    const result = await runOrchestratorPlan({
+      request,
+      agent: await loadAgentProfile(args, "codex-orchestrator"),
+      repoRoot: orchestratorRepoRoot(args),
+      projectProfiles: await loadProjectProfiles(projectProfilesDir(args)),
+      requestedProjectId,
+      requestedScopeId,
+      codexBin: codexBin(args),
+    });
+    const plan: OrchestratorPlanRecord = {
+      schemaVersion: 1,
+      id: buildOrchestratorPlanId({ requestId: request.id, createdAt: receivedAt }),
+      requestId: request.id,
+      status: result.status,
+      createdAt: receivedAt,
+      completedAt: new Date().toISOString(),
+      command: result.command,
+      rawOutput: result.rawOutput,
+      payload: result.payload,
+      failure: result.failure,
+    };
+    await new OrchestratorPlanStore(orchestratorPlansPath(args)).append(plan);
+    const reportedRequest =
+      plan.status === "failed" ? request : await requestStore.markPlanned(request.id, plan.completedAt ?? receivedAt);
+    return orchestratorPlanReport({ request: reportedRequest, plan });
+  }
+  if (command.type === "orchestrator:show-current-plan") {
+    const plan = await new OrchestratorPlanStore(orchestratorPlansPath(args)).latestActionable();
+    if (!plan) return nowReportForInbox(args);
+    const request = await new OrchestrationRequestStore(orchestrationRequestsPath(args)).find(plan.requestId);
+    return orchestratorPlanReport({
+      request: request ?? {
+        schemaVersion: 1,
+        id: plan.requestId,
+        source: "remote",
+        text: plan.requestId,
+        status: "planned",
+        createdAt: plan.createdAt,
+      },
+      plan,
+    });
+  }
   if (command.type === "drafts:add") {
     const proposalId = String(command.args?.proposalId ?? "");
     if (!proposalId) throw new Error("proposal id is required");
@@ -756,19 +1466,24 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       args,
       draftProjectId: draft.projectId,
       requestedProjectId,
+      requestText: `${draft.title}\n${draft.instructions}`,
     });
     const scope = selectProjectRemoteScope(project, {
       requestedScopeId,
       requestText: `${draft.title}\n${draft.instructions}`,
     });
+    const draftPatch =
+      scope === undefined
+        ? {
+            targetFiles: draft.targetFiles.length ? draft.targetFiles : undefined,
+            forbiddenChanges: draft.forbiddenChanges.length ? draft.forbiddenChanges : undefined,
+            setupCommands: (draft.setupCommands ?? []).length ? draft.setupCommands : undefined,
+            verifyCommands: draft.verifyCommands.length ? draft.verifyCommands : undefined,
+            resultMode: draft.resultMode,
+          }
+        : {};
     const patch = applyProjectRemoteScopeDefaults(
-      {
-        targetFiles: draft.targetFiles.length ? draft.targetFiles : undefined,
-        forbiddenChanges: draft.forbiddenChanges.length ? draft.forbiddenChanges : undefined,
-        setupCommands: (draft.setupCommands ?? []).length ? draft.setupCommands : undefined,
-        verifyCommands: draft.verifyCommands.length ? draft.verifyCommands : undefined,
-        resultMode: draft.resultMode,
-      },
+      draftPatch,
       project,
       scope,
     );
@@ -872,7 +1587,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       actions
         .slice()
         .reverse()
-        .find((item) => item.status === "running" || item.status === "approved" || item.status === "pending") ?? actions.at(-1);
+        .find((item) => item.status === "running" || item.status === "approved" || item.status === "waiting" || item.status === "pending") ?? actions.at(-1);
     return remoteActionShowReport(action?.id ?? "current", action);
   }
   if (command.type === "actions:prepare-dispatch") {
@@ -890,7 +1605,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const existing = (await new RemoteActionStore(remoteActionsPath(args)).list())
       .slice()
       .reverse()
-      .find((action) => action.status === "pending" || action.status === "approved" || action.status === "running");
+      .find((action) => action.status === "pending" || action.status === "waiting" || action.status === "approved" || action.status === "running");
     if (existing?.status === "pending") return remoteActionPreparedReport(existing);
     if (existing) return remoteActionShowReport(existing.id, existing);
 
@@ -906,17 +1621,64 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
   }
   if (command.type === "actions:go") {
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
+    const orchestratorPlanStore = new OrchestratorPlanStore(orchestratorPlansPath(args));
+    const orchestratorPlan = await orchestratorPlanStore.latestActionable();
+    if (orchestratorPlan) {
+      if (orchestratorPlan.status !== "planned") {
+        return orchestratorGoBlockedReport({ plan: orchestratorPlan });
+      }
+
+      const taskStore = new TaskStore(tasksPath(args));
+      const actionStore = new RemoteActionStore(remoteActionsPath(args));
+      const materialized = materializeOrchestratorPlan({
+        plan: orchestratorPlan,
+        agents: await loadAgentProfilesById(args, orchestratorPlan.payload?.tasks.map((task) => task.targetAgent) ?? []),
+        projects: await loadProjectProfiles(projectProfilesDir(args)),
+        existingTaskIds: (await taskStore.list()).map((task) => task.id),
+        existingActionIds: (await actionStore.list()).map((action) => action.id),
+        createdAt: receivedAt,
+        commandId: command.id,
+      });
+      if (!materialized.ok) {
+        return orchestratorGoBlockedReport({ plan: orchestratorPlan, violations: materialized.violations });
+      }
+
+      for (const task of materialized.tasks) {
+        await taskStore.append(task);
+      }
+      const materializedActions: RemoteActionRecord[] = [];
+      for (const action of materialized.actions) {
+        await actionStore.append(action);
+        materializedActions.push(
+          action.status === "pending" ? await actionStore.markApproved(action.id, receivedAt) : action,
+        );
+      }
+      const plan = await orchestratorPlanStore.markMaterialized(orchestratorPlan.id, {
+        approvedAt: receivedAt,
+        materializedAt: new Date().toISOString(),
+        taskIds: materialized.tasks.map((task) => task.id),
+        actionIds: materializedActions.map((action) => action.id),
+      });
+      return orchestratorGoMaterializedReport({ plan, tasks: materialized.tasks, actions: materializedActions });
+    }
+    if (await new OrchestrationRequestStore(orchestrationRequestsPath(args)).latestPending()) {
+      return nowReportForInbox(args);
+    }
+
     const actionStore = new RemoteActionStore(remoteActionsPath(args));
     const currentAction = (await actionStore.list())
       .slice()
       .reverse()
-      .find((item) => item.status === "pending" || item.status === "approved" || item.status === "running");
+      .find((item) => item.status === "pending" || item.status === "waiting" || item.status === "approved" || item.status === "running");
     if (currentAction?.status === "pending") {
       return remoteGoReport({ action: await actionStore.markApproved(currentAction.id, receivedAt) });
     }
     if (currentAction) return remoteActionShowReport(currentAction.id, currentAction);
 
     const taskStore = new TaskStore(tasksPath(args));
+    const integrationReport = await advanceLatestPassedRunIntegration(args);
+    if (integrationReport) return integrationReport;
+
     const pendingTask = (await taskStore.listActive()).find((item) => item.status === "pending");
     if (pendingTask) {
       const action = await prepareDispatchActionForTask({
@@ -932,7 +1694,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     }
 
     const draftStore = new TaskDraftStore(taskDraftsPath(args));
-    const draft = (await draftStore.list()).slice().reverse().find((item) => item.status === "drafted");
+    const draft = latestRelevantDraft(await draftStore.list(), await latestPrimaryWorkflowTimestamp(args));
     if (!draft) return nowReportForInbox(args);
     const check = checkTaskDraft(draft, { knownAgentIds: await knownAgentIds(args) });
     if (!check.ok) return taskDraftApprovalBlockedReport({ draft, violations: check.violations });
@@ -972,11 +1734,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     return remoteActionApprovedReport(approved);
   }
   if (command.type === "ops:next-action") {
-    return nextActionReport({
-      runs: await new RunIndex(runsPath(args)).list(),
-      tasks: await new TaskStore(tasksPath(args)).list(),
-      lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
-    });
+    return nowReportForInbox(args);
   }
   if (command.type === "dashboard:build") {
     const out = resolve(flag(args, "out", join(root, "dashboard/index.html")));
@@ -1470,11 +2228,7 @@ async function main(): Promise<void> {
 
   if (args.command === "next-action" || args.command === "ops:next-action") {
     printJson({
-      report: nextActionReport({
-        runs: await new RunIndex(runsPath(args)).list(),
-        tasks: await new TaskStore(tasksPath(args)).list(),
-        lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
-      }),
+      report: await nowReportForInbox(args),
     });
     return;
   }
@@ -1575,13 +2329,37 @@ async function main(): Promise<void> {
       : undefined;
     let stopping = false;
     let processedTotal = 0;
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
     const stop = () => {
       stopping = true;
+    };
+    const writeWatchHeartbeat = async () => {
+      if (!isWatch || !lock) return;
+      await writeDaemonHeartbeat(heartbeatPath(args), {
+        schemaVersion: 1,
+        pid: process.pid,
+        command: "inbox:watch",
+        status: stopping ? "stopping" : "running",
+        lockPath: lock.path,
+        inboxDir,
+        outboxDir,
+        archiveDir,
+        processedTotal,
+        updatedAt: new Date().toISOString(),
+      });
     };
 
     if (isWatch) {
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);
+      const heartbeatIntervalMs = Math.max(1000, Math.min(Number.isFinite(intervalMs) ? intervalMs : 5000, 5000));
+      heartbeatTimer = setInterval(() => {
+        void writeWatchHeartbeat().catch((err) => {
+          console.error(`failed to write daemon heartbeat: ${errorMessage(err)}`);
+        });
+      }, heartbeatIntervalMs);
+      heartbeatTimer.unref?.();
+      await writeWatchHeartbeat();
     }
 
     try {
@@ -1593,20 +2371,7 @@ async function main(): Promise<void> {
           handle: (command) => handleInboxCommand(command, args),
         });
         processedTotal += processed.length;
-        if (isWatch && lock) {
-          await writeDaemonHeartbeat(heartbeatPath(args), {
-            schemaVersion: 1,
-            pid: process.pid,
-            command: "inbox:watch",
-            status: stopping ? "stopping" : "running",
-            lockPath: lock.path,
-            inboxDir,
-            outboxDir,
-            archiveDir,
-            processedTotal,
-            updatedAt: new Date().toISOString(),
-          });
-        }
+        await writeWatchHeartbeat();
         if (args.command === "inbox:process") {
           printJson({ processed });
           return;
@@ -1614,6 +2379,7 @@ async function main(): Promise<void> {
         await Bun.sleep(Number.isFinite(intervalMs) ? intervalMs : 5000);
       } while (!stopping);
     } finally {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       await lock?.release();
     }
     return;

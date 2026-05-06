@@ -140,6 +140,7 @@ describe("sendOutboxReplies", () => {
       statePath,
       sendExisting: true,
       minAgeMs: 0,
+      now: new Date(Date.now() + 1000),
       fetchImpl,
     });
 
@@ -174,14 +175,17 @@ describe("sendOutboxReplies", () => {
         "- `proposal-2` status=`accepted` created=`2026-05-04T10:01:00.000Z` text=Add retries",
         "- `draft-1` status=`drafted` source=`proposal-1` created=`2026-05-04T10:02:00.000Z` title=Improve UX",
         "Saved draft: `draft-2`",
+        "저장된 드래프트: `draft-3`",
+        "생성된 task: `task-1`",
         "Action: `action-1`",
+        "액션: `action-2`",
         "Source proposal: `proposal-2`",
         "Status: `accepted`",
         "Created: `2026-05-04T10:00:00.000Z`",
       ].join("\n"),
     );
 
-    expect(ids).toEqual(["proposal-1", "proposal-2", "draft-1", "draft-2", "action-1"]);
+    expect(ids).toEqual(["proposal-1", "proposal-2", "draft-1", "draft-2", "draft-3", "task-1", "action-1", "action-2"]);
   });
 
   test("sends id-only Telegram messages after reports that return ids", () => {

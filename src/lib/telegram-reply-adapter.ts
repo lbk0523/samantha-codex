@@ -103,14 +103,16 @@ export function copyableIdsFromReport(report: string): string[] {
 
   for (const rawLine of report.split(/\r?\n/)) {
     const line = rawLine.trim();
-    push(matchFirst(/^Saved proposal:\s+`([^`]+)`$/, line));
-    push(matchFirst(/^Saved draft:\s+`([^`]+)`$/, line));
-    push(matchFirst(/^Action:\s+`([^`]+)`$/, line));
-    push(matchFirst(/^Proposal:\s+`([^`]+)`$/, line));
-    push(matchFirst(/^Draft:\s+`([^`]+)`$/, line));
-    push(matchFirst(/^Source proposal:\s+`([^`]+)`$/, line));
-    push(matchFirst(/^Run:\s+`([^`]+)`$/, line));
-    push(matchFirst(/^Task:\s+`([^`]+)`(?:\s+-.*)?$/, line));
+    push(matchFirst(/^(?:Saved proposal|저장된 제안):\s+`([^`]+)`$/, line));
+    push(matchFirst(/^(?:Saved draft|저장된 드래프트):\s+`([^`]+)`$/, line));
+    push(matchFirst(/^(?:Approved draft|승인된 드래프트):\s+`([^`]+)`$/, line));
+    push(matchFirst(/^(?:Created task|생성된 task):\s+`([^`]+)`$/, line));
+    push(matchFirst(/^(?:Action|액션):\s+`([^`]+)`$/, line));
+    push(matchFirst(/^(?:Proposal|제안):\s+`([^`]+)`$/, line));
+    push(matchFirst(/^(?:Draft|드래프트):\s+`([^`]+)`$/, line));
+    push(matchFirst(/^(?:Source proposal|원본 제안):\s+`([^`]+)`$/, line));
+    push(matchFirst(/^(?:Run|런):\s+`([^`]+)`$/, line));
+    push(matchFirst(/^(?:Task|태스크):\s+`([^`]+)`(?:\s+-.*)?$/, line));
     push(matchFirst(/^- `([^`]+)`\s+status=`[^`]+`\s+(?:agent|created|source)=/, line));
     push(matchFirst(/^- `([^`]+)`\s+outcome=`[^`]+`/, line));
     push(matchFirst(/^- latest:\s+`([^`]+)`\s+outcome=`[^`]+`/, line));

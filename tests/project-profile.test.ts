@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   applyProjectDefaults,
   applyProjectRemoteScopeDefaults,
+  classifyRemoteRequestIntent,
+  inferProjectProfile,
   selectProjectRemoteScope,
   type ProjectProfile,
 } from "../src/lib/project-profile";
@@ -10,6 +12,7 @@ const profile: ProjectProfile = {
   schemaVersion: 1,
   id: "omht",
   repoRoot: "/repo/omht",
+  keywords: ["omht", "ohmt"],
   setupCommands: ["bun install"],
   verifyCommands: ["bun typecheck"],
   forbiddenChanges: ["node_modules/**"],
@@ -90,5 +93,26 @@ describe("project profiles", () => {
 
   test("matches Korean planning and report keywords", () => {
     expect(selectProjectRemoteScope(profile, { requestText: "다음 작업 계획 보고" })?.id).toBe("planning_report");
+  });
+
+  test("classifies Korean planning and implementation intent before keyword fallback", () => {
+    expect(classifyRemoteRequestIntent("다음 작업 계획 보고")).toBe("planning_report");
+    expect(classifyRemoteRequestIntent("구현 계획 보고")).toBe("planning_report");
+    expect(classifyRemoteRequestIntent("다음 작업 구현")).toBe("implementation");
+    expect(classifyRemoteRequestIntent("계획대로 구현 시작")).toBe("implementation");
+    expect(selectProjectRemoteScope(profile, { requestText: "다음 작업 구현" })?.id).toBe("implementation");
+  });
+
+  test("infers project profiles from project keywords", () => {
+    const samantha: ProjectProfile = {
+      ...profile,
+      id: "samantha",
+      repoRoot: "/repo/samantha",
+      keywords: ["samantha", "samantha-codex", "사만다"],
+    };
+
+    expect(inferProjectProfile([profile, samantha], { requestText: "samantha 프로젝트 대시보드 개선 계획 보고" })?.id).toBe("samantha");
+    expect(inferProjectProfile([profile, samantha], { requestText: "ohmt 프로젝트 작업 재개 계획 보고" })?.id).toBe("omht");
+    expect(inferProjectProfile([profile, samantha], { requestText: "다음 작업 계획 보고" })).toBeUndefined();
   });
 });

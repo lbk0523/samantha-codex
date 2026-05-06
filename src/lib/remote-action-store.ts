@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import type { TaskSpec } from "./contracts";
 import { sanitizeTaskId } from "./worktree";
 
-export type RemoteActionStatus = "pending" | "approved" | "running" | "completed" | "failed";
+export type RemoteActionStatus = "pending" | "waiting" | "approved" | "running" | "completed" | "failed";
 export type RemoteActionKind = "dispatch_task";
 
 export interface RemoteActionResult {
@@ -30,6 +30,9 @@ export interface RemoteActionRecord {
   allocate: true;
   execute: true;
   tmux: true;
+  orchestratorPlanId?: string;
+  orchestratorTaskId?: string;
+  dependsOnActionIds?: string[];
   approvedAt?: string;
   startedAt?: string;
   completedAt?: string;
@@ -57,6 +60,10 @@ export function createRemoteDispatchAction(input: {
   createdAt: string;
   source: "remote" | "local";
   commandId?: string;
+  status?: "pending" | "waiting";
+  orchestratorPlanId?: string;
+  orchestratorTaskId?: string;
+  dependsOnActionIds?: string[];
 }): RemoteActionRecord {
   return {
     schemaVersion: 1,
@@ -66,7 +73,7 @@ export function createRemoteDispatchAction(input: {
       commandId: input.commandId,
     }),
     kind: "dispatch_task",
-    status: "pending",
+    status: input.status ?? "pending",
     createdAt: input.createdAt,
     source: input.source,
     taskId: input.task.id,
@@ -76,6 +83,9 @@ export function createRemoteDispatchAction(input: {
     allocate: true,
     execute: true,
     tmux: true,
+    orchestratorPlanId: input.orchestratorPlanId,
+    orchestratorTaskId: input.orchestratorTaskId,
+    dependsOnActionIds: input.dependsOnActionIds,
   };
 }
 
@@ -119,10 +129,17 @@ export class RemoteActionStore {
     });
   }
 
-  async markRunning(id: string, startedAt: string): Promise<RemoteActionRecord> {
+  async markDependenciesSatisfied(id: string, approvedAt: string): Promise<RemoteActionRecord> {
+    return this.update(id, (action) => {
+      if (action.status !== "waiting") throw new Error(`remote action must be waiting: ${action.status}`);
+      return { ...action, status: "approved", approvedAt };
+    });
+  }
+
+  async markRunning(id: string, startedAt: string, result?: RemoteActionResult): Promise<RemoteActionRecord> {
     return this.update(id, (action) => {
       if (action.status !== "approved") throw new Error(`remote action must be approved: ${action.status}`);
-      return { ...action, status: "running", startedAt };
+      return { ...action, status: "running", startedAt, ...(result ? { result: { ...action.result, ...result } } : {}) };
     });
   }
 
@@ -136,7 +153,24 @@ export class RemoteActionStore {
         ...action,
         status: input.status,
         completedAt: input.completedAt,
-        result: input.result,
+        result: { ...action.result, ...input.result },
+      };
+    });
+  }
+
+  async markFailed(
+    id: string,
+    input: { completedAt: string; result: RemoteActionResult },
+  ): Promise<RemoteActionRecord> {
+    return this.update(id, (action) => {
+      if (action.status === "completed" || action.status === "failed") {
+        throw new Error(`remote action must not be final: ${action.status}`);
+      }
+      return {
+        ...action,
+        status: "failed",
+        completedAt: input.completedAt,
+        result: { ...action.result, ...input.result },
       };
     });
   }

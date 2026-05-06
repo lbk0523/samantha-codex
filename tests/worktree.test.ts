@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -61,6 +61,50 @@ describe("worktree allocation", () => {
     await releaseWorktree({ repoRoot: repo, allocation });
 
     await expect(git(["rev-parse", "--verify", allocation.branch], repo)).rejects.toThrow();
+  });
+
+  test("links ignored node_modules into allocated worktrees", async () => {
+    const repo = await makeRepo();
+    await writeFile(join(repo, ".gitignore"), "/node_modules\n", "utf8");
+    await mkdir(join(repo, "node_modules", "react"), { recursive: true });
+    await writeFile(join(repo, "node_modules", "react", "package.json"), "{}\n", "utf8");
+    await git(["add", ".gitignore"], repo);
+    await git(["commit", "-m", "chore: ignore node modules"], repo);
+
+    const allocation = await allocateWorktree({
+      repoRoot: repo,
+      taskId: "Task with deps",
+      worktreesDir: "worktrees",
+    });
+
+    expect((await lstat(join(allocation.worktreePath, "node_modules"))).isSymbolicLink()).toBe(true);
+    expect(await git(["status", "--porcelain=v1", "--untracked-files=all"], allocation.worktreePath)).toBe("");
+
+    await releaseWorktree({ repoRoot: repo, allocation });
+  });
+
+  test("keeps node_modules clean when only directory ignore patterns are present", async () => {
+    const repo = await makeRepo();
+    await writeFile(join(repo, ".gitignore"), "node_modules/\n", "utf8");
+    await mkdir(join(repo, "node_modules", ".bin"), { recursive: true });
+    await mkdir(join(repo, "node_modules", "react"), { recursive: true });
+    await writeFile(join(repo, "node_modules", "react", "package.json"), "{}\n", "utf8");
+    await git(["add", ".gitignore"], repo);
+    await git(["commit", "-m", "chore: ignore node modules directory"], repo);
+
+    const allocation = await allocateWorktree({
+      repoRoot: repo,
+      taskId: "Task with directory ignored deps",
+      worktreesDir: "worktrees",
+    });
+
+    const nodeModules = await lstat(join(allocation.worktreePath, "node_modules"));
+    expect(nodeModules.isDirectory()).toBe(true);
+    expect(nodeModules.isSymbolicLink()).toBe(false);
+    await access(join(allocation.worktreePath, "node_modules", "react"));
+    expect(await git(["status", "--porcelain=v1", "--untracked-files=all"], allocation.worktreePath)).toBe("");
+
+    await releaseWorktree({ repoRoot: repo, allocation });
   });
 
   test("reuses an existing clean task worktree for the same base", async () => {

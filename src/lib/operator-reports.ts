@@ -2,10 +2,12 @@ import type { TaskSpec } from "./contracts";
 import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
+import type { OrchestrationRequestRecord, OrchestratorPlanRecord, OrchestratorSynthesisPayload } from "./orchestrator-store";
 import type { ProjectProfile, ProjectRemoteScope } from "./project-profile";
 import type { ProposalRecord } from "./proposal-store";
 import { remoteActionCommand, type RemoteActionRecord } from "./remote-action-store";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
+import type { WorkerRunLog } from "./run-log";
 import type { TaskDraftRecord } from "./task-draft-store";
 
 function oneLine(value: string): string {
@@ -18,6 +20,45 @@ function code(value: string): string {
 
 function recent<T>(items: T[], limit: number): T[] {
   return [...items].slice(-limit).reverse();
+}
+
+function timestamp(value: string | undefined): number {
+  return value ? Date.parse(value) || 0 : 0;
+}
+
+function latestPrimaryWorkflowTimestamp(input: {
+  runs: RunSummary[];
+  actions: RemoteActionRecord[];
+  orchestrationRequests?: OrchestrationRequestRecord[];
+  orchestratorPlans?: OrchestratorPlanRecord[];
+  lifecycles?: RunLifecycleRecord[];
+}): number {
+  return Math.max(
+    0,
+    ...input.runs.map((run) => timestamp(run.finishedAt)),
+    ...input.actions.flatMap((action) => [
+      timestamp(action.createdAt),
+      timestamp(action.approvedAt),
+      timestamp(action.startedAt),
+      timestamp(action.completedAt),
+    ]),
+    ...(input.orchestrationRequests ?? []).flatMap((request) => [
+      timestamp(request.createdAt),
+      timestamp(request.plannedAt),
+      timestamp(request.discardedAt),
+    ]),
+    ...(input.orchestratorPlans ?? []).flatMap((plan) => [
+      timestamp(plan.createdAt),
+      timestamp(plan.completedAt),
+      timestamp(plan.approvedAt),
+      timestamp(plan.materializedAt),
+      timestamp(plan.resultReportedAt),
+      timestamp(plan.synthesisAt),
+      timestamp(plan.canceledAt),
+      timestamp(plan.supersededAt),
+    ]),
+    ...(input.lifecycles ?? []).map((lifecycle) => timestamp(lifecycle.updatedAt)),
+  );
 }
 
 function shortCommit(commit: string): string {
@@ -61,9 +102,13 @@ function lifecycleText(lifecycle: RunLifecycleRecord | undefined): string {
   return `merged=${lifecycle.mergedAt ? "yes" : "no"} pushed=${lifecycle.pushedAt ? "yes" : "no"} cleaned=${lifecycle.cleanedAt ? "yes" : "no"}`;
 }
 
+function resultModeLabel(mode: string | undefined): string {
+  return mode === "report" ? "계획/보고" : "구현/수정";
+}
+
 function draftNextLines(draft: TaskDraftRecord): string[] {
   if (draft.status !== "drafted") {
-    return ["", "Next:", `- Telegram: ${code("/now")}`];
+    return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
   }
 
   const missing = [
@@ -73,36 +118,198 @@ function draftNextLines(draft: TaskDraftRecord): string[] {
 
   return [
     "",
-    "Next:",
-    missing.length ? `- Telegram: ${code("/plan")}` : `- Telegram: ${code("/go")}`,
+    "다음 액션:",
+    missing.length ? `- 텔레그램: ${code("/plan")}` : `- 텔레그램: ${code("/go")}`,
   ];
 }
 
 function remoteActionNextLines(action: RemoteActionRecord): string[] {
-  if (action.status === "pending") return ["", "Next:", `- Telegram: ${code("/go")}`];
+  if (action.status === "pending") return ["", "다음 액션:", `- 텔레그램: ${code("/go")}`];
+  if (action.status === "waiting") return ["", "다음 액션:", `- 선행 action 확인: ${code("/action_current")}`];
   if (action.status === "approved" || action.status === "running") {
-    return ["", "Next:", `- Telegram: ${code("/action_current")}`];
+    return ["", "다음 액션:", `- 텔레그램: ${code("/action_current")}`];
   }
   if (action.status === "completed") {
-    return ["", "Next:", `- Telegram: ${code("/run_latest")}`, `- Then: ${code("/now")}`];
+    return ["", "다음 액션:", `- 텔레그램: ${code("/run_latest")}`, `- 이후: ${code("/now")}`];
   }
-  return ["", "Next:", `- Telegram: ${code("/run_latest")}`, `- Then: ${code("/problems")}`];
+  return ["", "다음 액션:", `- 텔레그램: ${code("/run_latest")}`, `- 이후: ${code("/problems")}`];
+}
+
+function orchestrationRequestNextLines(request: OrchestrationRequestRecord): string[] {
+  if (request.status === "pending_plan") return ["", "다음 액션:", `- 텔레그램: ${code("/plan")}`, `- 요청 취소: ${code("/cancel")}`];
+  return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
+}
+
+function orchestratorPlanNextLines(plan: OrchestratorPlanRecord): string[] {
+  if (plan.status === "questions") {
+    return [
+      "",
+      "다음 액션:",
+      `- 계획 다시 보기: ${code("/plan_current")}`,
+      `- 답변/수정 요청: ${code("/revise <피드백>")}`,
+      `- 계획 취소: ${code("/cancel")}`,
+    ];
+  }
+  if (plan.status === "planned") {
+    return [
+      "",
+      "다음 액션:",
+      `- 계획 다시 보기: ${code("/plan_current")}`,
+      `- 계획 승인 및 worker 실행 큐 등록: ${code("/go")}`,
+      `- 계획 수정: ${code("/revise <피드백>")}`,
+      `- 계획 취소: ${code("/cancel")}`,
+    ];
+  }
+  if (plan.status === "materialized") return ["", "다음 액션:", `- 텔레그램: ${code("/action_current")}`];
+  return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
+}
+
+function actionNeedsRecovery(action: RemoteActionRecord): boolean {
+  return action.status === "failed" || action.result?.pass === false;
+}
+
+function latestRecoverablePlan(input: {
+  actions: RemoteActionRecord[];
+  orchestratorPlans?: OrchestratorPlanRecord[];
+  minResultReportedAt?: number;
+}): { plan: OrchestratorPlanRecord; actions: RemoteActionRecord[]; failedActions: RemoteActionRecord[] } | undefined {
+  const byId = new Map(input.actions.map((action) => [action.id, action]));
+
+  for (const plan of input.orchestratorPlans?.slice().reverse() ?? []) {
+    const actionIds = plan.actionIds ?? [];
+    if (plan.status !== "materialized" || !plan.resultReportedAt || actionIds.length === 0) continue;
+    if (input.minResultReportedAt && timestamp(plan.resultReportedAt) < input.minResultReportedAt) continue;
+
+    const actions = actionIds.map((id) => byId.get(id));
+    if (actions.some((action) => !action)) continue;
+    if (actions.some((action) => action?.status !== "completed" && action?.status !== "failed")) continue;
+
+    const planActions = actions.filter((action): action is RemoteActionRecord => action !== undefined);
+    const failedActions = planActions.filter(actionNeedsRecovery);
+    const synthesisNeedsRecovery = plan.synthesis ? plan.synthesis.outcome !== "pass" : false;
+    if (failedActions.length > 0 || synthesisNeedsRecovery) return { plan, actions: planActions, failedActions };
+  }
+
+  return undefined;
+}
+
+function clipText(text: string, maxLength = 3500): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, maxLength).trimEnd()}\n\n...[truncated]`;
+}
+
+function stripHarnessResult(text: string): string {
+  const marker = text.lastIndexOf("HARNESS_RESULT:");
+  if (marker === -1) return text.trim();
+  const before = text.slice(0, marker).trim();
+  return before || text.replace(/^HARNESS_RESULT:.*$/gm, "").trim();
+}
+
+function extractAgentMessages(output: string): string[] {
+  const messages: string[] = [];
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+
+    try {
+      const event = JSON.parse(trimmed) as {
+        type?: string;
+        item?: { type?: string; text?: string };
+      };
+      if (event.item?.type === "agent_message" && typeof event.item.text === "string") {
+        messages.push(event.item.text);
+      }
+    } catch {
+      // Non-JSON lines are normal in command output.
+    }
+  }
+  return messages;
+}
+
+function workerFinalMessage(runLog: WorkerRunLog | undefined): string {
+  if (!runLog) return "worker run log를 읽지 못했습니다.";
+
+  const command = runLog.result.command;
+  const output = [command?.stdout ?? "", command?.stderr ?? ""].filter(Boolean).join("\n");
+  const agentMessage = extractAgentMessages(output).map(stripHarnessResult).filter(Boolean).at(-1);
+  if (agentMessage) return clipText(agentMessage);
+
+  const harnessNote = runLog.result.evaluation?.harness?.note;
+  if (harnessNote) return clipText(harnessNote);
+
+  const fallback = stripHarnessResult(output);
+  return fallback ? clipText(fallback) : "worker 최종 메시지를 찾지 못했습니다.";
+}
+
+function changedFileLines(runLog: WorkerRunLog | undefined): string[] {
+  const files = runLog?.result.evaluation?.changedFiles ?? runLog?.result.commit?.files ?? [];
+  return files.length ? files.map((file) => `- ${code(file)}`) : ["- 없음"];
+}
+
+function verificationLines(runLog: WorkerRunLog | undefined): string[] {
+  const evaluation = runLog?.result.evaluation;
+  if (!evaluation) return ["- worker 검증 결과 없음"];
+
+  const lines = [
+    evaluation.harness ? `- Worker 보고: ${code(evaluation.harness.status)} - ${oneLine(evaluation.harness.note)}` : "",
+    evaluation.parseError ? `- HARNESS_RESULT 파싱 실패: ${oneLine(evaluation.parseError)}` : "",
+    evaluation.verifyOverrideReason ? `- 검증 보정: ${oneLine(evaluation.verifyOverrideReason)}` : "",
+    ...evaluation.verifyResults.map((result) =>
+      `- ${result.exitCode === 0 ? "통과" : "실패"} exit ${result.exitCode}: ${code(result.command)}`,
+    ),
+  ].filter(Boolean);
+
+  return lines.length ? lines : ["- 검증 명령 없음"];
+}
+
+export interface RemoteActionArtifactPreview {
+  file: string;
+  text: string;
+}
+
+function artifactPreviewLines(runLog: WorkerRunLog | undefined, previews: RemoteActionArtifactPreview[] | undefined): string[] {
+  if (runLog?.task.resultMode !== "report") return [];
+  return [
+    "",
+    "산출물 미리보기:",
+    ...(previews?.length
+      ? previews.flatMap((preview) => [`파일: ${code(preview.file)}`, clipText(preview.text, 2500)])
+      : ["- 없음"]),
+  ];
+}
+
+function remoteActionResultNextLines(action: RemoteActionRecord, runLog: WorkerRunLog | undefined): string[] {
+  const lines = ["", "다음 액션:", `- 텔레그램: ${code("/run_latest")}`];
+  if (action.status === "failed") {
+    if (action.orchestratorPlanId) lines.push(`- 복구 계획 생성: ${code("/recover")}`);
+    else lines.push(`- 문제 확인: ${code("/problems")}`);
+  } else {
+    lines.push(`- 이후 작업 확인: ${code("/now")}`);
+  }
+
+  if (runLog?.result.pass && runLog.result.commit?.commitHash && action.result?.runLogPath) {
+    lines.push("", "로컬 merge 후보:");
+    lines.push(code(`bun run samantha merge:check --run-log=${action.result.runLogPath} --repo-root=${runLog.input.repoRoot}`));
+  }
+
+  return lines;
 }
 
 function proposalNextLines(proposal: ProposalRecord): string[] {
   if (proposal.status === "pending_review") {
     return [
       "",
-      "Next:",
-      `- Inspect: ${code("/proposal_next")}`,
-      `- Accept: ${code(`/accept ${proposal.id}`)}`,
-      `- Reject: ${code(`/reject ${proposal.id}`)}`,
+      "다음 액션:",
+      `- 확인: ${code("/proposal_next")}`,
+      `- 수락: ${code(`/accept ${proposal.id}`)}`,
+      `- 거절: ${code(`/reject ${proposal.id}`)}`,
     ];
   }
   if (proposal.status === "accepted") {
-    return ["", "Next:", `- Telegram: ${code(`/draft ${proposal.id}`)}`, `- Then: ${code("/draft_next")}`];
+    return ["", "다음 액션:", `- 텔레그램: ${code(`/draft ${proposal.id}`)}`, `- 이후: ${code("/draft_next")}`];
   }
-  return ["", "Next:", `- Telegram: ${code("/now")}`];
+  return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
 }
 
 function latestReplyFailure(snapshot: OpsSnapshot): string {
@@ -114,32 +321,108 @@ function latestReplyFailure(snapshot: OpsSnapshot): string {
 function nextActionLinesForRun(run: RunSummary): string[] {
   if (run.pass && run.commit) {
     return [
-      "Suggested local next action:",
+      "로컬 다음 액션:",
       code(`bun run samantha merge:check --run-log=${run.logPath} --repo-root=${run.repoRoot}`),
       code(`bun run samantha merge:apply --run-log=${run.logPath} --repo-root=${run.repoRoot}`),
-      "After merge/push, cleanup:",
+      "merge/push 이후 정리:",
       code(`bun run samantha worktree:cleanup --run-log=${run.logPath} --repo-root=${run.repoRoot}`),
     ];
   }
 
   if (run.outcome === "blocked") {
     return [
-      "Suggested local next action:",
-      "Fix or verify the existing worker worktree, then finalize it if the changed files are acceptable.",
+      "로컬 다음 액션:",
+      "기존 worker worktree를 수정 또는 검증한 뒤, 변경 파일이 적절하면 finalize 하세요.",
       code(`bun run samantha tasks:finalize-worktree ${run.taskId} --repo-root=${run.repoRoot} --worktree=${run.worktreePath}`),
     ];
   }
 
   if (!run.pass) {
     return [
-      "Suggested local next action:",
-      "Inspect the run log and retry only after the cause is understood.",
+      "로컬 다음 액션:",
+      "run log를 먼저 확인하고 원인을 이해한 뒤에만 retry 하세요.",
       code(`bun run samantha runs:show ${run.runId}`),
       code(`bun run samantha tasks:retry ${run.taskId}`),
     ];
   }
 
-  return ["Suggested local next action: none"];
+  return ["로컬 다음 액션: 없음"];
+}
+
+function nowLinesForPassedRun(run: RunSummary, lifecycle: RunLifecycleRecord | undefined): string[] {
+  if (!run.pass || !run.commit) return [];
+
+  if (lifecycle?.mergedAt && lifecycle.pushedAt && lifecycle.cleanedAt) {
+    return [
+      "# now",
+      "",
+      "최근 성공 run은 merge/push/cleanup까지 완료됐습니다.",
+      `런: ${code(run.runId)}`,
+      `lifecycle: ${lifecycleText(lifecycle)}`,
+      "",
+      "다음 액션:",
+      `- 텔레그램: ${code("/check")}`,
+    ];
+  }
+
+  if (lifecycle?.mergedAt && lifecycle.pushedAt) {
+    return [
+      "# now",
+      "",
+      "최근 성공 run은 push 완료 후 cleanup 승인이 필요합니다.",
+      `런: ${code(run.runId)}`,
+      "",
+      "다음 액션:",
+      `- 텔레그램: ${code("/go")}`,
+      "",
+      "로컬 fallback:",
+      code(`bun run samantha worktree:cleanup --run-log=${run.logPath} --repo-root=${run.repoRoot}`),
+    ];
+  }
+
+  if (lifecycle?.mergedAt) {
+    return [
+      "# now",
+      "",
+      "최근 성공 run은 merge 완료 후 push 승인이 필요합니다.",
+      `런: ${code(run.runId)}`,
+      "",
+      "다음 액션:",
+      `- 텔레그램: ${code("/go")}`,
+      "",
+      "로컬 fallback:",
+      code(`bun run samantha merge:push --run-log=${run.logPath} --repo-root=${run.repoRoot}`),
+    ];
+  }
+
+  return [
+    "# now",
+    "",
+    "최근 성공 run의 merge 적용 승인이 필요합니다.",
+    `런: ${code(run.runId)}`,
+    `태스크: ${code(run.taskId)} - ${oneLine(run.taskTitle)}`,
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code("/go")}`,
+    "",
+    "로컬 fallback:",
+    code(`bun run samantha merge:check --run-log=${run.logPath} --repo-root=${run.repoRoot}`),
+  ];
+}
+
+function latestRunNeedingIntegration(runs: RunSummary[], lifecycles: RunLifecycleRecord[] = []): RunSummary | undefined {
+  const lifecyclesByRunId = new Map(lifecycles.map((record) => [record.runId, record]));
+  const latestLifecycleUpdate = Math.max(0, ...lifecycles.map((record) => Date.parse(record.updatedAt) || 0));
+  return runs
+    .slice()
+    .reverse()
+    .find((run) => {
+      const lifecycle = lifecyclesByRunId.get(run.runId);
+      if (!run.pass || !run.commit) return false;
+      if (lifecycle?.mergedAt && lifecycle.pushedAt && lifecycle.cleanedAt) return false;
+      if (lifecycle) return true;
+      return latestLifecycleUpdate === 0 || (Date.parse(run.finishedAt) || 0) > latestLifecycleUpdate;
+    });
 }
 
 export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
@@ -151,11 +434,13 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
       "- `/runs`, `/run_latest`, `/run <run_id>`, `/failures`",
       "- `/tasks`, `/task <task_id>`",
       "- `/actions`, `/action_current`, `/action <action_id>`",
+      "- `/plan_current`",
       "- `/proposals`, `/proposal_next`, `/proposal <proposal_id>`",
       "- `/drafts`, `/draft_next`, `/draft <draft_id>`",
       "",
       "Explicit workflow:",
-      "- `/work <request>`, `/plan [project_id] [scope_id]`, `/go`",
+      "- `/work <request>`, `/plan [project_id] [scope_id]`, `/go`, `/recover`",
+      "- `/revise <feedback>`, `/cancel [reason]`",
       "- `/propose <text>`",
       "- `/draft_propose <text>`",
       "- `/accept <proposal_id>`, `/reject <proposal_id>`",
@@ -166,27 +451,31 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
       "System:",
       "- `/status`, `/doctor`, `/health`, `/dashboard`, `/next_action`",
       "",
-      "Remote commands are safe-gated. They cannot dispatch workers directly, merge, push, clean worktrees, or run shell commands.",
+      "Remote commands are safe-gated. They cannot dispatch workers directly, accept arbitrary shell commands, or accept arbitrary repo paths. `/go` can advance the latest passed run through Samantha's merge/push/cleanup gates.",
     ].join("\n");
   }
 
   return [
     "# remote:help",
     "",
-    "Main flow:",
+    "기본 흐름:",
     "",
-    "- `/work <request>`: capture new work as a draft",
-    "- `/plan`: prepare and show the execution plan",
-    "- `/go`: approve the plan and queue execution",
-    "- `/now`: show the one next command to send",
-    "- `/action_current`: inspect the current execution",
-    "- `/check`: compact status",
-    "- `/problems`: diagnostics when something looks wrong",
+    "- `/work <요청>`: 새 작업 요청 저장",
+    "- `/plan`: Orchestrator Agent가 실행 전 계획 작성",
+    "- `/plan_current`: 현재 계획 다시 보기",
+    "- `/go`: 계획 승인, worker 실행 큐 등록, 또는 최신 성공 run 통합 gate 진행",
+    "- `/revise <피드백>`: 현재 계획을 수정 요청",
+    "- `/cancel`: 승인 전 계획/요청 취소",
+    "- `/recover`: 실패한 계획 결과로 복구 계획 요청 생성",
+    "- `/now`: 지금 보낼 다음 명령 확인",
+    "- `/action_current`: 현재 실행 상태 확인",
+    "- `/check`: 짧은 상태 확인",
+    "- `/problems`: 이상 징후 진단",
     "",
-    "Typical execution:",
+    "일반 실행:",
     "`/work <request>` -> `/plan` -> `/go` -> `/action_current`",
     "",
-    "More commands: `/help_advanced`",
+    "고급 명령: `/help_advanced`",
   ].join("\n");
 }
 
@@ -240,7 +529,7 @@ export function nextActionReport(input: { runs: RunSummary[]; tasks: TaskSpec[];
   if (latest) {
     if (latest.pass && latest.commit) {
       const lifecycle = input.lifecycles?.find((record) => record.runId === latest.runId);
-      if (lifecycle?.cleanedAt) {
+      if (lifecycle?.mergedAt && lifecycle.pushedAt && lifecycle.cleanedAt) {
         return [
           "# next-action",
           "",
@@ -250,7 +539,7 @@ export function nextActionReport(input: { runs: RunSummary[]; tasks: TaskSpec[];
           `Lifecycle: merged=${lifecycle.mergedAt ? "yes" : "no"} pushed=${lifecycle.pushedAt ? "yes" : "no"} cleaned=yes`,
         ].join("\n");
       }
-      if (lifecycle?.pushedAt) {
+      if (lifecycle?.mergedAt && lifecycle.pushedAt) {
         return [
           "# next-action",
           "",
@@ -291,6 +580,8 @@ export function nowReport(input: {
   actions: RemoteActionRecord[];
   proposals?: ProposalRecord[];
   drafts?: TaskDraftRecord[];
+  orchestrationRequests?: OrchestrationRequestRecord[];
+  orchestratorPlans?: OrchestratorPlanRecord[];
   ops?: OpsSnapshot;
   lifecycles?: RunLifecycleRecord[];
 }): string {
@@ -301,9 +592,9 @@ export function nowReport(input: {
     return [
       "# now",
       "",
-      "Worker is running.",
-      `Action: ${code(running.id)}`,
-      `Task: ${code(running.taskId)} - ${oneLine(running.taskTitle)}`,
+      "worker가 실행 중입니다.",
+      `액션: ${code(running.id)}`,
+      `태스크: ${code(running.taskId)} - ${oneLine(running.taskTitle)}`,
       ...remoteActionNextLines(running),
     ].join("\n");
   }
@@ -313,9 +604,9 @@ export function nowReport(input: {
     return [
       "# now",
       "",
-      "Action is approved. Waiting for the runner.",
-      `Action: ${code(approved.id)}`,
-      `Task: ${code(approved.taskId)} - ${oneLine(approved.taskTitle)}`,
+      "액션이 승인되었고 runner 실행을 기다리는 중입니다.",
+      `액션: ${code(approved.id)}`,
+      `태스크: ${code(approved.taskId)} - ${oneLine(approved.taskTitle)}`,
       ...remoteActionNextLines(approved),
     ].join("\n");
   }
@@ -325,16 +616,96 @@ export function nowReport(input: {
     return [
       "# now",
       "",
-      "Action is ready for approval.",
-      `Action: ${code(pendingAction.id)}`,
-      `Task: ${code(pendingAction.taskId)} - ${oneLine(pendingAction.taskTitle)}`,
+      "승인 대기 중인 액션이 있습니다.",
+      `액션: ${code(pendingAction.id)}`,
+      `태스크: ${code(pendingAction.taskId)} - ${oneLine(pendingAction.taskTitle)}`,
       ...remoteActionNextLines(pendingAction),
+    ].join("\n");
+  }
+
+  const waitingAction = latestByStatus("waiting");
+  if (waitingAction) {
+    return [
+      "# now",
+      "",
+      "선행 action 완료를 기다리는 action이 있습니다.",
+      `액션: ${code(waitingAction.id)}`,
+      `태스크: ${code(waitingAction.taskId)} - ${oneLine(waitingAction.taskTitle)}`,
+      waitingAction.dependsOnActionIds?.length ? `의존 action: ${waitingAction.dependsOnActionIds.map(code).join(", ")}` : "",
+      ...remoteActionNextLines(waitingAction),
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  const latestPlan = input.orchestratorPlans
+    ?.slice()
+    .reverse()
+    .find((plan) => plan.status === "planned" || plan.status === "questions");
+  if (latestPlan) {
+    return [
+      "# now",
+      "",
+      latestPlan.status === "questions"
+        ? "오케스트레이터 계획에 확인 질문이 남아 있습니다."
+        : "오케스트레이터 계획이 생성되어 검토를 기다리고 있습니다.",
+      `계획: ${code(latestPlan.id)}`,
+      `요청: ${code(latestPlan.requestId)}`,
+      latestPlan.payload?.summary ? `요약: ${oneLine(latestPlan.payload.summary)}` : "",
+      ...orchestratorPlanNextLines(latestPlan),
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  const pendingOrchestrationRequest = input.orchestrationRequests
+    ?.slice()
+    .reverse()
+    .find((request) => request.status === "pending_plan");
+  if (pendingOrchestrationRequest) {
+    return [
+      "# now",
+      "",
+      "작업 요청이 오케스트레이터 계획 생성을 기다리고 있습니다.",
+      `요청: ${code(pendingOrchestrationRequest.id)}`,
+      `내용: ${oneLine(pendingOrchestrationRequest.text)}`,
+      ...orchestrationRequestNextLines(pendingOrchestrationRequest),
+    ].join("\n");
+  }
+
+  const primaryWorkflowTimestamp = latestPrimaryWorkflowTimestamp(input);
+  const pendingIntegrationRun = latestRunNeedingIntegration(input.runs, input.lifecycles);
+  if (pendingIntegrationRun) {
+    return nowLinesForPassedRun(
+      pendingIntegrationRun,
+      input.lifecycles?.find((record) => record.runId === pendingIntegrationRun.runId),
+    ).join("\n");
+  }
+
+  const recoverable = latestRecoverablePlan({
+    actions: input.actions,
+    orchestratorPlans: input.orchestratorPlans,
+    minResultReportedAt: primaryWorkflowTimestamp,
+  });
+  if (recoverable) {
+    return [
+      "# now",
+      "",
+      "실패한 오케스트레이터 계획 결과가 있습니다.",
+      `계획: ${code(recoverable.plan.id)}`,
+      `요청: ${code(recoverable.plan.requestId)}`,
+      `실패 action: ${recoverable.failedActions.length}/${recoverable.actions.length}`,
+      recoverable.plan.synthesis?.summary ? `종합: ${oneLine(recoverable.plan.synthesis.summary)}` : "",
+      "",
+      "다음 액션:",
+      `- 텔레그램: ${code("/recover")}`,
+      `- 세부 확인: ${code("/action_current")}`,
     ].join("\n");
   }
 
   if (input.ops?.failures.length || input.ops?.warnings.length) {
     const issue = input.ops.failures[0] ?? input.ops.warnings[0] ?? "operation needs attention";
-    return ["# now", "", "Operation needs attention.", oneLine(issue), "", "Next:", `- Telegram: ${code("/problems")}`].join("\n");
+    return ["# now", "", "운영 상태 확인이 필요합니다.", oneLine(issue), "", "다음 액션:", `- 텔레그램: ${code("/problems")}`].join("\n");
   }
 
   const pendingTask = input.tasks.find((task) => task.status === "pending");
@@ -342,18 +713,18 @@ export function nowReport(input: {
     return [
       "# now",
       "",
-      "Pending task is ready to prepare.",
-      `Task: ${code(pendingTask.id)} - ${oneLine(pendingTask.title)}`,
+      "실행 준비 가능한 pending task가 있습니다.",
+      `태스크: ${code(pendingTask.id)} - ${oneLine(pendingTask.title)}`,
       "",
-      "Next:",
-      `- Telegram: ${code("/go")}`,
+      "다음 액션:",
+      `- 텔레그램: ${code("/go")}`,
     ].join("\n");
   }
 
   const draft = input.drafts
     ?.slice()
     .reverse()
-    .find((item) => item.status === "drafted");
+    .find((item) => item.status === "drafted" && timestamp(item.updatedAt ?? item.createdAt) >= primaryWorkflowTimestamp);
   if (draft) {
     const missing = [
       draft.targetFiles.length === 0 ? "targetFiles" : "",
@@ -362,10 +733,10 @@ export function nowReport(input: {
     return [
       "# now",
       "",
-      "Draft is waiting for preparation.",
-      `Draft: ${code(draft.id)}`,
-      `Title: ${oneLine(draft.title)}`,
-      missing.length ? `Missing: ${missing.join(", ")}` : "Ready for approval.",
+      "드래프트가 계획 확인을 기다리고 있습니다.",
+      `드래프트: ${code(draft.id)}`,
+      `제목: ${oneLine(draft.title)}`,
+      missing.length ? `부족한 항목: ${missing.join(", ")}` : "승인 가능한 상태입니다.",
       ...draftNextLines(draft),
     ].join("\n");
   }
@@ -373,35 +744,42 @@ export function nowReport(input: {
   const proposal = input.proposals
     ?.slice()
     .reverse()
-    .find((item) => item.status === "pending_review");
+    .find((item) => item.status === "pending_review" && timestamp(item.reviewedAt ?? item.createdAt) >= primaryWorkflowTimestamp);
   if (proposal) {
     return [
       "# now",
       "",
-      "Proposal is waiting for review.",
-      `Proposal: ${code(proposal.id)}`,
-      `Text: ${oneLine(proposal.text)}`,
+      "검토 대기 중인 제안이 있습니다.",
+      `제안: ${code(proposal.id)}`,
+      `내용: ${oneLine(proposal.text)}`,
       ...proposalNextLines(proposal),
     ].join("\n");
   }
 
   const latest = input.runs.at(-1);
-  if (latest && !latest.pass) {
+  if (latest?.pass && latest.commit) {
+    return nowLinesForPassedRun(
+      latest,
+      input.lifecycles?.find((record) => record.runId === latest.runId),
+    ).join("\n");
+  }
+
+  if (latest && !latest.pass && timestamp(latest.finishedAt) >= primaryWorkflowTimestamp) {
     return [
       "# now",
       "",
-      "Latest run did not pass.",
-      `Run: ${code(latest.runId)}`,
-      latest.failureReason ? `Failure: ${oneLine(latest.failureReason)}` : "",
+      "가장 최근 run이 통과하지 못했습니다.",
+      `런: ${code(latest.runId)}`,
+      latest.failureReason ? `실패 이유: ${oneLine(latest.failureReason)}` : "",
       "",
-      "Next:",
-      `- Telegram: ${code("/run_latest")}`,
+      "다음 액션:",
+      `- 텔레그램: ${code("/run_latest")}`,
     ]
       .filter(Boolean)
       .join("\n");
   }
 
-  return ["# now", "", "No immediate remote action.", "", "Next:", `- Telegram: ${code("/check")}`].join("\n");
+  return ["# now", "", "지금 바로 필요한 원격 액션은 없습니다.", "", "다음 액션:", `- 텔레그램: ${code("/check")}`].join("\n");
 }
 
 export function failuresReport(runs: RunSummary[], limit = 10): string {
@@ -511,17 +889,267 @@ export function proposalReviewedReport(action: "accept" | "reject", proposal: Pr
     .join("\n");
 }
 
+export function orchestrationRequestAddedReport(request: OrchestrationRequestRecord): string {
+  return [
+    "# work",
+    "",
+    `저장된 요청: ${code(request.id)}`,
+    `상태: ${code(request.status)}`,
+    "",
+    "요청:",
+    oneLine(request.text),
+    "",
+    "아직 task draft나 worker action은 만들지 않았습니다.",
+    "다음 단계에서 Samantha Orchestrator Agent가 계획을 작성합니다.",
+    ...orchestrationRequestNextLines(request),
+  ].join("\n");
+}
+
+export function orchestratorRecoveryRequestReport(input: {
+  request: OrchestrationRequestRecord;
+  sourcePlan: OrchestratorPlanRecord;
+  failedActions: RemoteActionRecord[];
+}): string {
+  return [
+    "# recover",
+    "",
+    "실패한 계획 결과를 바탕으로 복구 계획 요청을 만들었습니다.",
+    `원 계획: ${code(input.sourcePlan.id)}`,
+    `새 요청: ${code(input.request.id)}`,
+    "",
+    "실패 action:",
+    ...(input.failedActions.length
+      ? input.failedActions.map((action) => `- ${code(action.id)} task=${code(action.taskId)} reason=${oneLine(action.result?.failure ?? action.result?.outcome ?? action.status)}`)
+      : ["- action 실패는 없지만 plan 종합 결과가 복구 필요 상태입니다."]),
+    "",
+    "아직 task/action은 만들지 않았습니다.",
+    "오케스트레이터가 실패 원인을 보고 복구 계획을 다시 작성해야 합니다.",
+    ...orchestrationRequestNextLines(input.request),
+  ].join("\n");
+}
+
+export function orchestratorRevisionRequestReport(input: {
+  request: OrchestrationRequestRecord;
+  supersededPlan: OrchestratorPlanRecord;
+}): string {
+  return [
+    "# revise",
+    "",
+    "현재 계획을 폐기하고 수정 요청을 만들었습니다.",
+    `폐기한 계획: ${code(input.supersededPlan.id)}`,
+    `새 요청: ${code(input.request.id)}`,
+    "",
+    "아직 task/action은 만들지 않았습니다.",
+    "오케스트레이터가 이전 계획과 피드백을 함께 보고 새 계획을 작성합니다.",
+    ...orchestrationRequestNextLines(input.request),
+  ].join("\n");
+}
+
+export function orchestratorCancelReport(input: {
+  plan?: OrchestratorPlanRecord;
+  request?: OrchestrationRequestRecord;
+}): string {
+  return [
+    "# cancel",
+    "",
+    input.plan ? "승인 전 계획을 취소했습니다." : "계획 대기 요청을 취소했습니다.",
+    input.plan ? `계획: ${code(input.plan.id)}` : "",
+    input.request ? `요청: ${code(input.request.id)}` : "",
+    input.plan?.cancelReason ? `사유: ${oneLine(input.plan.cancelReason)}` : "",
+    "",
+    "task/action은 만들지 않았고 worker도 실행하지 않았습니다.",
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code("/now")}`,
+  ].join("\n");
+}
+
+export function orchestratorPlanReport(input: {
+  request: OrchestrationRequestRecord;
+  plan: OrchestratorPlanRecord;
+}): string {
+  const { request, plan } = input;
+  if (plan.status === "failed") {
+    return [
+      "# plan",
+      "",
+      "오케스트레이터 계획 생성에 실패했습니다.",
+      `요청: ${code(request.id)}`,
+      `계획: ${code(plan.id)}`,
+      plan.failure ? `실패 이유: ${oneLine(plan.failure)}` : "",
+      plan.command ? `exit: ${code(String(plan.command.exitCode))}` : "",
+      "",
+      "다음 액션:",
+      `- 요청을 보강해 다시 제출: ${code("/work <요청>")}`,
+      `- 상태 확인: ${code("/now")}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  const payload = plan.payload;
+  return [
+    "# plan",
+    "",
+    `요청: ${code(request.id)}`,
+    `계획: ${code(plan.id)}`,
+    `상태: ${code(plan.status)}`,
+    "",
+    payload?.userMessage ? clipText(payload.userMessage, 1400) : "오케스트레이터가 표시할 메시지를 반환하지 않았습니다.",
+    "",
+    payload?.summary ? `요약: ${oneLine(payload.summary)}` : "",
+    payload?.questions.length ? "" : "",
+    ...(payload?.questions.length ? ["확인 질문:", ...payload.questions.map((question) => `- ${question}`)] : []),
+    payload?.scope.length ? "" : "",
+    ...(payload?.scope.length ? ["범위:", ...payload.scope.map((item) => `- ${item}`)] : []),
+    payload?.tasks.length ? "" : "",
+    ...(payload?.tasks.length
+      ? [
+          "작업 후보:",
+          ...payload.tasks.map((task) =>
+            `- ${code(task.id)} ${oneLine(task.title)} agent=${code(task.targetAgent)} mode=${code(task.resultMode ?? "write")}`,
+          ),
+        ]
+      : []),
+    payload?.risks.length ? "" : "",
+    ...(payload?.risks.length ? ["리스크:", ...payload.risks.map((risk) => `- ${risk}`)] : []),
+    "",
+    "안전장치:",
+    "- `/go` 전까지 task/action은 만들지 않습니다.",
+    "- merge/push/cleanup은 worker 실행 이후에도 별도 gate가 필요합니다.",
+    ...orchestratorPlanNextLines(plan),
+  ]
+    .filter((line) => line !== undefined)
+    .join("\n");
+}
+
+export function orchestratorGoBlockedReport(input: { plan: OrchestratorPlanRecord; violations?: string[] }): string {
+  const { plan } = input;
+  const violations = input.violations ?? [];
+  return [
+    "# go",
+    "",
+    "오케스트레이터 계획을 실행 큐에 등록하지 못했습니다.",
+    `계획: ${code(plan.id)}`,
+    `요청: ${code(plan.requestId)}`,
+    `상태: ${code(plan.status)}`,
+    plan.payload ? `작업 후보: ${plan.payload.tasks.length}` : "",
+    "",
+    "차단 사유:",
+    ...(violations.length ? violations.map((violation) => `- ${violation}`) : ["- 계획에 확인 질문이 남아 있거나 실행 가능한 상태가 아닙니다."]),
+    "",
+    "task/action은 만들지 않았습니다.",
+    "",
+    "다음 액션:",
+    plan.status === "questions" ? `- 답변/수정 요청: ${code("/revise <피드백>")}` : `- 계획 보강 후 재요청: ${code("/work <요청>")}`,
+    `- 상태 확인: ${code("/now")}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function orchestratorGoMaterializedReport(input: {
+  plan: OrchestratorPlanRecord;
+  tasks: TaskSpec[];
+  actions: RemoteActionRecord[];
+}): string {
+  return [
+    "# go",
+    "",
+    "오케스트레이터 계획을 승인했고 worker 실행 큐에 등록했습니다.",
+    `계획: ${code(input.plan.id)}`,
+    `상태: ${code(input.plan.status)}`,
+    "",
+    "생성된 task:",
+    ...input.tasks.map((task) => `- ${code(task.id)} ${oneLine(task.title)} agent=${code(task.targetAgent)}`),
+    "",
+    "생성된 action:",
+    ...input.actions.map((action) => `- ${code(action.id)} task=${code(action.taskId)} status=${code(action.status)}`),
+    "",
+    "runner가 `actions:watch`에서 승인된 action을 실행합니다.",
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code("/action_current")}`,
+  ].join("\n");
+}
+
+export function orchestratorPlanResultReport(input: {
+  plan: OrchestratorPlanRecord;
+  actions: RemoteActionRecord[];
+  runLogs: WorkerRunLog[];
+  synthesis?: OrchestratorSynthesisPayload;
+  synthesisFailure?: string;
+}): string {
+  const failed = input.actions.filter((action) => action.status !== "completed" || action.result?.pass === false);
+  const passed = failed.length === 0;
+  const runLogForAction = (action: RemoteActionRecord) =>
+    input.runLogs.find((log) => log.runId === action.result?.runId || log.task.id === action.taskId);
+  const mergeCommands = input.actions
+    .map((action) => {
+      const runLog = runLogForAction(action);
+      if (!runLog?.result.pass || !runLog.result.commit?.commitHash || !action.result?.runLogPath) return "";
+      return code(`bun run samantha merge:check --run-log=${action.result.runLogPath} --repo-root=${runLog.input.repoRoot}`);
+    })
+    .filter(Boolean);
+  const changedFiles = Array.from(
+    new Set(input.runLogs.flatMap((runLog) => runLog.result.evaluation?.changedFiles ?? runLog.result.commit?.files ?? [])),
+  );
+  const nextActionLines = passed
+    ? [
+        mergeCommands.length
+          ? `- 통합 gate 확인: ${code("/now")}`
+          : `- 상태 확인: ${code("/check")}`,
+        ...(input.synthesis?.nextActions.length ? input.synthesis.nextActions.map((action) => `- 참고: ${action}`) : []),
+      ]
+    : [
+        `- 복구 계획 생성: ${code("/recover")}`,
+        ...(input.synthesis?.nextActions.length ? input.synthesis.nextActions.map((action) => `- 참고: ${action}`) : []),
+        `- 상태 재확인: ${code("/now")}`,
+      ];
+
+  return [
+    "# plan-result",
+    "",
+    `계획 결과: ${passed ? "통과" : "확인 필요"}`,
+    `계획: ${code(input.plan.id)}`,
+    `요청: ${code(input.plan.requestId)}`,
+    `완료 action: ${input.actions.length - failed.length}/${input.actions.length}`,
+    input.synthesis ? `종합 결과: ${code(input.synthesis.outcome)}` : "",
+    "",
+    input.synthesis ? "오케스트레이터 종합:" : "",
+    input.synthesis ? clipText(input.synthesis.userMessage, 1400) : "",
+    input.synthesisFailure ? `오케스트레이터 종합 실패: ${oneLine(input.synthesisFailure)}` : "",
+    input.synthesis || input.synthesisFailure ? "" : "",
+    "Worker 결과:",
+    ...input.actions.flatMap((action) => {
+      const runLog = runLogForAction(action);
+      return [
+        `- ${code(action.taskId)} status=${code(action.status)} outcome=${code(action.result?.outcome ?? "unknown")} pass=${action.result?.pass === true ? "yes" : "no"}`,
+        runLog ? `  보고: ${oneLine(workerFinalMessage(runLog))}` : "",
+        action.result?.failure ? `  실패 이유: ${oneLine(action.result.failure)}` : "",
+      ].filter(Boolean);
+    }),
+    "",
+    "변경 파일:",
+    ...(changedFiles.length ? changedFiles.map((file) => `- ${code(file)}`) : ["- 없음"]),
+    "",
+    "다음 액션:",
+    ...nextActionLines,
+    ...(mergeCommands.length ? ["", "로컬 merge 후보:", ...mergeCommands] : []),
+  ].join("\n");
+}
+
 export function taskDraftAddedReport(draft: TaskDraftRecord): string {
   return [
     "# drafts:add",
     "",
-    `Saved draft: ${code(draft.id)}`,
-    `Source proposal: ${code(draft.sourceProposalId)}`,
-    `Status: ${code(draft.status)}`,
+    `저장된 드래프트: ${code(draft.id)}`,
+    `원본 제안: ${code(draft.sourceProposalId)}`,
+    `상태: ${code(draft.status)}`,
     "",
-    `Title: ${oneLine(draft.title)}`,
+    `제목: ${oneLine(draft.title)}`,
     "",
-    "No worker was dispatched. Run `/plan` to prepare scope and verification before approval.",
+    "아직 worker는 실행하지 않았습니다. 승인 전 `/plan`으로 범위와 검증 계획을 확인하세요.",
     ...draftNextLines(draft),
   ].join("\n");
 }
@@ -538,55 +1166,53 @@ export function taskDraftPlanReport(input: {
   const lines = [
     "# plan",
     "",
-    `Draft: ${code(input.draft.id)}`,
-    `Project: ${code(input.project.id)}${input.inferredProject ? " (inferred)" : ""}`,
-    `Scope: ${scope ? `${code(scope.id)} - ${oneLine(scope.label)}` : "project defaults"}`,
-    scope ? `Risk: ${scope.risk}${input.inferredScope ? " (inferred)" : ""}` : "Risk: unknown",
-    `Result mode: ${code(input.draft.resultMode ?? "write")}`,
-    `Ready: ${input.violations.length === 0 ? "yes" : "no"}`,
+    `요청: ${oneLine(input.draft.instructions)}`,
+    `드래프트: ${code(input.draft.id)}`,
+    `프로젝트: ${code(input.project.id)}${input.inferredProject ? " (자동 선택)" : ""}`,
+    `분류: ${resultModeLabel(input.draft.resultMode)}${scope ? ` (${code(scope.id)} - ${oneLine(scope.label)})` : " (프로젝트 기본값)"}`,
+    scope ? `위험도: ${scope.risk}${input.inferredScope ? " (자동 선택)" : ""}` : "위험도: unknown",
+    `실행 모드: ${code(input.draft.resultMode ?? "write")}`,
+    `준비 상태: ${input.violations.length === 0 ? "가능" : "불가"}`,
     "",
-    "Request:",
-    oneLine(input.draft.instructions),
-    "",
-    "Assumptions:",
-    `- Work happens in repo ${code(input.project.repoRoot)}.`,
+    "판단 근거:",
+    `- 작업 repo는 ${code(input.project.repoRoot)}입니다.`,
     scope
-      ? `- Scope recipe ${code(scope.id)} is the intended operating boundary for this request.`
-      : "- No remote scope recipe exists, so only project-level defaults were applied.",
-    "- `/plan` does not dispatch a worker or approve execution.",
+      ? `- 요청 내용을 기준으로 ${code(scope.id)} 범위를 선택했습니다.`
+      : "- remote scope recipe가 없어 project 기본값만 적용했습니다.",
+    "- `/plan`은 worker 실행이나 승인까지 진행하지 않습니다.",
     "",
-    "Will Change:",
+    "변경 허용 범위:",
     ...input.draft.targetFiles.map((file) => `- ${code(file)}`),
     "",
-    "Will Not Change:",
+    "변경 금지 범위:",
     ...input.draft.forbiddenChanges.map((file) => `- ${code(file)}`),
     "",
-    "Execution Plan:",
+    "작업 계획:",
     ...(scope?.planSteps ?? [
-      "Read the relevant files before editing.",
-      "Implement the requested change inside the declared target scope.",
-      "Run the configured verification command.",
-      "Report changed files and residual risk.",
+      "관련 파일을 먼저 읽습니다.",
+      "선언된 범위 안에서 요청을 처리합니다.",
+      "설정된 검증 명령을 실행합니다.",
+      "변경 파일과 남은 리스크를 보고합니다.",
     ]).map((step, index) => `${index + 1}. ${step}`),
     "",
-    "Verify:",
+    "검증:",
     ...input.draft.verifyCommands.map((command) => `- ${code(command)}`),
     "",
-    "Success Criteria:",
+    "성공 기준:",
     ...(scope?.successCriteria ?? [
-      "The requested change is complete.",
-      "No forbidden files are changed.",
-      "Verification passes or the blocker is reported clearly.",
+      "요청한 작업이 완료됩니다.",
+      "금지된 파일은 변경하지 않습니다.",
+      "검증이 통과하거나 blocker가 명확히 보고됩니다.",
     ]).map((criterion) => `- ${criterion}`),
   ];
   if (input.violations.length) {
-    lines.push("", "Blocking Issues:", ...input.violations.map((violation) => `- ${violation}`));
+    lines.push("", "차단 이슈:", ...input.violations.map((violation) => `- ${violation}`));
   }
   lines.push(
     "",
-    "Next:",
-    input.violations.length === 0 ? `- Telegram: ${code("/go")}` : `- Telegram: ${code("/plan <project_id> <scope_id>")}`,
-    `- Advanced inspect: ${code("/draft_next")}`,
+    "다음 액션:",
+    input.violations.length === 0 ? `- 실행 승인: ${code("/go")}` : `- 분류/범위 재지정: ${code("/plan <project_id> <scope_id>")}`,
+    `- 상세 확인: ${code("/draft_next")}`,
   );
   return lines.join("\n");
 }
@@ -599,12 +1225,12 @@ export function taskDraftPreparedReport(input: {
   return [
     "# drafts:prepare-latest",
     "",
-    `Prepared draft: ${code(input.draft.id)}`,
-    `Project: ${code(input.projectId)}`,
-    `Ready: ${input.violations.length === 0 ? "yes" : "no"}`,
-    input.violations.length ? `Missing: ${input.violations.join(", ")}` : "",
+    `준비된 드래프트: ${code(input.draft.id)}`,
+    `프로젝트: ${code(input.projectId)}`,
+    `준비 상태: ${input.violations.length === 0 ? "가능" : "불가"}`,
+    input.violations.length ? `부족한 항목: ${input.violations.join(", ")}` : "",
     "",
-    "No worker was dispatched. No task was created yet.",
+    "아직 worker는 실행하지 않았고 task도 만들지 않았습니다.",
     ...draftNextLines(input.draft),
   ]
     .filter(Boolean)
@@ -619,11 +1245,11 @@ export function taskDraftPrepareBlockedReport(input: {
   return [
     "# drafts:prepare-latest",
     "",
-    "Draft was not prepared.",
-    `Draft: ${code(input.draft.id)}`,
-    `Project: ${code(input.projectId)}`,
+    "드래프트를 준비하지 못했습니다.",
+    `드래프트: ${code(input.draft.id)}`,
+    `프로젝트: ${code(input.projectId)}`,
     "",
-    "Violations:",
+    "위반 사항:",
     ...input.violations.map((violation) => `- ${violation}`),
     ...draftNextLines(input.draft),
   ].join("\n");
@@ -636,10 +1262,10 @@ export function taskDraftApprovalBlockedReport(input: {
   return [
     "# drafts:approve-latest",
     "",
-    "Draft was not approved.",
-    `Draft: ${code(input.draft.id)}`,
+    "드래프트를 승인하지 못했습니다.",
+    `드래프트: ${code(input.draft.id)}`,
     "",
-    "Violations:",
+    "위반 사항:",
     ...input.violations.map((violation) => `- ${violation}`),
     ...draftNextLines(input.draft),
   ].join("\n");
@@ -649,14 +1275,14 @@ export function taskDraftApprovedReport(input: { draft: TaskDraftRecord; task: T
   return [
     "# drafts:approve-latest",
     "",
-    `Approved draft: ${code(input.draft.id)}`,
-    `Created task: ${code(input.task.id)}`,
-    `Title: ${oneLine(input.task.title)}`,
+    `승인된 드래프트: ${code(input.draft.id)}`,
+    `생성된 task: ${code(input.task.id)}`,
+    `제목: ${oneLine(input.task.title)}`,
     "",
-    "No worker was dispatched yet.",
+    "아직 worker는 실행하지 않았습니다.",
     "",
-    "Next:",
-    `- Telegram: ${code("/go")}`,
+    "다음 액션:",
+    `- 텔레그램: ${code("/go")}`,
   ].join("\n");
 }
 
@@ -664,17 +1290,17 @@ export function draftProposeAddedReport(input: { proposal: ProposalRecord; draft
   return [
     "# drafts:add-from-proposal-text",
     "",
-    `Saved proposal: ${code(input.proposal.id)}`,
-    `Proposal status: ${code(input.proposal.status)}`,
-    `Saved draft: ${code(input.draft.id)}`,
-    `Draft status: ${code(input.draft.status)}`,
+    `저장된 제안: ${code(input.proposal.id)}`,
+    `제안 상태: ${code(input.proposal.status)}`,
+    `저장된 드래프트: ${code(input.draft.id)}`,
+    `드래프트 상태: ${code(input.draft.status)}`,
     "",
-    `Title: ${oneLine(input.draft.title)}`,
+    `제목: ${oneLine(input.draft.title)}`,
     "",
-    "No worker was dispatched. This only creates an accepted proposal and a task draft.",
+    "아직 worker는 실행하지 않았습니다. 제안과 드래프트만 저장했습니다.",
     "",
-    "Next:",
-    `- Telegram: ${code("/plan")}`,
+    "다음 액션:",
+    `- 텔레그램: ${code("/plan")}`,
   ].join("\n");
 }
 
@@ -685,24 +1311,24 @@ export function taskDraftsListReport(drafts: TaskDraftRecord[], limit = 10): str
 
 export function taskDraftShowReport(draftId: string, draft: TaskDraftRecord | undefined): string {
   if (!draft) {
-    return ["# drafts:show", "", `Draft not found: ${code(draftId)}`].join("\n");
+    return ["# drafts:show", "", `드래프트를 찾지 못했습니다: ${code(draftId)}`].join("\n");
   }
 
   return [
     "# drafts:show",
     "",
-    `Draft: ${code(draft.id)}`,
-    `Source proposal: ${code(draft.sourceProposalId)}`,
-    `Status: ${code(draft.status)}`,
-    `Created: ${code(draft.createdAt)}`,
-    `Title: ${oneLine(draft.title)}`,
+    `드래프트: ${code(draft.id)}`,
+    `원본 제안: ${code(draft.sourceProposalId)}`,
+    `상태: ${code(draft.status)}`,
+    `생성: ${code(draft.createdAt)}`,
+    `제목: ${oneLine(draft.title)}`,
     `Agent: ${code(draft.targetAgent)}`,
-    draft.resultMode ? `Result mode: ${code(draft.resultMode)}` : "",
-    `Target files: ${draft.targetFiles.map(code).join(", ") || "none"}`,
-    `Setup commands: ${(draft.setupCommands ?? []).map(code).join(", ") || "none"}`,
-    `Verify commands: ${draft.verifyCommands.map(code).join(", ") || "none"}`,
+    draft.resultMode ? `실행 모드: ${code(draft.resultMode)}` : "",
+    `변경 허용 범위: ${draft.targetFiles.map(code).join(", ") || "none"}`,
+    `Setup 명령: ${(draft.setupCommands ?? []).map(code).join(", ") || "none"}`,
+    `검증 명령: ${draft.verifyCommands.map(code).join(", ") || "none"}`,
     "",
-    "Instructions:",
+    "요청 내용:",
     draft.instructions.trim(),
     ...draftNextLines(draft),
   ].join("\n");
@@ -712,20 +1338,20 @@ export function remoteActionPreparedReport(action: RemoteActionRecord): string {
   return [
     "# actions:prepare-dispatch",
     "",
-    `Action: ${code(action.id)}`,
-    `Status: ${code(action.status)}`,
-    `Task: ${code(action.taskId)} - ${oneLine(action.taskTitle)}`,
+    `액션: ${code(action.id)}`,
+    `상태: ${code(action.status)}`,
+    `태스크: ${code(action.taskId)} - ${oneLine(action.taskTitle)}`,
     `Agent: ${code(action.targetAgent)}`,
     `Repo: ${code(action.repoRoot)}`,
     "",
-    "Planned command:",
+    "실행 예정 명령:",
     code(remoteActionCommand(action)),
     "",
-    "No worker was dispatched yet.",
+    "아직 worker는 실행하지 않았습니다.",
     "",
-    "Next:",
-    `- Telegram: ${code("/go")}`,
-    `- Explicit approval: ${code(`/approve_action ${action.id}`)}`,
+    "다음 액션:",
+    `- 텔레그램: ${code("/go")}`,
+    `- 명시 승인: ${code(`/approve_action ${action.id}`)}`,
   ].join("\n");
 }
 
@@ -737,17 +1363,52 @@ export function remoteGoReport(input: {
   return [
     "# go",
     "",
-    input.draft ? `Approved draft: ${code(input.draft.id)}` : "",
-    input.task ? `Task: ${code(input.task.id)} - ${oneLine(input.task.title)}` : `Task: ${code(input.action.taskId)} - ${oneLine(input.action.taskTitle)}`,
-    `Action: ${code(input.action.id)}`,
-    `Status: ${code(input.action.status)}`,
+    input.draft ? `승인된 드래프트: ${code(input.draft.id)}` : "",
+    input.task ? `태스크: ${code(input.task.id)} - ${oneLine(input.task.title)}` : `태스크: ${code(input.action.taskId)} - ${oneLine(input.action.taskTitle)}`,
+    `액션: ${code(input.action.id)}`,
+    `상태: ${code(input.action.status)}`,
     `Repo: ${code(input.action.repoRoot)}`,
     "",
-    "Approved execution.",
-    "Runner: waiting for `actions:watch` or `actions:run-pending`.",
+    "실행을 승인했습니다.",
+    "runner가 `actions:watch` 또는 `actions:run-pending`에서 실행을 이어갑니다.",
     "",
-    "Next:",
-    `- Telegram: ${code("/action_current")}`,
+    "다음 액션:",
+    `- 텔레그램: ${code("/action_current")}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function remoteIntegrationReport(input: {
+  stage: "merge" | "push" | "cleanup";
+  run: RunSummary;
+  ok: boolean;
+  details: string[];
+  lifecycle?: RunLifecycleRecord;
+}): string {
+  const stageLabel =
+    input.stage === "merge" ? "merge 적용" : input.stage === "push" ? "push" : "worktree cleanup";
+  const next =
+    input.ok && input.stage !== "cleanup"
+      ? `- 텔레그램: ${code("/now")}`
+      : input.ok
+        ? `- 텔레그램: ${code("/check")}`
+        : `- 텔레그램: ${code("/problems")}`;
+
+  return [
+    "# integration-result",
+    "",
+    `단계: ${stageLabel}`,
+    `결과: ${input.ok ? "통과" : "차단"}`,
+    `런: ${code(input.run.runId)}`,
+    `태스크: ${code(input.run.taskId)} - ${oneLine(input.run.taskTitle)}`,
+    input.lifecycle ? `lifecycle: ${lifecycleText(input.lifecycle)}` : "",
+    "",
+    "세부:",
+    ...(input.details.length ? input.details.map((line) => `- ${oneLine(line)}`) : ["- 없음"]),
+    "",
+    "다음 액션:",
+    next,
   ]
     .filter(Boolean)
     .join("\n");
@@ -760,28 +1421,32 @@ export function remoteActionsListReport(actions: RemoteActionRecord[], limit = 1
 
 export function remoteActionShowReport(actionId: string, action: RemoteActionRecord | undefined): string {
   if (!action) {
-    return ["# actions:show", "", `Action not found: ${code(actionId)}`].join("\n");
+    return ["# actions:show", "", `액션을 찾지 못했습니다: ${code(actionId)}`].join("\n");
   }
 
   return [
     "# actions:show",
     "",
-    `Action: ${code(action.id)}`,
-    `Kind: ${code(action.kind)}`,
-    `Status: ${code(action.status)}`,
-    `Task: ${code(action.taskId)} - ${oneLine(action.taskTitle)}`,
+    `액션: ${code(action.id)}`,
+    `종류: ${code(action.kind)}`,
+    `상태: ${code(action.status)}`,
+    `태스크: ${code(action.taskId)} - ${oneLine(action.taskTitle)}`,
     `Agent: ${code(action.targetAgent)}`,
     `Repo: ${code(action.repoRoot)}`,
-    `Created: ${code(action.createdAt)}`,
-    action.approvedAt ? `Approved: ${code(action.approvedAt)}` : "",
-    action.startedAt ? `Started: ${code(action.startedAt)}` : "",
-    action.completedAt ? `Completed: ${code(action.completedAt)}` : "",
+    `생성: ${code(action.createdAt)}`,
+    action.approvedAt ? `승인: ${code(action.approvedAt)}` : "",
+    action.startedAt ? `시작: ${code(action.startedAt)}` : "",
+    action.completedAt ? `완료: ${code(action.completedAt)}` : "",
     "",
-    "Command:",
+    "명령:",
     code(remoteActionCommand(action)),
-    action.result?.runId ? `Run: ${code(action.result.runId)}` : "",
-    action.result?.outcome ? `Outcome: ${code(action.result.outcome)}` : "",
-    action.result?.failure ? `Failure: ${oneLine(action.result.failure)}` : "",
+    action.result?.runId ? `런: ${code(action.result.runId)}` : "",
+    action.result?.pass !== undefined ? `통과: ${action.result.pass ? "yes" : "no"}` : "",
+    action.result?.outcome ? `결과: ${code(action.result.outcome)}` : "",
+    action.result?.runLogPath ? `Run log: ${code(action.result.runLogPath)}` : "",
+    action.result?.liveLogPath ? `Live log: ${code(action.result.liveLogPath)}` : "",
+    action.result?.tmuxSession ? `Tmux: ${code(action.result.tmuxSession)}` : "",
+    action.result?.failure ? `실패 이유: ${oneLine(action.result.failure)}` : "",
     ...remoteActionNextLines(action),
   ]
     .filter(Boolean)
@@ -793,18 +1458,62 @@ export function remoteActionApprovedReport(action: RemoteActionRecord): string {
   return [
     "# actions:approve",
     "",
-    `Action: ${code(action.id)}`,
-    `Status: ${code(action.status)}`,
-    `Task: ${code(action.taskId)}`,
-    result?.runId ? `Run: ${code(result.runId)}` : "",
-    result?.outcome ? `Outcome: ${code(result.outcome)}` : "",
-    result?.pass !== undefined ? `Pass: ${result.pass ? "yes" : "no"}` : "",
+    `액션: ${code(action.id)}`,
+    `상태: ${code(action.status)}`,
+    `태스크: ${code(action.taskId)}`,
+    result?.runId ? `런: ${code(result.runId)}` : "",
+    result?.outcome ? `결과: ${code(result.outcome)}` : "",
+    result?.pass !== undefined ? `통과: ${result.pass ? "yes" : "no"}` : "",
     result?.runLogPath ? `Run log: ${code(result.runLogPath)}` : "",
     result?.liveLogPath ? `Live log: ${code(result.liveLogPath)}` : "",
     result?.tmuxSession ? `Tmux: ${code(result.tmuxSession)}` : "",
-    result?.failure ? `Failure: ${oneLine(result.failure)}` : "",
-    action.status === "approved" ? "Runner: waiting for `actions:watch` or `actions:run-pending`." : "",
+    result?.failure ? `실패 이유: ${oneLine(result.failure)}` : "",
+    action.status === "approved" ? "runner가 `actions:watch` 또는 `actions:run-pending`에서 실행을 이어갑니다." : "",
     ...remoteActionNextLines(action),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function remoteActionResultReport(input: {
+  action: RemoteActionRecord;
+  runLog?: WorkerRunLog;
+  artifactPreviews?: RemoteActionArtifactPreview[];
+}): string {
+  const { action, runLog } = input;
+  const result = action.result;
+  const commit = runLog?.result.commit?.commitHash || runLog?.result.evaluation?.harness?.commit || "";
+  const pass = result?.pass ?? runLog?.result.pass;
+
+  return [
+    "# execution-result",
+    "",
+    `실행 결과: ${pass ? "통과" : "실패"}`,
+    `액션: ${code(action.id)}`,
+    `태스크: ${code(action.taskId)} - ${oneLine(action.taskTitle)}`,
+    runLog?.task.resultMode ? `모드: ${resultModeLabel(runLog.task.resultMode)}` : "",
+    result?.runId ? `런: ${code(result.runId)}` : "",
+    result?.outcome ? `결과: ${code(result.outcome)}` : "",
+    action.completedAt ? `완료: ${code(action.completedAt)}` : "",
+    result?.failure ? `실패 이유: ${oneLine(result.failure)}` : "",
+    "",
+    "산출 보고:",
+    workerFinalMessage(runLog),
+    "",
+    "변경 파일:",
+    ...changedFileLines(runLog),
+    ...artifactPreviewLines(runLog, input.artifactPreviews),
+    "",
+    `커밋: ${commit ? code(commit) : "없음"}`,
+    "",
+    "검증:",
+    ...verificationLines(runLog),
+    "",
+    "기록:",
+    result?.runLogPath ? `- Run log: ${code(result.runLogPath)}` : "- Run log: 없음",
+    result?.liveLogPath ? `- Live log: ${code(result.liveLogPath)}` : "- Live log: 없음",
+    result?.tmuxSession ? `- Tmux: ${code(result.tmuxSession)}` : "",
+    ...remoteActionResultNextLines(action, runLog),
   ]
     .filter(Boolean)
     .join("\n");
@@ -840,6 +1549,7 @@ export function statusReport(input: {
   const actionCounts = input.actions
     ? {
         pending: input.actions.filter((action) => action.status === "pending").length,
+        waiting: input.actions.filter((action) => action.status === "waiting").length,
         approved: input.actions.filter((action) => action.status === "approved").length,
         running: input.actions.filter((action) => action.status === "running").length,
         failed: input.actions.filter((action) => action.status === "failed").length,
@@ -852,24 +1562,24 @@ export function statusReport(input: {
   return [
     "# status",
     "",
-    `Operation: ${input.ops ? (input.ops.ok ? "ok" : "needs attention") : "unknown"}`,
-    input.ops ? `Doctor: failures=${input.ops.failures.length} warnings=${input.ops.warnings.length}` : "",
+    `운영 상태: ${input.ops ? (input.ops.ok ? "정상" : "확인 필요") : "unknown"}`,
+    input.ops ? `진단: failures=${input.ops.failures.length} warnings=${input.ops.warnings.length}` : "",
     "",
     "Daemon:",
     `- heartbeat: ${code(heartbeat)}`,
     "",
-    "Queues:",
+    "큐:",
     `- pending inbox: ${input.pendingInboxCount}`,
     input.ops ? `- remote outbox: ${input.ops.queues.remoteOutboxCount}` : "",
     input.ops ? `- unsent remote outbox: ${input.ops.queues.unsentRemoteOutboxCount}` : "",
     "",
-    "Remote:",
+    "원격:",
     input.ops?.queues.latestRemoteCommand
-      ? `- latest command: type=${code(input.ops.queues.latestRemoteCommand.type ?? "unknown")} id=${code(input.ops.queues.latestRemoteCommand.id ?? input.ops.queues.latestRemoteCommand.file)} received=${code(input.ops.queues.latestRemoteCommand.receivedAt ?? "unknown")}`
-      : "- latest command: none",
+      ? `- 최근 명령: type=${code(input.ops.queues.latestRemoteCommand.type ?? "unknown")} id=${code(input.ops.queues.latestRemoteCommand.id ?? input.ops.queues.latestRemoteCommand.file)} received=${code(input.ops.queues.latestRemoteCommand.receivedAt ?? "unknown")}`
+      : "- 최근 명령: 없음",
     input.ops?.queues.latestRemoteOutbox
-      ? `- latest report: ${code(input.ops.queues.latestRemoteOutbox.file)} updated=${code(input.ops.queues.latestRemoteOutbox.updatedAt)}`
-      : "- latest report: none",
+      ? `- 최근 리포트: ${code(input.ops.queues.latestRemoteOutbox.file)} updated=${code(input.ops.queues.latestRemoteOutbox.updatedAt)}`
+      : "- 최근 리포트: 없음",
     "",
     "Telegram:",
     input.ops
@@ -882,29 +1592,29 @@ export function statusReport(input: {
         ? `- replies: sent=${input.ops.telegram.replyState.sentFiles.length} failures=${input.ops.telegram.replyState.failures?.length ?? 0} updated=${code(input.ops.telegram.replyState.updatedAt)}`
         : "- replies: missing"
       : "",
-    input.ops ? `- latest reply failure: ${oneLine(latestReplyFailure(input.ops))}` : "",
+    input.ops ? `- 최근 reply 실패: ${oneLine(latestReplyFailure(input.ops))}` : "",
     "",
-    "Attention:",
-    input.ops?.failures.length ? `- first failure: ${oneLine(input.ops.failures[0] ?? "")}` : "- failures: none",
-    input.ops?.warnings.length ? `- first warning: ${oneLine(input.ops.warnings[0] ?? "")}` : "- warnings: none",
+    "확인 필요:",
+    input.ops?.failures.length ? `- 첫 failure: ${oneLine(input.ops.failures[0] ?? "")}` : "- failures: 없음",
+    input.ops?.warnings.length ? `- 첫 warning: ${oneLine(input.ops.warnings[0] ?? "")}` : "- warnings: 없음",
     "",
-    "Proposals:",
+    "제안:",
     proposalCounts
       ? `- pending_review: ${proposalCounts.pending} accepted: ${proposalCounts.accepted} rejected: ${proposalCounts.rejected}`
       : "- unknown",
     "",
-    "Drafts:",
+    "드래프트:",
     draftCounts ? `- drafted: ${draftCounts.drafted} approved: ${draftCounts.approved} discarded: ${draftCounts.discarded}` : "- unknown",
     "",
-    "Actions:",
+    "액션:",
     actionCounts
-      ? `- pending: ${actionCounts.pending} approved: ${actionCounts.approved} running: ${actionCounts.running} failed: ${actionCounts.failed}`
+      ? `- pending: ${actionCounts.pending} waiting: ${actionCounts.waiting} approved: ${actionCounts.approved} running: ${actionCounts.running} failed: ${actionCounts.failed}`
       : "- unknown",
     "",
     "Runs:",
     `- total: ${input.runs.length}`,
     `- non-passing: ${failureCount}`,
-    latest ? `- latest: ${oneLine(runLine(latest).slice(2))}` : "- latest: none",
+    latest ? `- latest: ${oneLine(runLine(latest).slice(2))}` : "- latest: 없음",
     latest ? `- lifecycle: ${lifecycleText(latestLifecycle)}` : "",
   ]
     .filter(Boolean)
@@ -915,15 +1625,15 @@ export function healthReport(health: DaemonHealthResult): string {
   const lines = [
     "# health:check",
     "",
-    `OK: ${health.ok ? "yes" : "no"}`,
+    `정상: ${health.ok ? "yes" : "no"}`,
     health.ageMs !== undefined ? `Heartbeat age: ${health.ageMs}ms` : "",
     health.heartbeat
       ? `Heartbeat: ${code(`${health.heartbeat.status} pid=${health.heartbeat.pid} updated=${health.heartbeat.updatedAt}`)}`
       : "Heartbeat: missing",
     health.lock ? `Lock: ${code(`pid=${health.lock.pid} started=${health.lock.startedAt}`)}` : "Lock: missing",
     "",
-    "Violations:",
-    ...(health.violations.length ? health.violations.map((violation) => `- ${oneLine(violation)}`) : ["- none"]),
+    "위반 사항:",
+    ...(health.violations.length ? health.violations.map((violation) => `- ${oneLine(violation)}`) : ["- 없음"]),
   ];
   return lines.filter((line) => line !== "").join("\n");
 }
@@ -935,15 +1645,15 @@ export function doctorReport(snapshot: OpsSnapshot): string {
   return [
     "# ops:doctor",
     "",
-    `Overall: ${snapshot.ok ? "ok" : "needs attention"}`,
-    `Checked at: ${code(snapshot.checkedAt)}`,
+    `전체 상태: ${snapshot.ok ? "정상" : "확인 필요"}`,
+    `확인 시각: ${code(snapshot.checkedAt)}`,
     "",
-    "Environment:",
-    `- .env file: ${snapshot.env.envFileExists ? "present" : "missing"} (${code(snapshot.env.envFilePath)})`,
-    `- TELEGRAM_BOT_TOKEN: ${snapshot.env.hasBotToken ? "present" : "missing"}`,
-    `- poll chat id: ${snapshot.env.hasPollChatId ? "present" : "missing"}`,
-    `- reply chat id: ${snapshot.env.hasReplyChatId ? "present" : "missing"}`,
-    `- codex executable: ${snapshot.env.hasCodexExecutable ? "available" : "missing"} (${code(snapshot.env.codexCommand ?? "codex")})`,
+    "환경:",
+    `- .env file: ${snapshot.env.envFileExists ? "있음" : "없음"} (${code(snapshot.env.envFilePath)})`,
+    `- TELEGRAM_BOT_TOKEN: ${snapshot.env.hasBotToken ? "있음" : "없음"}`,
+    `- poll chat id: ${snapshot.env.hasPollChatId ? "있음" : "없음"}`,
+    `- reply chat id: ${snapshot.env.hasReplyChatId ? "있음" : "없음"}`,
+    `- codex executable: ${snapshot.env.hasCodexExecutable ? "사용 가능" : "없음"} (${code(snapshot.env.codexCommand ?? "codex")})`,
     "",
     "Daemon:",
     `- health: ${snapshot.health.ok ? "ok" : "failed"}`,
@@ -952,17 +1662,17 @@ export function doctorReport(snapshot: OpsSnapshot): string {
       ? `- heartbeat: ${code(`${snapshot.health.heartbeat.status} pid=${snapshot.health.heartbeat.pid} updated=${snapshot.health.heartbeat.updatedAt}`)}`
       : "- heartbeat: missing",
     "",
-    "Queues:",
+    "큐:",
     `- pending inbox: ${snapshot.queues.pendingInboxCount}`,
     `- outbox reports: ${snapshot.queues.outboxCount}`,
     `- remote outbox reports: ${snapshot.queues.remoteOutboxCount}`,
     `- unsent remote outbox reports: ${snapshot.queues.unsentRemoteOutboxCount}`,
     snapshot.queues.latestRemoteCommand
-      ? `- latest remote command: type=${code(snapshot.queues.latestRemoteCommand.type ?? "unknown")} id=${code(snapshot.queues.latestRemoteCommand.id ?? snapshot.queues.latestRemoteCommand.file)} received=${code(snapshot.queues.latestRemoteCommand.receivedAt ?? "unknown")}`
-      : "- latest remote command: none",
+      ? `- 최근 원격 명령: type=${code(snapshot.queues.latestRemoteCommand.type ?? "unknown")} id=${code(snapshot.queues.latestRemoteCommand.id ?? snapshot.queues.latestRemoteCommand.file)} received=${code(snapshot.queues.latestRemoteCommand.receivedAt ?? "unknown")}`
+      : "- 최근 원격 명령: 없음",
     snapshot.queues.latestRemoteOutbox
-      ? `- latest remote report: ${code(snapshot.queues.latestRemoteOutbox.file)} updated=${code(snapshot.queues.latestRemoteOutbox.updatedAt)}`
-      : "- latest remote report: none",
+      ? `- 최근 원격 리포트: ${code(snapshot.queues.latestRemoteOutbox.file)} updated=${code(snapshot.queues.latestRemoteOutbox.updatedAt)}`
+      : "- 최근 원격 리포트: 없음",
     "",
     "Telegram state:",
     snapshot.telegram.offset?.nextOffset !== undefined
@@ -971,15 +1681,15 @@ export function doctorReport(snapshot: OpsSnapshot): string {
     snapshot.telegram.replyState
       ? `- replies: sent=${snapshot.telegram.replyState.sentFiles.length} failures=${snapshot.telegram.replyState.failures?.length ?? 0} updated=${code(snapshot.telegram.replyState.updatedAt)}`
       : "- replies: missing",
-    `- latest reply failure: ${oneLine(latestReplyFailure(snapshot))}`,
+    `- 최근 reply 실패: ${oneLine(latestReplyFailure(snapshot))}`,
     "",
     "systemd templates:",
     ...systemdLines,
     "",
     "Failures:",
-    ...(snapshot.failures.length ? snapshot.failures.map((failure) => `- ${oneLine(failure)}`) : ["- none"]),
+    ...(snapshot.failures.length ? snapshot.failures.map((failure) => `- ${oneLine(failure)}`) : ["- 없음"]),
     "",
     "Warnings:",
-    ...(snapshot.warnings.length ? snapshot.warnings.map((warning) => `- ${oneLine(warning)}`) : ["- none"]),
+    ...(snapshot.warnings.length ? snapshot.warnings.map((warning) => `- ${oneLine(warning)}`) : ["- 없음"]),
   ].join("\n");
 }

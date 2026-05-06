@@ -5,13 +5,17 @@
 ```text
 BK
   <-> Telegram / future web UI
-Samantha Orchestrator
+Samantha Orchestrator Agent
   - receives instructions
-  - creates tasks
-  - assigns agent profiles
-  - enforces safety policy
-  - dispatches Codex CLI agents
-  - verifies results
+  - discusses goals, scope, risk, and next actions with BK
+  - decomposes work into one or more task proposals
+  - chooses worker/reviewer/evaluator roles and dependency order
+  - produces an execution plan for BK approval
+Samantha Control Plane
+  - stores requests, plans, tasks, actions, and audit logs
+  - enforces safety policy before any dispatch
+  - allocates worktrees and dispatches approved Codex CLI agents
+  - evaluates worker outputs and verification commands
   - merges/pushes only after gates pass
 Codex Agents
   - codex-worker     writer
@@ -26,10 +30,17 @@ Git worktrees / audit logs / dashboard
 The first useful system is not a general multi-agent platform. It is a safe personal operations layer:
 
 1. BK sends one instruction to Samantha.
-2. Samantha creates one or more tasks.
-3. Samantha may run non-writer agents in parallel.
-4. Samantha runs at most one production writer until safety gates are proven.
-5. Samantha verifies, merges, pushes, and reports.
+2. The Orchestrator Agent turns the instruction into an explicit plan and asks BK for approval when needed.
+3. The Control Plane materializes an approved plan into one or more safe tasks.
+4. The Control Plane may run non-writer agents in parallel.
+5. The Control Plane runs at most one production writer until safety gates are proven.
+6. The Control Plane verifies, merges, pushes, and reports.
+
+## Current Gap
+
+The current implementation has a useful Control Plane, Orchestrator Agent planning, plan reread/revision/cancelation before approval, dependency-aware plan materialization, Orchestrator Agent completion synthesis, and a first recovery loop. Telegram `/work` stores an orchestration request, `/plan` runs `codex-orchestrator` through the local Codex CLI in read-only mode, `/plan_current` rereads the current unapproved plan without rerunning Codex, `/revise <feedback>` supersedes the current unapproved plan and creates a revised planning request, `/cancel` discards the current pending request or unapproved plan, `/go` validates the plan before creating task/action records, `actions:watch` promotes dependent actions only after prerequisites pass, and `actions:watch` reruns `codex-orchestrator` to write a `# plan-result` report once all actions for a materialized plan finish. If the reported plan result failed, `/recover` creates a new recovery orchestration request for the next `/plan` without retrying or dispatching by itself. The remaining gap is richer recovery automation after that recovery request is planned and executed.
+
+The existing Control Plane should remain responsible for safety and execution; it should not be discarded.
 
 ## Skill Policy
 

@@ -1,45 +1,48 @@
 {
   "schemaVersion": 1,
-  "id": "omht",
-  "repoRoot": "/home/lbk0523/projects/oh-my-health-trainer",
+  "id": "samantha",
+  "repoRoot": "/home/lbk0523/projects/samantha-codex",
   "keywords": [
-    "omht",
-    "ohmt",
-    "oh-my-health-trainer",
-    "oh my health trainer",
-    "오마헬"
+    "samantha",
+    "samantha-codex",
+    "사만다"
   ],
   "setupCommands": ["bun install"],
-  "verifyCommands": ["bun typecheck"],
+  "verifyCommands": ["bun run typecheck"],
   "forbiddenChanges": [
     ".env",
     ".env.*",
     "node_modules/**",
-    "bun.lock"
+    "bun.lock",
+    "state/**",
+    "runs/**",
+    "dashboard/**",
+    ".superpowers/**",
+    ".github/**"
   ],
   "defaultRemoteScopeId": "implementation",
   "remoteScopes": [
     {
       "id": "implementation",
-      "label": "제품 구현",
-      "description": "OMHT 앱 코드와 테스트 변경 작업.",
+      "label": "Samantha 구현",
+      "description": "Samantha 자동화 시스템 코드와 테스트 변경 작업.",
       "risk": "medium",
       "resultMode": "write",
       "targetFiles": [
-        "app/**",
-        "components/**",
-        "lib/**",
+        "src/**",
         "tests/**",
-        "e2e/**"
+        "references/**",
+        "docs/**",
+        "README.md"
       ],
       "keywords": [
         "implement",
         "fix",
         "bug",
         "test",
-        "ui",
-        "screen",
-        "api",
+        "telegram",
+        "dashboard",
+        "automation",
         "구현",
         "수정",
         "고쳐",
@@ -49,31 +52,33 @@
         "반영",
         "적용",
         "처리",
+        "텔레그램",
+        "대시보드",
+        "자동화",
         "작업 시작"
       ],
       "planSteps": [
-        "관련 제품 코드, 테스트, 기존 패턴을 먼저 읽습니다.",
+        "관련 Samantha 코드, 테스트, 기존 원격 운영 흐름을 먼저 읽습니다.",
         "요청을 만족하는 가장 작은 범위로 구현합니다.",
         "동작이 바뀌면 초점이 맞는 테스트를 추가하거나 수정합니다.",
         "설정된 검증 명령을 실행하고 변경 파일과 남은 리스크를 보고합니다."
       ],
       "successCriteria": [
-        "요청한 동작이 선언된 범위 안에서 구현됩니다.",
-        "금지된 파일은 변경하지 않습니다.",
+        "요청한 Samantha 동작이 선언된 범위 안에서 구현됩니다.",
+        "상태, 실행 로그, 환경 파일, 생성 대시보드 산출물은 변경하지 않습니다.",
         "검증이 통과하거나 blocker가 명확히 보고됩니다."
       ]
     },
     {
       "id": "planning_report",
-      "label": "계획/보고",
-      "description": "앱 코드 변경 없이 문서, 계획, 프롬프트, 보고를 수행합니다.",
+      "label": "Samantha 계획/보고",
+      "description": "Samantha 코드 변경 없이 계획, 조사, 보고를 수행합니다.",
       "risk": "low",
       "resultMode": "report",
       "targetFiles": [
-        "01 Design/**",
-        "02 Sprints/**",
-        "03 Prompts/**",
-        "04 Refer/**"
+        "docs/**",
+        "README.md",
+        "references/**"
       ],
       "keywords": [
         "plan",
@@ -92,14 +97,14 @@
         "정리"
       ],
       "planSteps": [
-        "관련 계획 문서와 참고 자료를 먼저 읽습니다.",
-        "요청한 계획/보고 산출물만 작성하거나 갱신합니다.",
+        "관련 Samantha 코드, 문서, 최근 상태 기록을 먼저 읽습니다.",
+        "요청한 계획/보고 산출물만 작성하거나 최종 응답으로 보고합니다.",
         "판단, 가정, 다음 액션을 명확히 남깁니다.",
         "repo tooling이 필요로 하면 설정된 검증 명령을 실행합니다."
       ],
       "successCriteria": [
         "요청한 계획/보고 산출물이 실행하기 쉽게 완성됩니다.",
-        "앱 코드와 금지된 파일은 변경하지 않습니다.",
+        "코드와 금지된 파일은 변경하지 않습니다.",
         "검증이 통과하거나 blocker가 명확히 보고됩니다."
       ]
     }

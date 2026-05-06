@@ -29,7 +29,7 @@ export function validateDispatch(
     if (agent.mergePolicy !== "samantha-controlled") {
       violations.push("writer agents must use Samantha-controlled merge");
     }
-    if (policy.requiredTargetFilesForWriters && task.targetFiles.length === 0) {
+    if (policy.requiredTargetFilesForWriters && task.resultMode !== "report" && task.targetFiles.length === 0) {
       violations.push("writer tasks must declare targetFiles");
     }
     if (policy.requiredForbiddenChanges && task.forbiddenChanges.length === 0) {

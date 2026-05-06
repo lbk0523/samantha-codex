@@ -63,7 +63,11 @@ describe("RemoteActionStore", () => {
     await store.append(action);
     await expect(store.append(action)).rejects.toThrow("already exists");
     const approved = await store.markApproved(action.id, "2026-05-05T10:01:00.000Z");
-    const running = await store.markRunning(action.id, "2026-05-05T10:01:30.000Z");
+    const running = await store.markRunning(action.id, "2026-05-05T10:01:30.000Z", {
+      runId: "run-1",
+      liveLogPath: "/runs/live/run-1.jsonl",
+      tmuxSession: "samantha",
+    });
     const completed = await store.markFinished(action.id, {
       status: "completed",
       completedAt: "2026-05-05T10:02:00.000Z",
@@ -72,12 +76,17 @@ describe("RemoteActionStore", () => {
 
     expect(approved).toMatchObject({ status: "approved", approvedAt: "2026-05-05T10:01:00.000Z" });
     expect(running).toMatchObject({ status: "running", startedAt: "2026-05-05T10:01:30.000Z" });
+    expect(running.result).toMatchObject({
+      runId: "run-1",
+      liveLogPath: "/runs/live/run-1.jsonl",
+      tmuxSession: "samantha",
+    });
     expect(completed).toMatchObject({
       id: action.id,
       taskId: action.taskId,
       repoRoot: action.repoRoot,
       status: "completed",
-      result: { runId: "run-1", pass: true },
+      result: { runId: "run-1", pass: true, liveLogPath: "/runs/live/run-1.jsonl", tmuxSession: "samantha" },
     });
     await expect(store.markApproved(action.id, "2026-05-05T10:03:00.000Z")).rejects.toThrow(
       "remote action must be pending",
