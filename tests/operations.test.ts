@@ -230,19 +230,24 @@ describe("inbox and remote commands", () => {
   });
 
   test("normalizes allowed remote commands into inbox commands", async () => {
-    const command = commandFromRemoteInput(
+    const deprecated = commandFromRemoteInput(
       { senderId: "bk", text: "/task fixture", receivedAt: "2026-05-03T10:00:00.000Z" },
       "bk",
     );
 
-    expect(command.type).toBe("tasks:show");
-    expect(command.args?.id).toBe("fixture");
+    expect(deprecated).toMatchObject({
+      type: "remote:deprecated",
+      args: { command: "/task", replacement: "/now" },
+    });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/help" }, "bk").type).toBe("remote:help");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/help_advanced" }, "bk")).toMatchObject({
-      type: "remote:help",
-      args: { mode: "advanced" },
+      type: "remote:deprecated",
+      args: { command: "/help_advanced", replacement: "/help" },
     });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/help advanced" }, "bk").type).toBe("remote:help");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/help advanced" }, "bk")).toMatchObject({
+      type: "remote:deprecated",
+      args: { command: "/help advanced", replacement: "/help" },
+    });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/now" }, "bk").type).toBe("ops:now");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/plan_current" }, "bk").type).toBe("orchestrator:show-current-plan");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/plan" }, "bk").type).toBe("orchestrator:plan-latest");
@@ -271,113 +276,6 @@ describe("inbox and remote commands", () => {
     });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/check" }, "bk").type).toBe("status:show");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/problems" }, "bk").type).toBe("ops:doctor");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/status" }, "bk").type).toBe("status:show");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/doctor" }, "bk").type).toBe("ops:doctor");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/health" }, "bk").type).toBe("health:check");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/run_latest" }, "bk").type).toBe("runs:show-latest");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/run run-1" }, "bk")).toMatchObject({
-      type: "runs:show",
-      args: { id: "run-1" },
-    });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/failures" }, "bk").type).toBe("runs:failures");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/proposals" }, "bk").type).toBe("proposals:list");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/proposal proposal-1" }, "bk")).toMatchObject({
-      type: "proposals:show",
-      args: { id: "proposal-1" },
-    });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/proposal_next" }, "bk").type).toBe("proposals:show-latest");
-    expect(
-      commandFromRemoteInput(
-        { senderId: "bk", text: "/accept proposal-1", receivedAt: "2026-05-03T10:05:00.000Z" },
-        "bk",
-      ),
-    ).toMatchObject({
-      type: "proposals:accept",
-      args: {
-        id: "proposal-1",
-        receivedAt: "2026-05-03T10:05:00.000Z",
-      },
-    });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/reject proposal-1" }, "bk")).toMatchObject({
-      type: "proposals:reject",
-      args: { id: "proposal-1" },
-    });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/drafts" }, "bk").type).toBe("drafts:list");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/draft_next" }, "bk").type).toBe("drafts:show-latest");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/draft_prepare omht src/app.ts tests/app.test.ts" }, "bk")).toMatchObject({
-      type: "drafts:prepare-latest",
-      args: {
-        projectId: "omht",
-        targetFiles: ["src/app.ts", "tests/app.test.ts"],
-      },
-    });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/draft-prepare omht" }, "bk")).toMatchObject({
-      type: "drafts:prepare-latest",
-      args: {
-        projectId: "omht",
-        targetFiles: [],
-      },
-    });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/draft_approve" }, "bk").type).toBe("drafts:approve-latest");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/draft-approve" }, "bk").type).toBe("drafts:approve-latest");
-    expect(
-      commandFromRemoteInput(
-        { senderId: "bk", text: "/draft_propose Improve task flow", receivedAt: "2026-05-03T10:06:00.000Z" },
-        "bk",
-      ),
-    ).toMatchObject({
-      type: "drafts:add-from-proposal-text",
-      args: {
-        proposalId: expect.stringMatching(/^proposal-20260503-100600-proposal-[0-9a-f]{8}$/),
-        text: "Improve task flow",
-        senderId: "bk",
-      },
-    });
-    expect(
-      commandFromRemoteInput(
-        { senderId: "bk", text: "/draft proposal-1", receivedAt: "2026-05-03T10:06:00.000Z" },
-        "bk",
-      ),
-    ).toMatchObject({
-      type: "drafts:add",
-      args: {
-        proposalId: "proposal-1",
-        receivedAt: "2026-05-03T10:06:00.000Z",
-      },
-    });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/draft draft-1" }, "bk")).toMatchObject({
-      type: "drafts:show",
-      args: { id: "draft-1" },
-    });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/next_action" }, "bk").type).toBe("ops:next-action");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/next-action" }, "bk").type).toBe("ops:next-action");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/actions" }, "bk").type).toBe("actions:list");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/run_next" }, "bk").type).toBe("actions:run-next");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/run-next" }, "bk").type).toBe("actions:run-next");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/yes" }, "bk").type).toBe("actions:approve-latest");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/action action-1" }, "bk")).toMatchObject({
-      type: "actions:show",
-      args: { id: "action-1" },
-    });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/action_current" }, "bk").type).toBe("actions:show-current");
-    expect(
-      commandFromRemoteInput(
-        { senderId: "bk", text: "/prepare_dispatch task-pass", receivedAt: "2026-05-03T10:07:00.000Z" },
-        "bk",
-      ),
-    ).toMatchObject({
-      type: "actions:prepare-dispatch",
-      args: {
-        taskId: "task-pass",
-        receivedAt: "2026-05-03T10:07:00.000Z",
-      },
-    });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/prepare-dispatch task-pass" }, "bk").type).toBe("actions:prepare-dispatch");
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/approve_action action-1" }, "bk")).toMatchObject({
-      type: "actions:approve",
-      args: { id: "action-1" },
-    });
-    expect(commandFromRemoteInput({ senderId: "bk", text: "/approve-action action-1" }, "bk").type).toBe("actions:approve");
     expect(
       commandFromRemoteInput(
         { senderId: "bk", text: "/work Improve task flow", receivedAt: "2026-05-03T10:06:00.000Z" },
@@ -391,30 +289,42 @@ describe("inbox and remote commands", () => {
         senderId: "bk",
       },
     });
-    expect(
-      commandFromRemoteInput(
-        { senderId: "bk", text: "/propose Improve status reports", receivedAt: "2026-05-03T10:00:00.000Z" },
-        "bk",
-      ),
-    ).toMatchObject({
-      type: "proposals:add",
-      args: {
-        id: expect.stringMatching(/^proposal-20260503-100000-proposal-[0-9a-f]{8}$/),
-        text: "Improve status reports",
-        senderId: "bk",
-      },
-    });
-    expect(
-      commandFromRemoteInput(
-        { senderId: "bk", text: "/propose One more request", receivedAt: "2026-05-03T10:00:00.000Z", remoteId: 99 },
-        "bk",
-      ),
-    ).toMatchObject({
-      id: expect.stringMatching(/^remote-20260503-100000-propose-[0-9a-f]{8}-propose$/),
-      args: {
-        id: expect.stringMatching(/^proposal-20260503-100000-proposal-[0-9a-f]{8}$/),
-      },
-    });
+
+    for (const [text, replacement] of [
+      ["/status", "/check"],
+      ["/doctor", "/problems"],
+      ["/health", "/problems"],
+      ["/dashboard", "/check"],
+      ["/run_latest", "/now"],
+      ["/run run-1", "/now"],
+      ["/failures", "/problems"],
+      ["/proposal_next", "/now"],
+      ["/accept proposal-1", "/go"],
+      ["/reject proposal-1", "/cancel"],
+      ["/draft_next", "/now"],
+      ["/draft-prepare omht", "/plan"],
+      ["/draft_approve", "/go"],
+      ["/draft-propose Improve task flow", "/work <요청>"],
+      ["/draft proposal-1", "/work <요청>"],
+      ["/next_action", "/now"],
+      ["/next-action", "/now"],
+      ["/actions", "/now"],
+      ["/run_next", "/go"],
+      ["/run-next", "/go"],
+      ["/yes", "/go"],
+      ["/action action-1", "/now"],
+      ["/action_current", "/now"],
+      ["/prepare_dispatch task-pass", "/go"],
+      ["/prepare-dispatch task-pass", "/go"],
+      ["/approve_action action-1", "/go"],
+      ["/approve-action action-1", "/go"],
+      ["/propose Improve status reports", "/work <요청>"],
+    ] as const) {
+      expect(commandFromRemoteInput({ senderId: "bk", text }, "bk")).toMatchObject({
+        type: "remote:deprecated",
+        args: { replacement },
+      });
+    }
     expect(() => commandFromRemoteInput({ senderId: "other", text: "/runs" }, "bk")).toThrow("not allowed");
 
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-"));
@@ -423,8 +333,8 @@ describe("inbox and remote commands", () => {
     await writeFile(inputPath, JSON.stringify({ senderId: "bk", text: "/runs" }), "utf8");
     const enqueued = await enqueueRemoteCommand({ inputPath, inboxDir: join(root, "inbox"), allowedSenderId: "bk" });
 
-    expect(enqueued.command.type).toBe("runs:list");
-    expect(await readFile(enqueued.path, "utf8")).toContain("runs:list");
+    expect(enqueued.command.type).toBe("remote:deprecated");
+    expect(await readFile(enqueued.path, "utf8")).toContain("remote:deprecated");
   });
 
   test("processes remote dispatch preparation into a pending action without executing", async () => {
@@ -493,7 +403,7 @@ describe("inbox and remote commands", () => {
     const report = await readFile(join(outbox, "001.md"), "utf8");
     const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
     expect(report).toContain("아직 worker는 실행하지 않았습니다.");
-    expect(report).toContain("/approve_action");
+    expect(report).not.toContain("/approve_action");
     expect(actions).toHaveLength(1);
     expect(actions[0]).toMatchObject({
       kind: "dispatch_task",
@@ -2458,7 +2368,7 @@ describe("inbox and remote commands", () => {
     expect(report).toContain("산출물 미리보기");
     expect(report).toContain("# 원격 보고서");
     expect(report).toContain("Telegram에서 읽을 수 있어야 하는 산출물입니다.");
-    expect(report).toContain("텔레그램: `/run_latest`");
+    expect(report).toContain("텔레그램: `/now`");
     const planReport = reports.find((item) => item.includes("# plan-result")) ?? "";
     expect(planReport).toContain("계획 결과: 통과");
     expect(planReport).toContain("오케스트레이터 종합:");

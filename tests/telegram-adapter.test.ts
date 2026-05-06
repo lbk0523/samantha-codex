@@ -31,7 +31,7 @@ describe("pollTelegramToInbox", () => {
               update_id: 10,
               message: {
                 date: 1770000000,
-                text: "/next_action",
+                text: "/now",
                 from: { id: 12345 },
                 chat: { id: 12345 },
               },
@@ -51,9 +51,9 @@ describe("pollTelegramToInbox", () => {
 
     expect(result.nextOffset).toBe(11);
     expect(result.enqueued).toHaveLength(1);
-    expect(result.enqueued[0]?.command.type).toBe("ops:next-action");
-    expect(result.enqueued[0]?.command.id).toMatch(/^remote-\d{8}-\d{6}-next_action-[0-9a-f]{8}-next-action$/);
-    expect(await readFile(result.enqueued[0]?.path ?? "", "utf8")).toContain("ops:next-action");
+    expect(result.enqueued[0]?.command.type).toBe("ops:now");
+    expect(result.enqueued[0]?.command.id).toMatch(/^remote-\d{8}-\d{6}-now-[0-9a-f]{8}-now$/);
+    expect(await readFile(result.enqueued[0]?.path ?? "", "utf8")).toContain("ops:now");
   });
 
   test("can authorize by Telegram chat id for legacy Samantha env compatibility", async () => {
@@ -66,7 +66,7 @@ describe("pollTelegramToInbox", () => {
           {
             update_id: 30,
             message: {
-              text: "/tasks",
+              text: "/check",
               from: { id: 12345 },
               chat: { id: 777 },
             },
@@ -82,7 +82,7 @@ describe("pollTelegramToInbox", () => {
       fetchImpl,
     });
 
-    expect(result.enqueued[0]?.command.type).toBe("tasks:list");
+    expect(result.enqueued[0]?.command.type).toBe("status:show");
   });
 
   test("ignores disallowed or unsupported Telegram updates", async () => {

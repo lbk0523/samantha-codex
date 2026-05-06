@@ -28,6 +28,7 @@ import {
   nowReport,
   nextActionReport,
   remoteHelpReport,
+  remoteDeprecatedCommandReport,
   remoteActionApprovedReport,
   remoteGoReport,
   remoteIntegrationReport,
@@ -1197,6 +1198,12 @@ async function advanceLatestPassedRunIntegration(args: ParsedArgs): Promise<stri
 async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Promise<string> {
   if (command.type === "remote:help") {
     return remoteHelpReport(command.args?.mode === "advanced" ? "advanced" : "basic");
+  }
+  if (command.type === "remote:deprecated") {
+    return remoteDeprecatedCommandReport({
+      command: String(command.args?.command ?? "unknown"),
+      replacement: String(command.args?.replacement ?? "/now"),
+    });
   }
   if (command.type === "status:show") {
     const runs = await new RunIndex(runsPath(args)).list();

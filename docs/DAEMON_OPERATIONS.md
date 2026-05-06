@@ -114,7 +114,7 @@ Set local, uncommitted values:
 ```text
 TELEGRAM_BOT_TOKEN=<token>
 TELEGRAM_CHAT_ID=<telegram-chat-id>
-# Optional, required for /prepare_dispatch:
+# Optional, required when no project profile supplies the worker repo root:
 SAMANTHA_REPO_ROOT=/home/lbk0523/projects/samantha-codex
 # Optional, required when systemd cannot find codex in PATH:
 SAMANTHA_CODEX_BIN=/home/lbk0523/.nvm/versions/node/v24.15.0/bin/codex
@@ -154,7 +154,7 @@ The service templates are tuned for interactive latency:
 
 Normal reply latency should usually be a few seconds. It can be longer when Telegram network calls are slow or when the machine is sleeping.
 
-For routine operation, use Telegram `/now` first. It reports the next command to send, usually `/plan`, `/plan_current`, `/go`, `/revise <feedback>`, `/cancel`, `/action_current`, `/recover`, `/problems`, or `/check`. Use `/check` for compact status and `/problems` when `/check` or `/now` reports warnings or failures.
+For routine operation, use Telegram `/now` first. It reports the next command to send, usually `/plan`, `/plan_current`, `/go`, `/revise <feedback>`, `/cancel`, `/recover`, `/problems`, or `/check`. Use `/check` for compact status and `/problems` when `/check` or `/now` reports warnings or failures.
 
 ## Safety Notes
 

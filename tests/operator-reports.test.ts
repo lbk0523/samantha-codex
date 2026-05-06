@@ -26,6 +26,7 @@ import {
   remoteActionResultReport,
   remoteActionShowReport,
   remoteActionsListReport,
+  remoteDeprecatedCommandReport,
   remoteHelpReport,
   remoteIntegrationReport,
   remoteGoReport,
@@ -199,17 +200,21 @@ describe("operator reports", () => {
     expect(report).toContain("/work <요청>");
     expect(report).toContain("/plan");
     expect(report).toContain("/go");
-    expect(report).toContain("/help_advanced");
+    expect(report).not.toContain("/help_advanced");
+    expect(report).not.toContain("/action_current");
     expect(report).not.toContain("/draft_prepare <project_id>");
     expect(report).not.toContain("/run-next");
     expect(report).not.toContain("/prepare-dispatch <task_id>");
 
     const advanced = remoteHelpReport("advanced");
-    expect(advanced).toContain("/run <run_id>");
-    expect(advanced).toContain("/draft_prepare <project_id>");
-    expect(advanced).toContain("/prepare_dispatch <task_id>");
-    expect(advanced).toContain("/approve_action <action_id>");
-    expect(advanced).toContain("cannot dispatch workers directly");
+    expect(advanced).toContain("고급 명령 목록은 Telegram에서 제거했습니다.");
+    expect(advanced).toContain("/help");
+    expect(advanced).not.toContain("/run <run_id>");
+    expect(advanced).not.toContain("/approve_action <action_id>");
+
+    const deprecated = remoteDeprecatedCommandReport({ command: "/action_current", replacement: "/now" });
+    expect(deprecated).toContain("제거된 Telegram 명령");
+    expect(deprecated).toContain("텔레그램: `/now`");
   });
 
   test("renders compact run and failure summaries", () => {
@@ -363,7 +368,7 @@ describe("operator reports", () => {
     };
 
     expect(remoteActionPreparedReport(action)).toContain("텔레그램: `/go`");
-    expect(remoteActionPreparedReport(action)).toContain("/approve_action");
+    expect(remoteActionPreparedReport(action)).not.toContain("/approve_action");
     expect(remoteActionPreparedReport(action)).toContain("아직 worker는 실행하지 않았습니다.");
     expect(remoteActionsListReport([action])).toContain("dispatch_task");
     expect(remoteActionShowReport(action.id, action)).toContain("tasks:dispatch task-pass");
@@ -376,12 +381,12 @@ describe("operator reports", () => {
     };
     expect(remoteActionShowReport(runningAction.id, runningAction)).toContain("Live log: `/runs/live/run-live.jsonl`");
     expect(remoteActionShowReport(runningAction.id, runningAction)).toContain("Tmux: `samantha`");
-    expect(remoteGoReport({ action: { ...action, status: "approved" } })).toContain("텔레그램: `/action_current`");
+    expect(remoteGoReport({ action: { ...action, status: "approved" } })).toContain("텔레그램: `/now`");
     expect(remoteActionApprovedReport({ ...action, status: "approved" })).toContain("actions:watch");
-    expect(remoteActionApprovedReport({ ...action, status: "approved" })).toContain("텔레그램: `/action_current`");
+    expect(remoteActionApprovedReport({ ...action, status: "approved" })).toContain("텔레그램: `/now`");
     expect(remoteActionApprovedReport(completed)).toContain("통과: yes");
     expect(remoteActionApprovedReport(completed)).toContain("Tmux: `samantha`");
-    expect(remoteActionApprovedReport(completed)).toContain("텔레그램: `/run_latest`");
+    expect(remoteActionApprovedReport(completed)).toContain("텔레그램: `/now`");
 
     const runLog: WorkerRunLog = {
       schemaVersion: 1,
@@ -440,7 +445,7 @@ describe("operator reports", () => {
     expect(resultReport).not.toContain("HARNESS_RESULT");
     expect(resultReport).toContain("`README.md`");
     expect(resultReport).toContain("커밋: `abc123`");
-    expect(resultReport).toContain("텔레그램: `/run_latest`");
+    expect(resultReport).toContain("텔레그램: `/now`");
     const reportModeResult = remoteActionResultReport({
       action: completed,
       runLog: { ...runLog, task: { ...runLog.task, resultMode: "report" } },
@@ -489,7 +494,7 @@ describe("operator reports", () => {
 
     expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).toContain("텔레그램: `/go`");
     expect(nowReport({ runs: [], tasks: [], actions: [{ ...pendingAction, status: "approved" }] })).toContain(
-      "텔레그램: `/action_current`",
+      "텔레그램: `/now`",
     );
     expect(nowReport({ runs: [], tasks: [], actions: [], orchestrationRequests: [orchestrationRequest] })).toContain(
       "작업 요청이 오케스트레이터 계획 생성을 기다리고 있습니다.",
@@ -504,11 +509,9 @@ describe("operator reports", () => {
       "계획 다시 보기: `/plan_current`",
     );
     expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("텔레그램: `/go`");
-    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("드래프트가 계획 확인을 기다리고 있습니다.");
-    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("텔레그램: `/plan`");
-    expect(nowReport({ runs: [], tasks: [], actions: [], proposals: [proposal] })).toContain("검토 대기 중인 제안이 있습니다.");
-    expect(nowReport({ runs: [], tasks: [], actions: [], proposals: [proposal] })).toContain("확인: `/proposal_next`");
-    expect(nowReport({ runs: [failRun], tasks: [], actions: [] })).toContain("텔레그램: `/run_latest`");
+    expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("지금 바로 필요한 원격 액션은 없습니다.");
+    expect(nowReport({ runs: [], tasks: [], actions: [], proposals: [proposal] })).toContain("지금 바로 필요한 원격 액션은 없습니다.");
+    expect(nowReport({ runs: [failRun], tasks: [], actions: [] })).toContain("텔레그램: `/problems`");
     expect(nowReport({ runs: [passRun, failRun], tasks: [], actions: [] })).toContain("merge:check --run-log=/logs/pass.json");
     expect(nowReport({ runs: [passRun, failRun], tasks: [], actions: [] })).toContain("텔레그램: `/go`");
     expect(nowReport({ runs: [passRun], tasks: [], actions: [], drafts: [draft] })).toContain("merge:check --run-log=/logs/pass.json");
@@ -615,12 +618,12 @@ describe("operator reports", () => {
 
   test("renders proposal reports without implying execution", () => {
     expect(proposalAddedReport(proposal)).toContain("No worker was dispatched");
-    expect(proposalAddedReport(proposal)).toContain("확인: `/proposal_next`");
+    expect(proposalAddedReport(proposal)).toContain("새 흐름으로 다시 요청: `/work <요청>`");
     expect(proposalsListReport([proposal])).toContain("Total proposals: 1");
     expect(proposalShowReport("proposal-1", proposal)).toContain("Improve status reports");
-    expect(proposalShowReport("proposal-1", proposal)).toContain("수락: `/accept proposal-1`");
+    expect(proposalShowReport("proposal-1", proposal)).toContain("새 흐름으로 다시 요청: `/work <요청>`");
     expect(proposalReviewedReport("accept", { ...proposal, status: "accepted" })).toContain("only updates proposal review state");
-    expect(proposalReviewedReport("accept", { ...proposal, status: "accepted" })).toContain("텔레그램: `/draft proposal-1`");
+    expect(proposalReviewedReport("accept", { ...proposal, status: "accepted" })).toContain("새 흐름으로 다시 요청: `/work <요청>`");
   });
 
   test("renders orchestrator planning and materialization reports", () => {
@@ -661,7 +664,7 @@ describe("operator reports", () => {
       ],
     });
     expect(materialized).toContain("오케스트레이터 계획을 승인했고 worker 실행 큐에 등록했습니다.");
-    expect(materialized).toContain("텔레그램: `/action_current`");
+    expect(materialized).toContain("텔레그램: `/now`");
 
     const passedPlanAction = {
       ...createRemoteDispatchAction({
@@ -727,7 +730,7 @@ describe("operator reports", () => {
       },
     });
     expect(passedPlanResult).toContain("통합 gate 확인: `/now`");
-    expect(passedPlanResult).toContain("참고: 텔레그램: /run_latest");
+    expect(passedPlanResult).toContain("참고: 텔레그램: /now");
 
     const failedPlanResult = orchestratorPlanResultReport({
       plan: { ...orchestratorPlan, status: "materialized", actionIds: ["action-failed"] },

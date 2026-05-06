@@ -159,8 +159,8 @@ Create a simulated remote command:
 
 ```bash
 cd /home/lbk0523/projects/samantha-codex
-printf '%s\n' '{"senderId":"bk","text":"/runs","receivedAt":"2026-05-03T10:00:00.000Z"}' > /tmp/samantha-remote-runs.json
-bun run samantha remote:enqueue /tmp/samantha-remote-runs.json --allowed-sender-id=bk
+printf '%s\n' '{"senderId":"bk","text":"/now","receivedAt":"2026-05-03T10:00:00.000Z"}' > /tmp/samantha-remote-now.json
+bun run samantha remote:enqueue /tmp/samantha-remote-now.json --allowed-sender-id=bk
 bun run samantha inbox:process
 ```
 
@@ -174,7 +174,7 @@ Pass criteria:
 Negative checks:
 
 ```bash
-printf '%s\n' '{"senderId":"other","text":"/runs"}' > /tmp/samantha-remote-denied.json
+printf '%s\n' '{"senderId":"other","text":"/now"}' > /tmp/samantha-remote-denied.json
 bun run samantha remote:enqueue /tmp/samantha-remote-denied.json --allowed-sender-id=bk
 ```
 
@@ -473,8 +473,8 @@ bun run samantha telegram:reply
 Pass criteria:
 
 - allowed practical commands `/help`, `/start`, `/now`, `/work <text>`, `/plan`, `/plan_current`, `/go`, `/revise <feedback>`, `/cancel`, `/recover`, `/check`, and `/problems` create inbox files
-- allowed advanced commands `/help_advanced`, `/status`, `/doctor`, `/health`, `/runs`, `/run <id>`, `/failures`, `/propose <text>`, `/draft_propose <text>`, `/proposals`, `/proposal <id>`, `/accept <id>`, `/reject <id>`, `/draft <proposal_id>`, `/drafts`, `/draft <draft_id>`, `/tasks`, `/dashboard`, `/task <id>`, `/prepare_dispatch <task_id>`, `/actions`, `/action <action_id>`, and `/approve_action <action_id>` create inbox files
-- legacy hyphenated aliases still normalize, but Telegram reports and docs prefer underscore commands
+- old advanced/id-based Telegram commands return a deprecated-command report with a replacement command instead of running the old flow
+- hyphenated aliases are deprecated because Telegram breaks command links at hyphens
 - `/help` shows the short `/work <request> -> /plan -> /go` operating flow instead of a long command catalog
 - unsupported messages are ignored
 - messages from other sender ids are ignored
@@ -494,8 +494,7 @@ Pass criteria:
 - `/go` materializes safe orchestrator plans into tasks and approved actions; unsafe plans are blocked before task/action creation
 - dependent materialized actions wait until prerequisite actions complete successfully
 - completed materialized plans rerun `codex-orchestrator` in synthesis mode and produce one `# plan-result` outbox report in addition to per-action reports
-- `/run_next` and `/prepare_dispatch <task_id>` create only a pending action in `state/remote-actions.jsonl`
-- `/yes` and `/approve_action <action_id>` only mark an existing pending dispatch action approved
+- old lower-level Telegram action commands return deprecated-command guidance instead of running the old flow
 - `actions:watch` executes approved dispatch action ids with fixed `--allocate --execute --tmux` flags and locally configured repo root
 - no remote path accepts shell, arbitrary repo paths, arbitrary merge/push/cleanup paths, or direct worker dispatch
 - `inbox:watch` processes the created inbox commands later
@@ -554,4 +553,4 @@ After Scenarios 9-16, Samantha should additionally demonstrate:
 - Telegram outbox replies for remote command reports
 - remote proposal intake without worker execution
 
-At that point the next engineering step is hardening `/status` and `/doctor` so Telegram works as the practical operating console.
+At that point the next engineering step is hardening `/check` and `/problems` so Telegram works as the practical operating console.

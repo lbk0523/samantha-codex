@@ -14,6 +14,13 @@ function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function remoteSafeSuggestion(value: string): string {
+  return oneLine(value)
+    .replace(/\/(?:action_current|run_latest|next_action|next-action)\b/g, "/now")
+    .replace(/\/(?:status|dashboard)\b/g, "/check")
+    .replace(/\/(?:doctor|health|failures)\b/g, "/problems");
+}
+
 function code(value: string): string {
   return `\`${oneLine(value).replace(/`/g, "'")}\``;
 }
@@ -125,14 +132,14 @@ function draftNextLines(draft: TaskDraftRecord): string[] {
 
 function remoteActionNextLines(action: RemoteActionRecord): string[] {
   if (action.status === "pending") return ["", "다음 액션:", `- 텔레그램: ${code("/go")}`];
-  if (action.status === "waiting") return ["", "다음 액션:", `- 선행 action 확인: ${code("/action_current")}`];
+  if (action.status === "waiting") return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
   if (action.status === "approved" || action.status === "running") {
-    return ["", "다음 액션:", `- 텔레그램: ${code("/action_current")}`];
+    return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
   }
   if (action.status === "completed") {
-    return ["", "다음 액션:", `- 텔레그램: ${code("/run_latest")}`, `- 이후: ${code("/now")}`];
+    return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
   }
-  return ["", "다음 액션:", `- 텔레그램: ${code("/run_latest")}`, `- 이후: ${code("/problems")}`];
+  return ["", "다음 액션:", `- 텔레그램: ${code("/problems")}`];
 }
 
 function orchestrationRequestNextLines(request: OrchestrationRequestRecord): string[] {
@@ -160,7 +167,7 @@ function orchestratorPlanNextLines(plan: OrchestratorPlanRecord): string[] {
       `- 계획 취소: ${code("/cancel")}`,
     ];
   }
-  if (plan.status === "materialized") return ["", "다음 액션:", `- 텔레그램: ${code("/action_current")}`];
+  if (plan.status === "materialized") return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
   return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
 }
 
@@ -280,12 +287,12 @@ function artifactPreviewLines(runLog: WorkerRunLog | undefined, previews: Remote
 }
 
 function remoteActionResultNextLines(action: RemoteActionRecord, runLog: WorkerRunLog | undefined): string[] {
-  const lines = ["", "다음 액션:", `- 텔레그램: ${code("/run_latest")}`];
+  const lines = ["", "다음 액션:"];
   if (action.status === "failed") {
     if (action.orchestratorPlanId) lines.push(`- 복구 계획 생성: ${code("/recover")}`);
     else lines.push(`- 문제 확인: ${code("/problems")}`);
   } else {
-    lines.push(`- 이후 작업 확인: ${code("/now")}`);
+    lines.push(`- 텔레그램: ${code("/now")}`);
   }
 
   if (runLog?.result.pass && runLog.result.commit?.commitHash && action.result?.runLogPath) {
@@ -301,13 +308,12 @@ function proposalNextLines(proposal: ProposalRecord): string[] {
     return [
       "",
       "다음 액션:",
-      `- 확인: ${code("/proposal_next")}`,
-      `- 수락: ${code(`/accept ${proposal.id}`)}`,
-      `- 거절: ${code(`/reject ${proposal.id}`)}`,
+      `- 새 흐름으로 다시 요청: ${code("/work <요청>")}`,
+      `- 상태 기준으로 다시 판단: ${code("/now")}`,
     ];
   }
   if (proposal.status === "accepted") {
-    return ["", "다음 액션:", `- 텔레그램: ${code(`/draft ${proposal.id}`)}`, `- 이후: ${code("/draft_next")}`];
+    return ["", "다음 액션:", `- 새 흐름으로 다시 요청: ${code("/work <요청>")}`];
   }
   return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
 }
@@ -428,30 +434,12 @@ function latestRunNeedingIntegration(runs: RunSummary[], lifecycles: RunLifecycl
 export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
   if (mode === "advanced") {
     return [
-      "# remote:help advanced",
+      "# remote:help",
       "",
-      "Inspection:",
-      "- `/runs`, `/run_latest`, `/run <run_id>`, `/failures`",
-      "- `/tasks`, `/task <task_id>`",
-      "- `/actions`, `/action_current`, `/action <action_id>`",
-      "- `/plan_current`",
-      "- `/proposals`, `/proposal_next`, `/proposal <proposal_id>`",
-      "- `/drafts`, `/draft_next`, `/draft <draft_id>`",
+      "고급 명령 목록은 Telegram에서 제거했습니다.",
       "",
-      "Explicit workflow:",
-      "- `/work <request>`, `/plan [project_id] [scope_id]`, `/go`, `/recover`",
-      "- `/revise <feedback>`, `/cancel [reason]`",
-      "- `/propose <text>`",
-      "- `/draft_propose <text>`",
-      "- `/accept <proposal_id>`, `/reject <proposal_id>`",
-      "- `/draft_prepare <project_id> [target_file...]`, `/draft_approve`",
-      "- `/prepare_dispatch <task_id>`",
-      "- `/approve_action <action_id>`",
-      "",
-      "System:",
-      "- `/status`, `/doctor`, `/health`, `/dashboard`, `/next_action`",
-      "",
-      "Remote commands are safe-gated. They cannot dispatch workers directly, accept arbitrary shell commands, or accept arbitrary repo paths. `/go` can advance the latest passed run through Samantha's merge/push/cleanup gates.",
+      "다음 액션:",
+      `- 텔레그램: ${code("/help")}`,
     ].join("\n");
   }
 
@@ -468,14 +456,29 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "- `/cancel`: 승인 전 계획/요청 취소",
     "- `/recover`: 실패한 계획 결과로 복구 계획 요청 생성",
     "- `/now`: 지금 보낼 다음 명령 확인",
-    "- `/action_current`: 현재 실행 상태 확인",
     "- `/check`: 짧은 상태 확인",
     "- `/problems`: 이상 징후 진단",
     "",
     "일반 실행:",
-    "`/work <request>` -> `/plan` -> `/go` -> `/action_current`",
+    "`/work <요청>` -> `/plan` -> `/go` -> `/now`",
     "",
-    "고급 명령: `/help_advanced`",
+    "자동 분류가 틀렸을 때만 `/plan <project_id> <scope_id>`로 보정하세요.",
+    "run/task/action/proposal/draft ID를 직접 입력하는 명령은 Telegram에서 제거했습니다.",
+  ].join("\n");
+}
+
+export function remoteDeprecatedCommandReport(input: { command: string; replacement: string }): string {
+  return [
+    "# remote:deprecated",
+    "",
+    `제거된 Telegram 명령입니다: ${code(input.command)}`,
+    "",
+    "현재 Telegram은 오케스트레이터 워크플로우만 직접 다룹니다.",
+    "run/task/action/proposal/draft ID를 직접 입력하는 수동 흐름은 로컬 점검용으로만 남깁니다.",
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code(input.replacement)}`,
+    `- 상태 기준으로 다시 판단: ${code("/now")}`,
   ].join("\n");
 }
 
@@ -699,7 +702,6 @@ export function nowReport(input: {
       "",
       "다음 액션:",
       `- 텔레그램: ${code("/recover")}`,
-      `- 세부 확인: ${code("/action_current")}`,
     ].join("\n");
   }
 
@@ -721,41 +723,6 @@ export function nowReport(input: {
     ].join("\n");
   }
 
-  const draft = input.drafts
-    ?.slice()
-    .reverse()
-    .find((item) => item.status === "drafted" && timestamp(item.updatedAt ?? item.createdAt) >= primaryWorkflowTimestamp);
-  if (draft) {
-    const missing = [
-      draft.targetFiles.length === 0 ? "targetFiles" : "",
-      draft.verifyCommands.length === 0 ? "verifyCommands" : "",
-    ].filter(Boolean);
-    return [
-      "# now",
-      "",
-      "드래프트가 계획 확인을 기다리고 있습니다.",
-      `드래프트: ${code(draft.id)}`,
-      `제목: ${oneLine(draft.title)}`,
-      missing.length ? `부족한 항목: ${missing.join(", ")}` : "승인 가능한 상태입니다.",
-      ...draftNextLines(draft),
-    ].join("\n");
-  }
-
-  const proposal = input.proposals
-    ?.slice()
-    .reverse()
-    .find((item) => item.status === "pending_review" && timestamp(item.reviewedAt ?? item.createdAt) >= primaryWorkflowTimestamp);
-  if (proposal) {
-    return [
-      "# now",
-      "",
-      "검토 대기 중인 제안이 있습니다.",
-      `제안: ${code(proposal.id)}`,
-      `내용: ${oneLine(proposal.text)}`,
-      ...proposalNextLines(proposal),
-    ].join("\n");
-  }
-
   const latest = input.runs.at(-1);
   if (latest?.pass && latest.commit) {
     return nowLinesForPassedRun(
@@ -773,7 +740,7 @@ export function nowReport(input: {
       latest.failureReason ? `실패 이유: ${oneLine(latest.failureReason)}` : "",
       "",
       "다음 액션:",
-      `- 텔레그램: ${code("/run_latest")}`,
+      `- 텔레그램: ${code("/problems")}`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -1069,7 +1036,7 @@ export function orchestratorGoMaterializedReport(input: {
     "runner가 `actions:watch`에서 승인된 action을 실행합니다.",
     "",
     "다음 액션:",
-    `- 텔레그램: ${code("/action_current")}`,
+    `- 텔레그램: ${code("/now")}`,
   ].join("\n");
 }
 
@@ -1099,11 +1066,11 @@ export function orchestratorPlanResultReport(input: {
         mergeCommands.length
           ? `- 통합 gate 확인: ${code("/now")}`
           : `- 상태 확인: ${code("/check")}`,
-        ...(input.synthesis?.nextActions.length ? input.synthesis.nextActions.map((action) => `- 참고: ${action}`) : []),
+        ...(input.synthesis?.nextActions.length ? input.synthesis.nextActions.map((action) => `- 참고: ${remoteSafeSuggestion(action)}`) : []),
       ]
     : [
         `- 복구 계획 생성: ${code("/recover")}`,
-        ...(input.synthesis?.nextActions.length ? input.synthesis.nextActions.map((action) => `- 참고: ${action}`) : []),
+        ...(input.synthesis?.nextActions.length ? input.synthesis.nextActions.map((action) => `- 참고: ${remoteSafeSuggestion(action)}`) : []),
         `- 상태 재확인: ${code("/now")}`,
       ];
 
@@ -1212,7 +1179,7 @@ export function taskDraftPlanReport(input: {
     "",
     "다음 액션:",
     input.violations.length === 0 ? `- 실행 승인: ${code("/go")}` : `- 분류/범위 재지정: ${code("/plan <project_id> <scope_id>")}`,
-    `- 상세 확인: ${code("/draft_next")}`,
+    `- 상태 기준으로 다시 판단: ${code("/now")}`,
   );
   return lines.join("\n");
 }
@@ -1351,7 +1318,6 @@ export function remoteActionPreparedReport(action: RemoteActionRecord): string {
     "",
     "다음 액션:",
     `- 텔레그램: ${code("/go")}`,
-    `- 명시 승인: ${code(`/approve_action ${action.id}`)}`,
   ].join("\n");
 }
 
@@ -1373,7 +1339,7 @@ export function remoteGoReport(input: {
     "runner가 `actions:watch` 또는 `actions:run-pending`에서 실행을 이어갑니다.",
     "",
     "다음 액션:",
-    `- 텔레그램: ${code("/action_current")}`,
+    `- 텔레그램: ${code("/now")}`,
   ]
     .filter(Boolean)
     .join("\n");

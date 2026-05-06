@@ -17,7 +17,7 @@ remote input -> allowlist -> command mapping -> inbox/*.json -> inbox:watch
 Use this as the normal Telegram operating path:
 
 ```text
-/work <request> -> /plan -> /go -> /action_current
+/work <request> -> /plan -> /go -> /now
 wrong plan -> /revise <feedback> -> /plan -> /go
 failed plan result -> /recover -> /plan -> /go
 ```
@@ -33,14 +33,13 @@ failed plan result -> /recover -> /plan -> /go
 - `/check` is the compact status view.
 - `/problems` is the diagnostic view.
 
-`/help` shows only this short flow. `/help_advanced` lists the lower-level inspection and explicit id-based commands. Telegram-visible slash commands use underscores instead of hyphens because Telegram breaks command links at hyphens. Legacy hyphenated spellings remain accepted for compatibility, but they should not be shown as the primary UX.
+`/help` shows only this short flow. Lower-level inspection and explicit id-based commands are not exposed as Telegram commands. Deprecated Telegram commands return a short replacement hint instead of running the old flow.
 
 ## Supported Commands
 
 The current primary Telegram spellings are:
 
 - `/help`
-- `/help_advanced`
 - `/start`
 - `/now`
 - `/work <text>`
@@ -52,43 +51,16 @@ The current primary Telegram spellings are:
 - `/recover`
 - `/check`
 - `/problems`
-- `/status`
-- `/doctor`
-- `/health`
-- `/runs`
-- `/run_latest`
-- `/run <run_id>`
-- `/failures`
-- `/propose <text>`
-- `/draft_propose <text>`
-- `/proposals`
-- `/proposal_next`
-- `/proposal <proposal_id>`
-- `/accept <proposal_id>`
-- `/reject <proposal_id>`
-- `/draft <proposal_id>`
-- `/drafts`
-- `/draft_next`
-- `/draft <draft_id>`
-- `/tasks`
-- `/next_action`
-- `/dashboard`
-- `/task <task_id>`
-- `/prepare_dispatch <task_id>`
-- `/actions`
-- `/action_current`
-- `/action <action_id>`
-- `/approve_action <action_id>`
 
 Unsupported commands are ignored or rejected.
 
-Supported remote commands are operational reports, a safe dashboard rebuild, orchestration request intake/planning/revision/materialization/recovery, proposal intake/review, conservative task draft creation, safe draft planning/approval, explicit approval of a prebuilt dispatch action, and latest-run integration gates. `/work` writes an orchestration request to `state/orchestration-requests.jsonl`; `/plan` writes an orchestrator plan to `state/orchestrator-plans.jsonl`; `/plan_current` reads the latest `planned` or `questions` plan without creating a new plan; `/revise <feedback>` marks the current unapproved plan `superseded` and writes a new pending orchestration request containing the previous plan plus feedback; `/go` validates that plan, writes tasks to `state/tasks.jsonl`, approves dispatch actions in `state/remote-actions.jsonl`, or advances the latest passed committed run through merge, push, and cleanup gates using stored run metadata; `/recover` writes a new recovery-oriented orchestration request from the latest failed materialized plan result. Advanced fallback commands still allow `/propose` to write a pending proposal to `state/proposals.jsonl`, `/draft_propose` to write an accepted proposal plus a draft, `/accept` and `/reject` to update proposal review state, and `/draft <proposal_id>` to write a draft to `state/task-drafts.jsonl`. Direct worker dispatch, arbitrary shell execution, arbitrary repo paths, arbitrary merge/push/cleanup paths, and worker execution inside inbox processing are intentionally not exposed remotely.
+Supported Telegram commands are operational reports plus orchestration request intake/planning/revision/materialization/recovery. `/work` writes an orchestration request to `state/orchestration-requests.jsonl`; `/plan` writes an orchestrator plan to `state/orchestrator-plans.jsonl`; `/plan_current` reads the latest `planned` or `questions` plan without creating a new plan; `/revise <feedback>` marks the current unapproved plan `superseded` and writes a new pending orchestration request containing the previous plan plus feedback; `/go` validates that plan, writes tasks to `state/tasks.jsonl`, approves dispatch actions in `state/remote-actions.jsonl`, or advances the latest passed committed run through merge, push, and cleanup gates using stored run metadata; `/recover` writes a new recovery-oriented orchestration request from the latest failed materialized plan result. Direct worker dispatch, arbitrary shell execution, arbitrary repo paths, arbitrary merge/push/cleanup paths, run/task/action/proposal/draft id entry, and worker execution inside inbox processing are intentionally not exposed remotely.
 
-`/now` is the default operating command. It chooses one next remote command from current action state, orchestrator plans, orchestration requests, failed plan recovery state, diagnostics, pending tasks, task drafts, proposals, and latest run state. After `/work <request>`, `/now` should show the pending orchestration request and `/plan` instead of reporting no immediate action. When a plan is waiting for approval, reports show `/plan_current`, `/go`, and `/revise <feedback>` so BK can reread, approve, or redirect without starting over. After a failed materialized plan result is reported and no newer active item exists, `/now` should show `/recover`. It must not present inspect-only commands like `/draft_next` as the next state-changing action.
+`/now` is the default operating command. It chooses one next remote command from current action state, orchestrator plans, orchestration requests, failed plan recovery state, diagnostics, pending tasks, and latest run state. After `/work <request>`, `/now` should show the pending orchestration request and `/plan` instead of reporting no immediate action. When a plan is waiting for approval, reports show `/plan_current`, `/go`, and `/revise <feedback>` so BK can reread, approve, or redirect without starting over. After a failed materialized plan result is reported and no newer active item exists, `/now` should show `/recover`. It must not present inspect-only commands or id-based commands as the next action.
 
-`/check` and `/status` are the quick operational view. They include daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
+`/check` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
 
-`/problems` and `/doctor` are the deeper diagnostic view. They check local env readiness, daemon health, queue state, Telegram poll/reply state, latest remote command/report context, reply failures, and expected systemd template installation without printing secret values.
+`/problems` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, latest remote command/report context, reply failures, and expected systemd template installation without printing secret values.
 
 Proposal commands are intake/review only:
 
@@ -124,9 +96,9 @@ bun run samantha drafts:prepare <draft-id> --project=<id> [--from=<draft-patch.j
 bun run samantha drafts:approve <draft-id>
 ```
 
-`drafts:check` returns a readiness summary with missing fields and next commands. `drafts:template` prints an editable JSON patch, optionally filled with project defaults. `drafts:update` rejects unknown patch fields instead of silently ignoring them. `drafts:approve`, `/draft_approve`, and `/go` refuse drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker inside inbox processing.
+`drafts:check` returns a readiness summary with missing fields and next commands. `drafts:template` prints an editable JSON patch, optionally filled with project defaults. `drafts:update` rejects unknown patch fields instead of silently ignoring them. `drafts:approve` and `/go` refuse drafts without `targetFiles`, `verifyCommands`, `instructions`, and a known `targetAgent`. Approval writes one pending task to `state/tasks.jsonl` and marks the draft approved, but still does not dispatch a worker inside inbox processing.
 
-`/draft_next` is read-only, but its report includes the next Telegram command to send. If target files are still missing, use `/plan`; advanced users can still use `/draft_prepare <project_id> <target_file...>`. Target files must be repo-relative file paths; draft/proposal/task ids, absolute paths, parent-directory paths, and project-forbidden paths are rejected.
+Draft/proposal target-file preparation is now local fallback only. Telegram users should submit the actual work request with `/work <request>` and let `/plan` choose the project, scope, files, and verification plan.
 
 Telegram reports use a consistent next-action shape:
 
@@ -170,14 +142,7 @@ Dependent plan actions use `waiting` status with explicit `dependsOnActionIds`. 
 
 When all actions belonging to one materialized orchestrator plan finish, `actions:watch` reruns `codex-orchestrator` in synthesis mode and writes one additional `# plan-result` Telegram outbox report. The plan-level report summarizes all worker outcomes, changed files, failed action reasons, and merge-check candidates so BK does not have to inspect isolated action reports one by one. If synthesis fails, Samantha still writes a deterministic fallback report and records the synthesis failure on the plan.
 
-`/run_next` and `/yes` remain available as advanced lower-level steps. `/yes` only marks the latest existing pending action as approved. It does not run inside `inbox:watch`, so Telegram status and inspection commands can continue while the worker later runs.
-
-The explicit advanced equivalents remain available:
-
-```text
-/prepare_dispatch <task_id> -> state/remote-actions.jsonl pending action
-/approve_action <action_id> -> approved action
-```
+Lower-level action preparation and explicit action approval remain available through local CLI/inbox commands for debugging, but they are no longer Telegram commands. Telegram should use `/go` to advance the current safe gate.
 
 `actions:watch` or one-shot `actions:run-pending` executes only existing approved action ids. Telegram cannot supply shell commands, extra flags, arbitrary repo paths, or arbitrary integration instructions. After a passed run, `/go` may advance Samantha's fixed merge, push, and cleanup gates for the latest recorded run only. Drafts prepared with a project profile carry that profile's `repoRoot` into the promoted task and dispatch action; otherwise the repo root must be configured locally through `SAMANTHA_REPO_ROOT`. If neither is set, action preparation fails with an explicit report. If systemd cannot find Codex, set `SAMANTHA_CODEX_BIN` in `.env`.
 
@@ -228,7 +193,7 @@ bun run samantha tasks:archive <task-id> --reason=<text>
 
 Archived tasks remain in `state/tasks.jsonl`, but `/tasks` and `tasks:list` exclude them by default. Use `tasks:list --include-archived` for audit/debugging.
 
-`/next_action` is read-only and intentionally mirrors `/now` for Telegram operation. It should recommend the safest remote-safe next step, such as `/plan`, `/plan_current`, `/go`, `/action_current`, `/recover`, or `/problems`, rather than local retry commands.
+`/now` is the only routine next-action Telegram command. It should recommend the safest remote-safe next step, such as `/plan`, `/plan_current`, `/go`, `/recover`, or `/problems`, rather than local retry commands or id-based inspection commands.
 
 After a successful merge and push, clean the worker worktree locally:
 
