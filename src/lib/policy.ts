@@ -36,6 +36,20 @@ export function validateDispatch(
       violations.push("writer tasks must declare forbiddenChanges");
     }
   }
+  if (agent.writerClass === "non-writer") {
+    if (task.resultMode !== "report") {
+      violations.push("non-writer tasks must use report resultMode");
+    }
+    if (agent.worktreePolicy !== "none") {
+      violations.push("non-writer agents must not allocate worktrees");
+    }
+    if (agent.mergePolicy !== "none") {
+      violations.push("non-writer agents must not use merge policy");
+    }
+    if (task.targetFiles.length > 0) {
+      violations.push("non-writer report tasks must not declare targetFiles");
+    }
+  }
 
   const missingBlockedSkills = policy.blockedSkillNames.filter(
     (skillName) => !agent.skillPolicy.blockedSkills.includes(skillName),

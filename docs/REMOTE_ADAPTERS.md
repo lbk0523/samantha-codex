@@ -1,10 +1,12 @@
 # Samantha Remote Adapters
 
-Last updated: 2026-05-06
+Last updated: 2026-05-07
 
 ## Policy
 
 Remote adapters are input adapters first. They may create inbox command files for the narrow supported control-plane transitions. A separate local action runner executes approved actions. Remote adapters may not execute shell commands, dispatch workers directly, merge, push, clean worktrees, or accept internal ids as the normal workflow.
+
+Telegram is not Samantha's core product surface. It is a notification, approval, short-feedback, and compact status adapter for the deterministic CEO office. Long review, dashboard inspection, and operational debugging should stay in CLI or dashboard surfaces.
 
 All remote input must pass through:
 
@@ -14,7 +16,7 @@ remote input -> allowlist -> command mapping -> inbox/*.json -> inbox:watch
 
 ## Practical Telegram Flow
 
-Use this as the normal Telegram operating path:
+Use this as the existing Telegram adapter path:
 
 ```text
 /work <request> -> /plan -> /go -> /now
@@ -37,7 +39,7 @@ failed plan result -> /recover -> /plan -> /go
 
 ## Supported Commands
 
-The current primary Telegram spellings are:
+The current Telegram adapter spellings are:
 
 - `/help`
 - `/start`
@@ -247,6 +249,14 @@ Sent state is stored in:
 state/telegram-replies.json
 ```
 
+Periodic CEO notification generation is stored separately in:
+
+```text
+state/ceo-reports.jsonl
+```
+
+Each `ceo:notify` record points to the generated `outbox/remote-*.md` file and the Telegram delivery state file. Delivery, retry, and failure evidence remains in `state/telegram-replies.json`.
+
 Safe first-run behavior:
 
 - If `state/telegram-replies.json` does not exist, existing `outbox/remote-*.md` files are marked as already sent and no Telegram message is sent.
@@ -262,19 +272,25 @@ cp ops/systemd/samantha-telegram-poll.service ~/.config/systemd/user/
 cp ops/systemd/samantha-telegram-poll.timer ~/.config/systemd/user/
 cp ops/systemd/samantha-telegram-reply.service ~/.config/systemd/user/
 cp ops/systemd/samantha-telegram-reply.timer ~/.config/systemd/user/
+cp ops/systemd/samantha-ceo-notify.service ~/.config/systemd/user/
+cp ops/systemd/samantha-ceo-notify.timer ~/.config/systemd/user/
 cp ops/systemd/samantha-actions-watch.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now samantha-actions-watch.service
 systemctl --user enable --now samantha-telegram-poll.timer
 systemctl --user enable --now samantha-telegram-reply.timer
+systemctl --user enable --now samantha-ceo-notify.timer
 ```
 
 The timer reads `%h/projects/samantha-codex/.env`. If the older Claude-side Samantha environment file exists elsewhere, either copy only the two Telegram values into this repo's ignored `.env` or adjust the copied service's `EnvironmentFile=` path locally.
+
+`samantha-ceo-notify.timer` is Ubuntu-host automation. It generates a compact CEO notification hourly; `samantha-telegram-reply.timer` is the only timer that sends the generated remote outbox files.
 
 The timer templates favor interactive replies:
 
 - poll restarts 3 seconds after the prior `telegram:poll` exits
 - reply restarts 3 seconds after the prior `telegram:reply` exits
+- CEO notification generation runs hourly
 - local inbox processing runs every 1 second in the service template
 - approved action processing runs every 1 second in the action service template
 

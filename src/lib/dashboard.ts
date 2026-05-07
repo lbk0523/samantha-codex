@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { CeoDecisionSummary, CeoStatusItem, CeoStatusSnapshot } from "./ceo-status";
 import type { TaskSpec } from "./contracts";
 import type { DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
@@ -17,6 +18,7 @@ export interface DashboardStatus {
   tasks?: TaskSpec[];
   lifecycles?: RunLifecycleRecord[];
   liveRuns?: LiveRunStatus[];
+  ceoStatus?: CeoStatusSnapshot;
 }
 
 export interface LiveRunEvent {
@@ -120,9 +122,32 @@ function runOutcomeBadge(run: RunSummary): string {
   return badge(run.outcome, run.pass ? "success" : "fail");
 }
 
+function ceoOverallTone(status: CeoStatusSnapshot["overall"]): BadgeTone {
+  if (status === "idle") return "success";
+  if (status === "active") return "info";
+  if (status === "needs_decision" || status === "blocked") return "warn";
+  return "fail";
+}
+
 function attentionList(items: string[]): string {
   const values = items.length ? items : ["none"];
   return values.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+}
+
+function ceoDecisionText(decision: CeoDecisionSummary): string {
+  const subject = decision.subject ? ` subject=${decision.subject}` : "";
+  return `${decision.title} (${decision.status}${subject}) - ${decision.reason}`;
+}
+
+function ceoItemText(item: CeoStatusItem): string {
+  return `${item.title} (${item.kind}:${item.id}, ${item.status})${item.detail ? ` - ${item.detail}` : ""}`;
+}
+
+function ceoList<T>(items: T[], render: (item: T) => string, empty = "none", limit = 6): string {
+  const shown = items.slice(0, limit);
+  const values = shown.length ? shown.map((item) => `<li>${escapeHtml(render(item))}</li>`) : [`<li>${escapeHtml(empty)}</li>`];
+  if (items.length > shown.length) values.push(`<li>${String(items.length - shown.length)} more</li>`);
+  return values.join("");
 }
 
 function twoDigits(value: number): string {
@@ -589,6 +614,12 @@ function renderShell(input: {
     .fact:last-child { border-bottom: 0; padding-bottom: 0; }
     .fact span:first-child { color: var(--muted); }
     .fact span:last-child { text-align: right; overflow-wrap: anywhere; }
+    .ceo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+    .ceo-block { display: grid; gap: 8px; align-content: start; min-width: 0; }
+    .ceo-block h3 { margin: 0; font-size: 12px; color: #334155; }
+    .ceo-list { margin: 0; padding-left: 18px; color: #334155; }
+    .ceo-list li { overflow-wrap: anywhere; }
+    .ceo-next { display: grid; gap: 6px; min-width: 0; }
     .badge {
       display: inline-flex;
       align-items: center;
@@ -677,6 +708,7 @@ function renderShell(input: {
       }
       .nav-link { margin-bottom: 0; }
       .layout { grid-template-columns: 1fr; }
+      .ceo-grid { grid-template-columns: 1fr; }
       th { top: 116px; }
     }
   </style>
@@ -771,6 +803,60 @@ ${rows || '<tr><td colspan="6">No run summaries found.</td></tr>'}
 </section>`;
 }
 
+function renderCeoStatus(status: CeoStatusSnapshot | undefined): string {
+  if (!status) {
+    return `<section class="panel">
+  <h2>CEO Status</h2>
+  <div class="body facts">
+    <div class="fact"><span>Overall</span><span>${badge("unknown", "neutral")}</span></div>
+    <div class="fact"><span>Next safe action</span><span><code>unknown</code></span></div>
+  </div>
+</section>`;
+  }
+
+  const next = status.nextAction.command
+    ? `${status.nextAction.label}: ${status.nextAction.command}`
+    : status.nextAction.label;
+
+  return `<section class="panel" aria-label="CEO status review">
+  <h2>CEO Status</h2>
+  <div class="body">
+    <div class="facts">
+      <div class="fact"><span>Overall</span><span>${badge(status.overall, ceoOverallTone(status.overall))}</span></div>
+      <div class="fact"><span>BK decisions</span><span><code>${String(status.needsDecision.length)}</code></span></div>
+      <div class="fact"><span>Active work</span><span><code>${String(status.active.length)}</code></span></div>
+      <div class="fact"><span>Blocked / recovery</span><span><code>${String(status.blocked.length)}</code></span></div>
+      <div class="fact"><span>Risks</span><span><code>${String(status.risks.length)}</code></span></div>
+    </div>
+    <div class="ceo-grid">
+      <div class="ceo-block">
+        <h3>BK Decisions</h3>
+        <ul class="ceo-list">${ceoList(status.needsDecision, ceoDecisionText)}</ul>
+      </div>
+      <div class="ceo-block">
+        <h3>Active Work</h3>
+        <ul class="ceo-list">${ceoList(status.active, ceoItemText)}</ul>
+      </div>
+      <div class="ceo-block">
+        <h3>Blockers</h3>
+        <ul class="ceo-list">${ceoList(status.blocked, ceoItemText)}</ul>
+      </div>
+      <div class="ceo-block">
+        <h3>Risks</h3>
+        <ul class="ceo-list">${ceoList(status.risks, (risk) => risk)}</ul>
+      </div>
+      <div class="ceo-block">
+        <h3>Next Safe Action</h3>
+        <div class="ceo-next">
+          <div>${escapeHtml(next)}</div>
+          <div class="muted">${escapeHtml(status.nextAction.reason)}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>`;
+}
+
 function renderOverviewContent(runs: RunSummary[], status: DashboardStatus, view: DashboardView): string {
   const replyFailures = view.ops?.telegram.replyState?.failures ?? [];
   const latestReplyFailure = replyFailures.at(-1);
@@ -814,6 +900,8 @@ function renderOverviewContent(runs: RunSummary[], status: DashboardStatus, view
     <div class="detail">Pending queue ${String(view.ops?.queues.pendingInboxCount ?? status.pendingInboxCount ?? 0)} · Pending tasks ${String(pendingTasks)}</div>
   </div>
 </section>
+
+${renderCeoStatus(status.ceoStatus)}
 
 <section class="layout">
   <div class="stack">

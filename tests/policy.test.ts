@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
-import { validateDispatch } from "../src/lib/policy";
+import { DEFAULT_SAFETY_POLICY, validateDispatch } from "../src/lib/policy";
 
 const worker: AgentProfile = {
   id: "codex-worker",
@@ -31,7 +31,20 @@ const validTask: TaskSpec = {
   status: "pending",
 };
 
+const reviewer: AgentProfile = {
+  ...worker,
+  id: "codex-reviewer",
+  role: "reviewer",
+  writerClass: "non-writer",
+  worktreePolicy: "none",
+  mergePolicy: "none",
+};
+
 describe("validateDispatch", () => {
+  test("keeps the default writer cap at one", () => {
+    expect(DEFAULT_SAFETY_POLICY.writerCap).toBe(1);
+  });
+
   test("allows a writer task with target files, forbidden changes, and worktree isolation", () => {
     const result = validateDispatch(validTask, worker);
 
@@ -54,6 +67,55 @@ describe("validateDispatch", () => {
 
     expect(result.mayDispatch).toBe(true);
     expect(result.violations).toEqual([]);
+  });
+
+  test("allows non-writer report-only tasks without target files", () => {
+    const result = validateDispatch(
+      {
+        ...validTask,
+        targetAgent: "codex-reviewer",
+        resultMode: "report",
+        targetFiles: [],
+        forbiddenChanges: ["**/*"],
+      },
+      reviewer,
+    );
+
+    expect(result.mayDispatch).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  test("blocks non-writer tasks that can write", () => {
+    const result = validateDispatch(
+      {
+        ...validTask,
+        targetAgent: "codex-reviewer",
+        resultMode: "write",
+        targetFiles: ["src/lib/policy.ts"],
+      },
+      reviewer,
+    );
+
+    expect(result.mayDispatch).toBe(false);
+    expect(result.violations).toContain("non-writer tasks must use report resultMode");
+    expect(result.violations).toContain("non-writer report tasks must not declare targetFiles");
+  });
+
+  test("blocks non-writer profiles that claim worktree or merge ownership", () => {
+    const result = validateDispatch(
+      {
+        ...validTask,
+        targetAgent: "codex-reviewer",
+        resultMode: "report",
+        targetFiles: [],
+        forbiddenChanges: ["**/*"],
+      },
+      { ...reviewer, worktreePolicy: "per-task", mergePolicy: "samantha-controlled" },
+    );
+
+    expect(result.mayDispatch).toBe(false);
+    expect(result.violations).toContain("non-writer agents must not allocate worktrees");
+    expect(result.violations).toContain("non-writer agents must not use merge policy");
   });
 
   test("blocks writer profiles that do not reserve worktrees for Samantha", () => {

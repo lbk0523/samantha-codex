@@ -3,6 +3,7 @@ import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import type { DaemonHealthResult, DaemonHeartbeat } from "../src/lib/daemon";
 import type { RunSummary } from "../src/lib/ledger";
 import {
+  ceoNotificationReport,
   doctorReport,
   draftProposeAddedReport,
   failuresReport,
@@ -26,7 +27,9 @@ import {
   remoteActionResultReport,
   remoteActionShowReport,
   remoteActionsListReport,
+  remoteApprovalRedirectReport,
   remoteDeprecatedCommandReport,
+  remoteDecisionApprovedReport,
   remoteGoNoActionablePlanReport,
   remoteHelpReport,
   remoteIntegrationReport,
@@ -200,6 +203,7 @@ describe("operator reports", () => {
     expect(report).toContain("/now");
     expect(report).toContain("/work <요청>");
     expect(report).toContain("/plan");
+    expect(report).toContain("/approve");
     expect(report).toContain("/go");
     expect(report).not.toContain("/help_advanced");
     expect(report).not.toContain("/action_current");
@@ -217,6 +221,9 @@ describe("operator reports", () => {
     expect(deprecated).toContain("명령은 제거됐습니다");
     expect(deprecated).toContain("텔레그램: `/now`");
     expect(deprecated).not.toContain("/action_current");
+    expect(remoteDecisionApprovedReport()).toContain("텔레그램: `/go`");
+    expect(remoteDecisionApprovedReport()).not.toContain("decision-");
+    expect(remoteApprovalRedirectReport({ reason: "Telegram approval needs CLI review for decision-abc123" })).toContain("해당 항목");
   });
 
   test("normalizes deprecated command names from free-text report payloads", () => {
@@ -293,6 +300,42 @@ describe("operator reports", () => {
     expect(actionReport).toContain("/problems");
     expect(actionReport).not.toContain("/action_current");
     expect(actionReport).not.toContain("/failures");
+  });
+
+  test("renders compact CEO notification without internal ids or shell commands", () => {
+    const report = ceoNotificationReport({
+      generatedAt: "2026-05-07T11:00:00.000Z",
+      overall: "needs_decision",
+      completed: [],
+      active: [],
+      blocked: [],
+      needsDecision: [
+        {
+          kind: "decision",
+          id: "decision-20260507-plan-abc12345",
+          title: "Review plan: Ship mobile approval",
+          status: "pending",
+          reason: "Approve, request revision, or cancel before Samantha materializes worker tasks.",
+          subject: "orchestrator_plan:plan-20260507-work-def67890",
+        },
+      ],
+      risks: ["Plan needs review before dispatching action-12345"],
+      nextAction: {
+        kind: "resolve_decision",
+        label: "Resolve decision",
+        command: "bun run samantha decisions:resolve decision-20260507-plan-abc12345 --resolution=approved",
+        reason: "BK input required.",
+      },
+    });
+
+    expect(report).toContain("# ceo-notify");
+    expect(report).toContain("결정 필요: Review plan: Ship mobile approval");
+    expect(report).toContain("텔레그램: `/approve`");
+    expect(report).toContain("CLI 또는 dashboard");
+    expect(report).not.toContain("decision-20260507");
+    expect(report).not.toContain("plan-20260507");
+    expect(report).not.toContain("action-12345");
+    expect(report).not.toContain("bun run");
   });
 
   test("renders compact run and failure summaries", () => {
@@ -703,6 +746,13 @@ describe("operator reports", () => {
         ],
       }),
     ).not.toContain("텔레그램: `/recover`");
+    const staleArchivedFailure = nowReport({
+      runs: [failRun],
+      tasks: [{ ...task, id: failRun.taskId, status: "archived", archivedAt: "2026-05-05T10:12:00.000Z", archiveReason: "superseded by recovery" }],
+      actions: [],
+    });
+    expect(staleArchivedFailure).toContain("텔레그램: `/check`");
+    expect(staleArchivedFailure).not.toContain("가장 최근 run이 통과하지 못했습니다.");
   });
 
   test("renders next action reports", () => {
@@ -722,6 +772,11 @@ describe("operator reports", () => {
     );
     expect(nextActionReport({ runs: [passRun], tasks: [] })).toContain("merge:check");
     expect(nextActionReport({ runs: [failRun], tasks: [] })).toContain("tasks:retry task-fail");
+    const archivedFailedTask = { ...task, id: failRun.taskId, status: "archived" as const, archivedAt: "2026-05-04T10:00:00.000Z", archiveReason: "stale failed recovery" };
+    const archivedFailureReport = nextActionReport({ runs: [failRun], tasks: [archivedFailedTask] });
+    expect(archivedFailureReport).toContain("No immediate action.");
+    expect(archivedFailureReport).toContain("stale failure will not be retried");
+    expect(archivedFailureReport).not.toContain("tasks:retry");
   });
 
   test("renders proposal reports without implying execution", () => {
@@ -745,6 +800,8 @@ describe("operator reports", () => {
     expect(planReport).toContain("오케스트레이터 계획을 만들었습니다.");
     expect(planReport).toContain("작업 후보:");
     expect(planReport).toContain("`task-proposal-1`");
+    expect(planReport).toContain("역할 흐름:");
+    expect(planReport).toContain("Writer: Implement planning flow: 구현 산출 (구현/수정)");
     expect(planReport).toContain("계획 다시 보기: `/plan_current`");
     expect(planReport).toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
     expect(planReport).toContain("계획 수정: `/revise <피드백>`");
@@ -843,7 +900,7 @@ describe("operator reports", () => {
     expect(passedPlanResult).toContain("대상 repo: `repo`");
     expect(passedPlanResult).toContain("작업 유형: 구현/수정 - merge 필요");
     expect(passedPlanResult).toContain("완료 작업: 1/1");
-    expect(passedPlanResult).toContain("Pass task: 통과");
+    expect(passedPlanResult).toContain("Writer: Pass task: 통과 (구현/수정)");
     expect(passedPlanResult).toContain("대상: repo / 구현/수정");
     expect(passedPlanResult).toContain("`README.md`");
     expect(passedPlanResult).toContain("텔레그램: `/now`");
@@ -919,6 +976,84 @@ describe("operator reports", () => {
     expect(failedPlanResult).toContain("작업 유형: 구현/수정 - 복구 필요");
     expect(failedPlanResult).toContain("텔레그램: `/recover`");
     expect(failedPlanResult).toContain("verify failed");
+
+    const fixedRecoveryResult = orchestratorPlanResultReport({
+      plan: { ...orchestratorPlan, id: "plan-recovery", requestId: "request-recovery", status: "materialized", actionIds: [passedPlanAction.id] },
+      sourcePlan: { ...orchestratorPlan, id: "plan-original-failed", payload: { ...orchestratorPlan.payload!, summary: "Original failed workflow" } },
+      actions: [passedPlanAction],
+      runLogs: [
+        {
+          schemaVersion: 1,
+          runId: "run-pass",
+          startedAt: "2026-05-05T10:02:00.000Z",
+          finishedAt: "2026-05-05T10:03:00.000Z",
+          task,
+          agent,
+          input: { repoRoot: "/repo", allocate: true, execute: true },
+          result: {
+            preparation: {
+              taskId: task.id,
+              agentId: agent.id,
+              worktreePath: "/worktree",
+              codex: { prompt: "prompt", command: ["codex", "exec"] },
+            },
+            setupResults: [],
+            command: { command: ["codex", "exec"], exitCode: 0, stdout: "", stderr: "" },
+            evaluation: {
+              pass: true,
+              harness: { status: "pass", note: "fixed original failure", commit: "" },
+              changedFiles: ["README.md"],
+              scopeViolations: [],
+              verifyResults: [],
+            },
+            commit: {
+              subject: "fix: recovery",
+              files: ["README.md"],
+              add: { command: ["git", "add", "README.md"], exitCode: 0, stdout: "", stderr: "" },
+              commit: { command: ["git", "commit", "-m", "fix: recovery"], exitCode: 0, stdout: "", stderr: "" },
+              commitHash: "abc123",
+            },
+            pass: true,
+          },
+        },
+      ],
+      synthesis: {
+        outcome: "pass",
+        summary: "recovery fixed the source failure",
+        nextActions: [],
+        risks: [],
+        userMessage: "Recovery fixed the original failure.",
+      },
+    });
+    expect(fixedRecoveryResult).toContain("복구 판단: 원 문제 해결됨 - Original failed workflow");
+
+    const unresolvedRecoveryResult = orchestratorPlanResultReport({
+      plan: { ...orchestratorPlan, id: "plan-recovery-failed", requestId: "request-recovery", status: "materialized", actionIds: ["action-failed"] },
+      sourcePlan: { ...orchestratorPlan, id: "plan-original-failed", payload: { ...orchestratorPlan.payload!, summary: "Original failed workflow" } },
+      actions: [
+        {
+          ...createRemoteDispatchAction({
+            task,
+            repoRoot: "/repo",
+            createdAt: "2026-05-05T10:04:00.000Z",
+            source: "remote",
+            commandId: "remote-go-recovery-failed",
+          }),
+          id: "action-failed",
+          status: "failed",
+          result: { pass: false, outcome: "fail", failure: "verify failed" },
+        },
+      ],
+      runLogs: [],
+      synthesis: {
+        outcome: "failed",
+        summary: "recovery did not fix the source failure",
+        nextActions: [],
+        risks: [],
+        userMessage: "Original failure remains.",
+      },
+    });
+    expect(unresolvedRecoveryResult).toContain("복구 판단: 원 문제 미해결 - Original failed workflow 추가 복구 필요");
 
     const recovery = orchestratorRecoveryRequestReport({
       request: { ...orchestrationRequest, id: "request-recover", status: "pending_plan" },

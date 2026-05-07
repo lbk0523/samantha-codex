@@ -176,4 +176,16 @@ describe("daemon lock and health", () => {
     expect(timer).toContain("AccuracySec=1s");
     expect(timer).toContain("WantedBy=timers.target");
   });
+
+  test("ships systemd user timer templates for periodic CEO notifications", async () => {
+    const service = await readFile(resolve("ops/systemd/samantha-ceo-notify.service"), "utf8");
+    const timer = await readFile(resolve("ops/systemd/samantha-ceo-notify.timer"), "utf8");
+
+    expect(service).toContain("EnvironmentFile=-%h/projects/samantha-codex/.env");
+    expect(service).toContain("ExecStart=%h/.bun/bin/bun run samantha ceo:notify");
+    expect(service).toContain("TimeoutStartSec=45");
+    expect(timer).toContain("OnCalendar=hourly");
+    expect(timer).toContain("Persistent=true");
+    expect(timer).toContain("WantedBy=timers.target");
+  });
 });

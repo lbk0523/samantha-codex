@@ -8,9 +8,11 @@ export interface PreparedCodexDispatch {
 export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): string {
   const reportOnly = task.resultMode === "report";
   const writeBoundary =
-    reportOnly
-      ? "This is a report-only task. You may inspect files and return a HARNESS_RESULT without changing files. If you do change files, stay inside targetFiles."
-      : agent.writerClass === "writer"
+    agent.writerClass === "non-writer"
+      ? "This is a non-writer report-only task. Do not edit, create, delete, format, commit, push, or move files."
+      : reportOnly
+        ? "This is a report-only task. Inspect files and return a HARNESS_RESULT without editing, creating, deleting, formatting, committing, pushing, or moving files."
+        : agent.writerClass === "writer"
       ? "Do not create worktrees. Do not dispatch subagents. Do not commit or push. Samantha creates the commit after safety gates pass. Do not modify files outside targetFiles."
       : "This is a non-writer task. Do not edit, create, delete, format, commit, push, or move files.";
   const targetFiles =

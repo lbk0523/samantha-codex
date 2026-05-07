@@ -66,6 +66,8 @@ describe("collectOpsSnapshot", () => {
       "samantha-telegram-poll.timer",
       "samantha-telegram-reply.service",
       "samantha-telegram-reply.timer",
+      "samantha-ceo-notify.service",
+      "samantha-ceo-notify.timer",
     ]) {
       await writeFile(join(systemdDir, file), "", "utf8");
     }
@@ -167,8 +169,29 @@ describe("collectOpsSnapshot", () => {
     const stateDir = join(root, "state");
     const lockPath = join(stateDir, "daemon.lock");
     const heartbeatPath = join(stateDir, "heartbeat.json");
+    const systemdDir = join(root, "systemd");
+    const codexBin = join(root, "bin", "codex");
     await mkdir(stateDir, { recursive: true });
-    await writeFile(join(root, ".env"), "TELEGRAM_BOT_TOKEN=secret\nTELEGRAM_CHAT_ID=12345\nSAMANTHA_CODEX_BIN=/bin/true\n", "utf8");
+    await mkdir(systemdDir, { recursive: true });
+    await mkdir(join(root, "bin"), { recursive: true });
+    for (const file of [
+      "samantha-inbox-watch.service",
+      "samantha-actions-watch.service",
+      "samantha-telegram-poll.service",
+      "samantha-telegram-poll.timer",
+      "samantha-telegram-reply.service",
+      "samantha-telegram-reply.timer",
+      "samantha-ceo-notify.service",
+      "samantha-ceo-notify.timer",
+    ]) {
+      await writeFile(join(systemdDir, file), "", "utf8");
+    }
+    await writeFile(codexBin, "", "utf8");
+    await writeFile(
+      join(root, ".env"),
+      `TELEGRAM_BOT_TOKEN=secret\nTELEGRAM_CHAT_ID=12345\nSAMANTHA_CODEX_BIN=${codexBin}\n`,
+      "utf8",
+    );
     await acquireDaemonLock({
       lockPath,
       command: "inbox:watch",
@@ -197,7 +220,7 @@ describe("collectOpsSnapshot", () => {
       lockPath,
       telegramOffsetPath: join(root, "state", "telegram-offset.json"),
       telegramRepliesPath: join(root, "state", "telegram-replies.json"),
-      systemdUserDir: join(root, "systemd"),
+      systemdUserDir: systemdDir,
       now: new Date("2026-05-03T10:00:11.000Z"),
       isAlive: () => false,
     });

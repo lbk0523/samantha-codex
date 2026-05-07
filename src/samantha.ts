@@ -1,7 +1,19 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
+import { buildCeoStatusSnapshot, formatCeoStatusReport, type CeoStatusSnapshot } from "./lib/ceo-status";
+import { buildCeoReportId, CeoReportStore, type CeoReportRecord } from "./lib/ceo-report-store";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
+import {
+  decisionAllowsOrchestratorMaterialization,
+  decisionFromQuestionDraft,
+  decisionFromOrchestratorPlan,
+  DecisionStore,
+  type DecisionItem,
+  type DecisionKind,
+  type DecisionResolution,
+  type DecisionSubject,
+} from "./lib/decision-store";
 import { writeDashboard, type LiveRunEvent, type LiveRunStatus } from "./lib/dashboard";
 import { compactOutboxFileName } from "./lib/ids";
 import { processInbox, type InboxCommand } from "./lib/inbox";
@@ -10,6 +22,7 @@ import { buildWorkerLiveLogPath, formatWorkerLiveLogLine, startTmuxObserver, sto
 import { applyMerge, evaluateMergeGate, pushMerge, readWorkerRunLog } from "./lib/merge-gate";
 import {
   doctorReport,
+  ceoNotificationReport,
   draftProposeAddedReport,
   failuresReport,
   healthReport,
@@ -30,6 +43,8 @@ import {
   remoteHelpReport,
   remoteDeprecatedCommandReport,
   remoteGoNoActionablePlanReport,
+  remoteApprovalRedirectReport,
+  remoteDecisionApprovedReport,
   remoteActionApprovedReport,
   remoteIntegrationReport,
   type RemoteActionArtifactPreview,
@@ -52,7 +67,7 @@ import {
   taskShowReport,
 } from "./lib/operator-reports";
 import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnostics";
-import { runOrchestratorPlan, runOrchestratorSynthesis } from "./lib/orchestrator-agent";
+import { runOrchestratorPlan, runOrchestratorQuestionDraft, runOrchestratorSynthesis } from "./lib/orchestrator-agent";
 import { materializeOrchestratorPlan } from "./lib/orchestrator-materializer";
 import {
   buildOrchestrationRequestId,
@@ -76,6 +91,8 @@ import {
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
 import { createRemoteDispatchAction, RemoteActionStore, type RemoteActionRecord } from "./lib/remote-action-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
+import { recoveryResolvedPlanIds } from "./lib/recovery-continuity";
+import { buildRecoveryRequestText } from "./lib/recovery-context";
 import { lifecycleBaseFromRunLog, RunLifecycleStore, type RunLifecycleRecord } from "./lib/run-lifecycle-store";
 import { buildWorkerRunId, writeWorkerRunLog, type WorkerRunLog } from "./lib/run-log";
 import {
@@ -168,6 +185,14 @@ function remoteActionsPath(args: ParsedArgs): string {
   return join(stateDir(args), "remote-actions.jsonl");
 }
 
+function ceoReportsPath(args: ParsedArgs): string {
+  return join(stateDir(args), "ceo-reports.jsonl");
+}
+
+function decisionsPath(args: ParsedArgs): string {
+  return join(stateDir(args), "decisions.jsonl");
+}
+
 function actionRunnerLockPath(args: ParsedArgs): string {
   return resolve(flag(args, "actions-lock-file", join(stateDir(args), "actions.lock")));
 }
@@ -239,6 +264,49 @@ function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
 
+function decisionKind(value: string): DecisionKind {
+  if (
+    value === "manual" ||
+    value === "orchestrator_plan_approval" ||
+    value === "orchestrator_questions" ||
+    value === "blocker_clarification" ||
+    value === "risk_acceptance"
+  ) {
+    return value;
+  }
+  throw new Error(`unsupported decision kind: ${value}`);
+}
+
+function decisionResolution(value: string): DecisionResolution {
+  if (
+    value === "approved" ||
+    value === "rejected" ||
+    value === "needs_revision" ||
+    value === "answered" ||
+    value === "canceled"
+  ) {
+    return value;
+  }
+  throw new Error(`unsupported decision resolution: ${value}`);
+}
+
+function decisionSubject(args: ParsedArgs): DecisionSubject | undefined {
+  const type = args.flags.get("subject-type");
+  const id = args.flags.get("subject-id");
+  if (type === undefined && id === undefined) return undefined;
+  if (typeof type !== "string" || typeof id !== "string" || !type || !id) {
+    throw new Error("decision subject requires --subject-type and --subject-id");
+  }
+  if (type !== "manual" && type !== "orchestrator_plan" && type !== "remote_action" && type !== "task" && type !== "run") {
+    throw new Error(`unsupported decision subject type: ${type}`);
+  }
+  return { type, id };
+}
+
+function decisionOptions(value: string): string[] {
+  return value.split(",").map((option) => option.trim()).filter(Boolean);
+}
+
 async function formatLiveLogFromStdin(): Promise<void> {
   const decoder = new TextDecoder();
   let buffer = "";
@@ -297,17 +365,49 @@ async function loadAgentProfilesById(args: ParsedArgs, agentIds: string[]): Prom
 }
 
 async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
-  const runs = await new RunIndex(runsPath(args)).list();
+  const [
+    runs,
+    tasks,
+    actions,
+    decisions,
+    proposals,
+    drafts,
+    orchestrationRequests,
+    orchestratorPlans,
+    ops,
+    lifecycles,
+  ] = await Promise.all([
+    new RunIndex(runsPath(args)).list(),
+    new TaskStore(tasksPath(args)).list(),
+    new RemoteActionStore(remoteActionsPath(args)).list(),
+    new DecisionStore(decisionsPath(args)).list(),
+    new ProposalStore(proposalsPath(args)).list(),
+    new TaskDraftStore(taskDraftsPath(args)).list(),
+    new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
+    new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
+    collectOps(args),
+    new RunLifecycleStore(runLifecyclePath(args)).list(),
+  ]);
   const inboxDir = resolve(flag(args, "inbox-dir", join(root, "inbox")));
   await writeDashboard(out, runs, {
     heartbeat: await readDaemonHeartbeat(heartbeatPath(args)),
     pendingInboxCount: await pendingInboxCount(inboxDir),
-    ops: await collectOps(args),
-    proposals: await new ProposalStore(proposalsPath(args)).list(),
-    drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
-    tasks: await new TaskStore(tasksPath(args)).list(),
-    lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
+    ops,
+    proposals,
+    drafts,
+    tasks,
+    lifecycles,
     liveRuns: await readLiveRuns(logDir(args)),
+    ceoStatus: buildCeoStatusSnapshot({
+      runs,
+      tasks,
+      decisions,
+      actions,
+      orchestrationRequests,
+      orchestratorPlans,
+      ops,
+      lifecycles,
+    }),
   });
   return runs.length;
 }
@@ -643,23 +743,16 @@ async function writeOrchestratorPlanResultOutbox(args: ParsedArgs, plan: Orchest
     return;
   }
 
-  const runLogs = (
-    await Promise.all(
-      actions.map(async (action) => {
-        if (!action.result?.runLogPath) return undefined;
-        try {
-          return await readWorkerRunLog(action.result.runLogPath);
-        } catch {
-          return undefined;
-        }
-      }),
-    )
-  ).filter((log): log is WorkerRunLog => log !== undefined);
+  const runLogs = await readRunLogsForActions(actions);
+  const request = await new OrchestrationRequestStore(orchestrationRequestsPath(args)).find(plan.requestId);
+  const sourcePlan = request?.recoveryOfPlanId
+    ? await new OrchestratorPlanStore(orchestratorPlansPath(args)).find(request.recoveryOfPlanId)
+    : undefined;
   const synthesis = await (async () => {
     try {
       return await runOrchestratorSynthesis({
         plan,
-        request: await new OrchestrationRequestStore(orchestrationRequestsPath(args)).find(plan.requestId),
+        request,
         actions,
         runLogs,
         agent: await loadAgentProfile(args, "codex-orchestrator"),
@@ -686,6 +779,7 @@ async function writeOrchestratorPlanResultOutbox(args: ParsedArgs, plan: Orchest
       runLogs,
       synthesis: synthesis.payload,
       synthesisFailure: synthesis.failure,
+      sourcePlan,
     })}\n`,
     "utf8",
   );
@@ -759,10 +853,12 @@ async function latestRecoverableOrchestratorPlan(args: ParsedArgs): Promise<
   ]);
   const actionsById = new Map(actions.map((action) => [action.id, action]));
   const requestsById = new Map(requests.map((request) => [request.id, request]));
+  const resolvedPlanIds = recoveryResolvedPlanIds({ requests, plans, actions });
 
   for (const plan of plans.slice().reverse()) {
     const actionIds = plan.actionIds ?? [];
     if (plan.status !== "materialized" || !plan.resultReportedAt || actionIds.length === 0) continue;
+    if (resolvedPlanIds.has(plan.id)) continue;
 
     const planActions = actionIds.map((id) => actionsById.get(id));
     if (planActions.some((action) => !action)) continue;
@@ -786,72 +882,6 @@ async function latestRecoverableOrchestratorPlan(args: ParsedArgs): Promise<
   }
 
   return undefined;
-}
-
-function recoveryRequestText(input: RecoverableOrchestratorPlan): string {
-  const plan = input.plan;
-  const failedActions = input.failedActions.length ? input.failedActions : input.actions.filter(actionNeedsRecovery);
-  const runLogForAction = (action: RemoteActionRecord) =>
-    input.runLogs.find((log) => log.runId === action.result?.runId || log.task.id === action.taskId);
-  const changedFiles = Array.from(
-    new Set(
-      failedActions.flatMap((action) => {
-        const runLog = runLogForAction(action);
-        return runLog?.result.evaluation?.changedFiles ?? runLog?.result.commit?.files ?? [];
-      }),
-    ),
-  );
-  const runLogPaths = Array.from(new Set(failedActions.flatMap((action) => action.result?.runLogPath ? [action.result.runLogPath] : [])));
-  const lines = [
-    "복구 계획 요청입니다.",
-    "",
-    `실패한 계획: ${plan.id}`,
-    `원 요청 ID: ${plan.requestId}`,
-    input.request?.text ? `원 요청: ${compactLine(input.request.text)}` : "",
-    plan.payload?.summary ? `원 계획 요약: ${compactLine(plan.payload.summary)}` : "",
-    plan.synthesis?.summary ? `결과 종합: ${compactLine(plan.synthesis.summary)}` : "",
-    plan.synthesis?.userMessage ? `결과 메시지: ${compactLine(plan.synthesis.userMessage)}` : "",
-    "",
-    "실패 action:",
-    ...(failedActions.length
-      ? failedActions.flatMap((action) => {
-          const runLog = runLogForAction(action);
-          const actionFiles = runLog?.result.evaluation?.changedFiles ?? runLog?.result.commit?.files ?? [];
-          return [
-            `- ${action.taskTitle}: status=${action.status} outcome=${action.result?.outcome ?? "unknown"}`,
-            action.result?.failure ? `  실패 이유: ${compactLine(action.result.failure)}` : "",
-            actionFiles.length ? `  관련 변경/산출: ${actionFiles.map(compactLine).join(", ")}` : "",
-            action.result?.runLogPath ? `  run log: ${action.result.runLogPath}` : "",
-          ].filter(Boolean);
-        })
-      : ["- action 자체 실패는 없지만 오케스트레이터 종합 결과가 복구 필요 상태입니다."]),
-    "",
-    "관련 변경/산출:",
-    ...(changedFiles.length ? changedFiles.slice(0, 12).map((file) => `- ${file}`) : ["- 실패 action에서 변경 파일을 찾지 못했습니다. run log를 참고하세요."]),
-    changedFiles.length > 12 ? `- 외 ${changedFiles.length - 12}개` : "",
-    "",
-    "Run log 참고:",
-    ...(runLogPaths.length ? runLogPaths.map((path) => `- ${path}`) : ["- 없음"]),
-    input.artifactPreviews.length ? "" : "",
-    ...(input.artifactPreviews.length
-      ? [
-          "산출물 미리보기:",
-          ...input.artifactPreviews.slice(0, 2).flatMap((preview) => [
-            `파일: ${preview.file}`,
-            clipText(preview.text, 800),
-          ]),
-        ]
-      : []),
-    "",
-    "요청:",
-    "위 실패 원인을 먼저 재검토하고, 무작정 retry하지 말고 복구 계획을 제안하세요.",
-    "복구 task는 project profile의 canonical repoRoot에서 시작해야 합니다.",
-    "실패 run log나 worker worktree path를 repoRoot로 복사하지 마세요.",
-    "repoRoot가 불확실하면 비워 두고 projectId를 맞춰 materializer가 profile 기본값을 쓰게 하세요.",
-    "필요하면 원인 확인용 report task를 먼저 두고, 수정/검증 task는 의존 관계로 분리하세요.",
-  ];
-
-  return clipText(lines.join("\n"), 4000);
 }
 
 function revisionRequestText(input: {
@@ -1064,6 +1094,138 @@ async function nowReportForInbox(args: ParsedArgs): Promise<string> {
     ops: withoutActiveInboxCommand(ops),
     lifecycles,
   });
+}
+
+async function loadCeoStatusSnapshot(args: ParsedArgs): Promise<CeoStatusSnapshot> {
+  const [runs, tasks, decisions, actions, orchestrationRequests, orchestratorPlans, ops, lifecycles] = await Promise.all([
+    new RunIndex(runsPath(args)).list(),
+    new TaskStore(tasksPath(args)).list(),
+    new DecisionStore(decisionsPath(args)).list(),
+    new RemoteActionStore(remoteActionsPath(args)).list(),
+    new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
+    new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
+    collectOps(args),
+    new RunLifecycleStore(runLifecyclePath(args)).list(),
+  ]);
+
+  return buildCeoStatusSnapshot({
+    runs,
+    tasks,
+    decisions,
+    actions,
+    orchestrationRequests,
+    orchestratorPlans,
+    ops,
+    lifecycles,
+  });
+}
+
+async function ensureDecisionForOrchestratorPlan(input: {
+  args: ParsedArgs;
+  plan: OrchestratorPlanRecord;
+  request?: OrchestrationRequestRecord;
+  createdAt: string;
+}): Promise<DecisionItem | undefined> {
+  const subject: DecisionSubject = { type: "orchestrator_plan", id: input.plan.id };
+  const store = new DecisionStore(decisionsPath(input.args));
+  const existing = await store.latestForSubject(subject);
+  if (existing) return existing;
+
+  const decision = decisionFromOrchestratorPlan({
+    plan: input.plan,
+    request: input.request,
+    createdAt: input.createdAt,
+    source: "system",
+  });
+  if (!decision) return undefined;
+  await store.append(decision);
+  return decision;
+}
+
+function decisionGateReport(decision: DecisionItem | undefined): string {
+  if (!decision) {
+    return ["# decision-required", "", "BK decision required, but no decision item could be created."].join("\n");
+  }
+
+  return [
+    "# decision-required",
+    "",
+    "BK decision required before Samantha materializes worker tasks.",
+    `Status: ${decision.status}`,
+    `Title: ${decision.title}`,
+    `Prompt: ${decision.prompt}`,
+    decision.risk ? `Risk: ${decision.risk}` : "",
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${decision.kind === "orchestrator_plan_approval" ? "`/approve`" : "`/revise <피드백>`"}`,
+    `- 텔레그램: ${"`/cancel`"}`,
+    "",
+    "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function approveLatestRemoteDecision(args: ParsedArgs, receivedAt: string): Promise<string> {
+  const store = new DecisionStore(decisionsPath(args));
+  const pending = await store.listPending();
+  const approvable = pending.filter(
+    (decision) => decision.kind === "orchestrator_plan_approval" && decision.options.includes("approve"),
+  );
+
+  if (pending.length !== 1 || approvable.length !== 1) {
+    return remoteApprovalRedirectReport({
+      reason: pending.length === 0
+        ? "승인할 단일 계획 결정이 없습니다."
+        : "Telegram approval is only allowed when exactly one plan approval decision is pending.",
+    });
+  }
+
+  await store.resolve(approvable[0].id, {
+    resolvedAt: receivedAt,
+    resolution: "approved",
+    note: "Approved via Telegram /approve.",
+  });
+  return remoteDecisionApprovedReport();
+}
+
+async function writeCeoNotificationOutbox(
+  args: ParsedArgs,
+  snapshot: CeoStatusSnapshot,
+  createdAt: string,
+): Promise<{ file: string; path: string; record: CeoReportRecord }> {
+  const file = compactOutboxFileName({
+    createdAt,
+    kind: "ceo-notify",
+    label: snapshot.overall,
+    source: `${createdAt}-${snapshot.overall}-${snapshot.nextAction.kind}`,
+  });
+  const dir = outboxDir(args);
+  const path = join(dir, file);
+  const record: CeoReportRecord = {
+    schemaVersion: 1,
+    id: buildCeoReportId({ generatedAt: createdAt, outboxFile: file, overall: snapshot.overall }),
+    kind: "ceo_notify",
+    generatedAt: createdAt,
+    outboxFile: file,
+    outboxPath: path,
+    deliveryStatePath: telegramRepliesPath(args),
+    overall: snapshot.overall,
+    nextActionKind: snapshot.nextAction.kind,
+    decisionCount: snapshot.needsDecision.length,
+    activeCount: snapshot.active.length,
+    blockedCount: snapshot.blocked.length,
+    riskCount: snapshot.risks.length,
+  };
+  const store = new CeoReportStore(ceoReportsPath(args));
+  const existingRecord = await store.find(record.id);
+  if (existingRecord) {
+    return { file: existingRecord.outboxFile, path: existingRecord.outboxPath, record: existingRecord };
+  }
+  const persistedRecord = await store.append(record);
+  await mkdir(dir, { recursive: true });
+  await writeFile(path, `${ceoNotificationReport(snapshot)}\n`, "utf8");
+  return { file, path, record: persistedRecord };
 }
 
 function lifecycleBaseInput(input: { log: WorkerRunLog; run: RunSummary; updatedAt: string }) {
@@ -1359,9 +1521,10 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       id: String(command.args?.requestId ?? buildOrchestrationRequestId(receivedAt, `recover-${recoverable.plan.id}`)),
       source: command.args?.source === "local" ? "local" : "remote",
       senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
-      text: recoveryRequestText(recoverable),
+      text: buildRecoveryRequestText(recoverable),
       status: "pending_plan",
       createdAt: receivedAt,
+      recoveryOfPlanId: recoverable.plan.id,
     };
     await new OrchestrationRequestStore(orchestrationRequestsPath(args)).append(request);
     return orchestratorRecoveryRequestReport({
@@ -1369,6 +1532,9 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       sourcePlan: recoverable.plan,
       failedActions: recoverable.failedActions,
     });
+  }
+  if (command.type === "decisions:approve-latest") {
+    return approveLatestRemoteDecision(args, String(command.args?.receivedAt ?? new Date().toISOString()));
   }
   if (command.type === "orchestrator:revise-latest") {
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
@@ -1448,6 +1614,12 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     await new OrchestratorPlanStore(orchestratorPlansPath(args)).append(plan);
     const reportedRequest =
       plan.status === "failed" ? request : await requestStore.markPlanned(request.id, plan.completedAt ?? receivedAt);
+    await ensureDecisionForOrchestratorPlan({
+      args,
+      plan,
+      request: reportedRequest,
+      createdAt: plan.completedAt ?? receivedAt,
+    });
     return orchestratorPlanReport({ request: reportedRequest, plan });
   }
   if (command.type === "orchestrator:show-current-plan") {
@@ -1684,6 +1856,16 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
         return orchestratorGoBlockedReport({ plan: orchestratorPlan });
       }
 
+      const decision = await ensureDecisionForOrchestratorPlan({
+        args,
+        plan: orchestratorPlan,
+        request: await new OrchestrationRequestStore(orchestrationRequestsPath(args)).find(orchestratorPlan.requestId),
+        createdAt: receivedAt,
+      });
+      if (!decisionAllowsOrchestratorMaterialization(decision)) {
+        return decisionGateReport(decision);
+      }
+
       const taskStore = new TaskStore(tasksPath(args));
       const actionStore = new RemoteActionStore(remoteActionsPath(args));
       const materialized = materializeOrchestratorPlan({
@@ -1762,6 +1944,99 @@ async function main(): Promise<void> {
 
   if (args.command === "live:format") {
     await formatLiveLogFromStdin();
+    return;
+  }
+
+  if (args.command === "decisions:create") {
+    const title = flag(args, "title", "");
+    const prompt = flag(args, "prompt", "");
+    if (!title || !prompt) throw new Error("usage: decisions:create --title=<text> --prompt=<text>");
+    const decision = await new DecisionStore(decisionsPath(args)).create({
+      title,
+      prompt,
+      kind: decisionKind(flag(args, "kind", "manual")),
+      source: "local",
+      subject: decisionSubject(args),
+      options: decisionOptions(flag(args, "options", "approve,reject,revise")),
+      risk: flag(args, "risk", "") || undefined,
+      createdAt: flag(args, "created-at", new Date().toISOString()),
+    });
+    printJson(decision);
+    return;
+  }
+
+  if (args.command === "decisions:list") {
+    const store = new DecisionStore(decisionsPath(args));
+    printJson(args.flags.get("pending") === true ? await store.listPending() : await store.list());
+    return;
+  }
+
+  if (args.command === "decisions:resolve") {
+    const id = args.positionals[0];
+    if (!id) throw new Error("usage: decisions:resolve <decision-id> --resolution=<approved|rejected|needs_revision|answered|canceled>");
+    const resolved = await new DecisionStore(decisionsPath(args)).resolve(id, {
+      resolvedAt: flag(args, "resolved-at", new Date().toISOString()),
+      resolution: decisionResolution(flag(args, "resolution", "")),
+      note: flag(args, "note", "") || undefined,
+    });
+    printJson(resolved);
+    return;
+  }
+
+  if (args.command === "decisions:archive") {
+    const id = args.positionals[0];
+    const reason = flag(args, "reason", "");
+    if (!id || !reason) throw new Error("usage: decisions:archive <decision-id> --reason=<text>");
+    printJson(
+      await new DecisionStore(decisionsPath(args)).archive(id, {
+        archivedAt: flag(args, "archived-at", new Date().toISOString()),
+        reason,
+      }),
+    );
+    return;
+  }
+
+  if (args.command === "orchestrator:question-draft") {
+    const blocker = flag(args, "blocker", "");
+    if (!blocker) throw new Error("usage: orchestrator:question-draft --blocker=<text> [--context=<text>]");
+    const subject = decisionSubject(args);
+    const result = await runOrchestratorQuestionDraft({
+      blocker,
+      context: flag(args, "context", "") || undefined,
+      subject,
+      agent: await loadAgentProfile(args, "codex-orchestrator"),
+      repoRoot: orchestratorRepoRoot(args),
+      codexBin: codexBin(args),
+    });
+    if (!result.payload) {
+      printJson({ ok: false, command: result.command, rawOutput: result.rawOutput, failure: result.failure });
+      return;
+    }
+    const decision = decisionFromQuestionDraft({
+      payload: result.payload,
+      subject,
+      createdAt: flag(args, "created-at", new Date().toISOString()),
+      source: "system",
+    });
+    await new DecisionStore(decisionsPath(args)).append(decision);
+    printJson({ ok: true, decision, draft: result.payload, command: result.command });
+    return;
+  }
+
+  if (args.command === "ceo:status") {
+    const snapshot = await loadCeoStatusSnapshot(args);
+    if (args.flags.get("json") === true) {
+      printJson(snapshot);
+    } else {
+      console.log(formatCeoStatusReport(snapshot, { completedLimit: Number(flag(args, "limit", "10")) }));
+    }
+    return;
+  }
+
+  if (args.command === "ceo:notify") {
+    const createdAt = flag(args, "created-at", new Date().toISOString());
+    const snapshot = await loadCeoStatusSnapshot(args);
+    printJson(await writeCeoNotificationOutbox(args, snapshot, createdAt));
     return;
   }
 
@@ -2485,6 +2760,13 @@ async function main(): Promise<void> {
       "  inbox:watch",
       "  actions:run-pending [--limit=1]",
       "  actions:watch [--interval-ms=1000] [--limit=1]",
+      "  ceo:status [--json] [--limit=10]",
+      "  ceo:notify",
+      "  decisions:create --title=<text> --prompt=<text>",
+      "  decisions:list [--pending]",
+      "  decisions:resolve <decision-id> --resolution=<approved|rejected|needs_revision|answered|canceled>",
+      "  decisions:archive <decision-id> --reason=<text>",
+      "  orchestrator:question-draft --blocker=<text> [--context=<text>]",
       "  next-action",
       "  doctor [--json]",
       "  health:check [--max-age-ms=15000]",

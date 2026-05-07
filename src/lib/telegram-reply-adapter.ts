@@ -119,6 +119,9 @@ function headingTitle(line: string): string | undefined {
     "plan-result": "계획 결과",
     "execution-result": "실행 결과",
     recover: "복구 요청",
+    approve: "승인",
+    "ceo-notify": "CEO 알림",
+    "decision-required": "결정 필요",
     revise: "계획 수정",
     cancel: "취소",
     "ops:doctor": "운영 점검",
@@ -143,7 +146,7 @@ function compactLine(rawLine: string): string | undefined {
     return `- ${taskCandidate[1].trim()}`;
   }
 
-  if (/^(?:요청|계획|액션|런|커밋|기록|Run log|Live log|Tmux|Source proposal|원본 제안):/.test(trimmed)) {
+  if (/^(?:요청|계획|액션|런|커밋|기록|Decision|Subject|Run log|Live log|Tmux|Source proposal|원본 제안):/.test(trimmed)) {
     return undefined;
   }
   if (/^(?:Saved proposal|저장된 제안|저장된 요청|Saved draft|저장된 드래프트|Approved draft|승인된 드래프트|Created task|생성된 task):/.test(trimmed)) {

@@ -97,6 +97,7 @@ describe("prepareWorkerDispatch", () => {
           ...task,
           id: "worker-dispatch-reviewer-fixture",
           targetAgent: "codex-reviewer",
+          resultMode: "report",
           targetFiles: [],
           forbiddenChanges: ["**/*"],
         },
@@ -221,6 +222,58 @@ describe("prepareWorkerDispatch", () => {
       expect(result.evaluation?.changedFiles).toEqual([]);
       expect(result.commit).toBeUndefined();
       expect(result.pass).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails report-only specialist tasks that edit files and does not commit", async () => {
+    const root = await makeRepo();
+    const fakeCodex = join(root, "fake-codex");
+    try {
+      await writeFile(
+        fakeCodex,
+        [
+          "#!/usr/bin/env bash",
+          "while [ \"$1\" != \"--cd\" ]; do shift; done",
+          "shift",
+          "cd \"$1\"",
+          "echo changed > README.md",
+          "echo 'HARNESS_RESULT: {\"status\":\"pass\",\"note\":\"edited report\",\"commit\":\"\"}'",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const result = await executeWorkerDispatch({
+        task: {
+          ...task,
+          id: "report-only-specialist-edit-fixture",
+          targetAgent: "codex-reviewer",
+          targetFiles: [],
+          forbiddenChanges: ["**/*"],
+          verifyCommands: ["test -f README.md"],
+          resultMode: "report",
+        },
+        agent: {
+          ...agent,
+          id: "codex-reviewer",
+          role: "reviewer",
+          writerClass: "non-writer",
+          worktreePolicy: "none",
+          mergePolicy: "none",
+        },
+        repoRoot: root,
+        allocate: true,
+        worktreesDir: "worktrees",
+        codexBin: fakeCodex,
+      });
+
+      expect(result.evaluation?.changedFiles).toEqual(["README.md"]);
+      expect(result.evaluation?.scopeViolations).toEqual([{ file: "README.md", reason: "outside-target" }]);
+      expect(result.commit).toBeUndefined();
+      expect(result.pass).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

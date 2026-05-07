@@ -1,10 +1,10 @@
 # Samantha-Codex Next Plan
 
-Last updated: 2026-05-06
+Last updated: 2026-05-07
 
 ## Current Baseline
 
-The first useful Telegram remote-work loop now exists:
+The first useful remote-work loop now exists, but the MVP priority is now status reporting and work operations rather than a Telegram-first command bot:
 
 - `/work <request>` records an orchestration request.
 - `/plan` runs `codex-orchestrator` in read-only mode and stores a structured plan.
@@ -16,7 +16,7 @@ The first useful Telegram remote-work loop now exists:
 - `actions:watch` reruns `codex-orchestrator` in synthesis mode and writes one compact `# plan-result` report after all actions for a materialized plan finish.
 - `/recover` turns the latest failed materialized plan result into a new orchestration request for the next `/plan`, with failed-plan context instead of a blind retry.
 
-The Telegram command surface has been compressed. The supported routine commands are:
+The Telegram command surface has been compressed and should remain an adapter for notification, approval, short feedback, and status checks. The supported routine commands are:
 
 - `/start`
 - `/help`
@@ -33,7 +33,7 @@ The Telegram command surface has been compressed. The supported routine commands
 
 Older proposal/draft/task/action/run id commands are deprecated in Telegram and return replacement guidance. Local CLI and direct inbox commands remain available for debugging, recovery, and precise state inspection.
 
-The Control Plane remains responsible for safety, state, dispatch, verification, merge, push, cleanup, and audit. The Orchestrator Agent proposes plans and synthesizes results; it does not bypass Control Plane gates.
+The deterministic CEO office remains responsible for safety, state, dispatch, verification, merge, push, cleanup, audit, and status reporting. The Orchestrator Agent is a bounded LLM call that proposes plans and synthesizes results; it does not stay alive to remember state and it does not bypass deterministic gates.
 
 ## Current Operating Status
 
@@ -68,50 +68,75 @@ Demoted from Telegram:
 
 Conclusion: the Control Plane still stands. The current product direction is to keep Telegram as a decision UI, not as an exposed internal command catalog.
 
+Add:
+
+- first-class status reporting and work operations model
+- BK decision queue
+- CLI and dashboard status views as primary review surfaces
+- Telegram as notification and approval adapter
+
 ## Target Workflow
 
 ```text
 BK
-  -> /work <request>
-Samantha Orchestrator Agent
-  -> interprets request
-  -> asks clarification only when needed
-  -> proposes scope, risks, tasks, agents, dependencies, and verification
+  -> checks CLI 또는 dashboard status report, or receives Telegram notification
+Deterministic CEO Office
+  -> reports active work, completed work, blockers, risks, BK decisions, and next actions
 BK
-  -> /go or /revise <feedback>
-Samantha Control Plane
+  -> approves, redirects, or submits a small request
+Bounded Orchestrator Agent Call
+  -> proposes scope, risks, tasks, agents, dependencies, verification, or minimal BK questions
+Deterministic CEO Office
   -> materializes approved plan into tasks/actions
   -> runs approved actions through actions:watch
   -> promotes dependencies safely
   -> verifies, records, and gates integration
-Samantha Orchestrator Agent
+Bounded Orchestrator Agent Call
   -> synthesizes final result report for BK
 BK
-  -> /go for merge/push/cleanup gates, /recover for failed plan result, or /check
+  -> approves next gate, requests recovery, or reviews the next status report
 ```
 
 ## Next Objective
 
-Improve the practical trustworthiness of the compressed Telegram workflow. N1-N3 now focus the result and recovery loop after a plan has been executed, without adding more Telegram commands.
+Improve the practical trustworthiness of Samantha as a status reporting and work operations system. N1-N3 focus on report quality, decision queues, and recovery without expanding Telegram commands.
 
-### Slice N1: Result Report Quality
+The staged roadmap and the Stage 1 implementation plan are tracked in [CEO_OFFICE_ROADMAP.md](CEO_OFFICE_ROADMAP.md).
 
-Goal: make plan-result messages short enough to read on Telegram while still answering "what happened, what changed, what do I do next?"
+### Slice N1: Status Report Quality
+
+Goal: make the core status report answer "what happened, what is active, what is blocked, what needs BK, and what is the next safe action?"
 
 Build:
 
-- plan-result summary ordered by outcome, changed files/artifacts, risks, next action
-- shorter worker/action detail by default
+- report summary ordered by outcome, active work, blockers, BK decisions, risks, next action
+- shorter worker/action detail by default, with raw ids hidden unless needed for local debugging
 - clear distinction between implementation success, report-only success, verification failure, and recovery-needed state
-- no raw ids unless needed for local debugging
 
 Verify:
 
-- report-only worker outputs are visible in Telegram without opening local files
+- report-only worker outputs are visible in CLI 또는 dashboard and can be compacted for Telegram
 - `/now` after a completed plan recommends `/go`, `/recover`, `/check`, or `/problems`
 - old id-based inspection commands are not recommended
 
-### Slice N2: Recovery Execution
+### Slice N2: BK Decision Queue
+
+Goal: separate "work is running" from "BK must decide" so reports do not bury approval or clarification needs.
+
+Build:
+
+- structured decision item fields for question, reason, target work, risk, and allowed responses
+- status report section for pending BK decisions
+- Telegram-ready compact decision notification
+- deterministic rule that risky actions wait for approval instead of relying on LLM judgment
+
+Verify:
+
+- blocked tasks can create a decision item without dispatching new work
+- reports show decisions before optional details
+- approving or redirecting a decision updates durable state
+
+### Slice N3: Recovery Execution
 
 Goal: make `/recover -> /plan -> /go` reliable for failed materialized plans.
 
@@ -129,9 +154,9 @@ Verify:
 - `/plan` proposes a canonical repo-root recovery plan
 - `/go` materializes safe actions and reports back
 
-### Slice N3: Real Telegram Dogfood
+### Slice N4: Adapter Dogfood
 
-Goal: prove the compressed command surface works from Telegram without local command knowledge.
+Goal: prove Telegram can carry the compact report and approval flow without becoming the primary workspace.
 
 Dogfood flows:
 
@@ -146,15 +171,17 @@ Acceptance:
 
 - BK does not need task ids, action ids, run ids, proposal ids, draft ids, repo paths, or target file paths.
 - Telegram reports show one obvious next command.
+- CLI or dashboard remains the better surface for long review.
 - `/help` lists only the compressed command surface.
 - `/check` and `/problems` are sufficient for routine remote operation.
 - dashboard remains read-only observability.
 
 ## Guardrails
 
-- The Orchestrator Agent cannot bypass Control Plane safety checks.
+- The Orchestrator Agent cannot bypass CEO office safety checks.
 - The Orchestrator Agent cannot directly dispatch workers.
 - The Orchestrator Agent cannot merge, push, cleanup, or mutate state except through validated orchestration commands.
+- LLM calls must not be required to stay alive to remember state.
 - Project profiles remain useful as hints and defaults, not as the primary planning intelligence.
 - Telegram must not accept arbitrary shell commands, arbitrary repo paths, arbitrary merge/push/cleanup paths, or id-based internal workflow commands.
 - Existing direct task/draft/action commands may remain available locally for debugging, but they should not re-expand the Telegram surface.
@@ -179,4 +206,31 @@ Acceptance:
 16. recovery requests now carry failed plan summary, failed action reasons, changed files, run-log references, artifact previews, and explicit "do not retry blindly" instructions.
 17. recovery planning/materialization guardrails prefer canonical project profile repo roots and reject worker-worktree repo roots.
 
-The next slice should be live Telegram dogfood and only fix concrete gaps found in those flows.
+The next slice should improve core status reports and the BK decision queue. Telegram dogfood should only verify the adapter after the core report is useful.
+
+## Next Slice: Role-Aware Canary
+
+Before expanding into a full multi-agent platform, dogfood one narrow role-aware plan:
+
+```text
+/work <small Samantha request>
+  -> /plan
+     batch 1: codex-reviewer or codex-evaluator report-only preflight
+     batch 2: codex-worker write task
+  -> /go
+  -> /now
+```
+
+Acceptance:
+
+- the Orchestrator Agent chooses roles deliberately instead of defaulting every task to `codex-worker`
+- non-writer role tasks use `resultMode: "report"` and do not edit files
+- the writer task still runs under writer cap `1`
+- dependent writer tasks do not assume they can read unmerged files from prior worker worktrees
+- Telegram reports explain role outcomes without requiring raw task/action/run ids
+
+Do not expand this slice into multi-writer parallelism, shared worktree context, or general team-construction automation.
+
+## Deferred Scope: New Project Dogfood
+
+Fully bootstrapping a new project from Telegram remains out of scope until Samantha has an explicit onboarding gate. Current remote materialization intentionally requires known project profiles and canonical repo roots, so Telegram should not accept arbitrary repo paths, shell bootstrap commands, or unprofiled project creation.

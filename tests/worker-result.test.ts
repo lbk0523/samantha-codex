@@ -98,6 +98,23 @@ describe("evaluateWorkerResult", () => {
     });
   });
 
+  test("allows report artifacts inside declared target files", async () => {
+    const { root, baseCommit } = await makeRepo();
+    await mkdir(join(root, "docs"), { recursive: true });
+    await writeFile(join(root, "docs/report.md"), "report\n", "utf8");
+
+    const result = await evaluateWorkerResult({
+      task: { ...task, resultMode: "report", targetFiles: ["docs/**"], verifyCommands: ["test -f docs/report.md"] },
+      cwd: root,
+      baseCommit,
+      output: 'HARNESS_RESULT: {"status":"pass","note":"report written","commit":""}',
+    });
+
+    expect(result.pass).toBe(true);
+    expect(result.changedFiles).toEqual(["docs/report.md"]);
+    expect(result.scopeViolations).toEqual([]);
+  });
+
   test("keeps the first character for uncommitted modified files", async () => {
     const { root, baseCommit } = await makeRepo();
     await writeFile(join(root, "allowed.txt"), "changed but not committed\n", "utf8");

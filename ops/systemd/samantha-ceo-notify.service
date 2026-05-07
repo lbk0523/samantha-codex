@@ -1,0 +1,10 @@
+[Unit]
+Description=Samantha Codex CEO notification generator
+Documentation=https://github.com/lbk0523/samantha-codex
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/samantha-codex
+EnvironmentFile=-%h/projects/samantha-codex/.env
+ExecStart=%h/.bun/bin/bun run samantha ceo:notify
+TimeoutStartSec=45

@@ -2,6 +2,7 @@
   "id": "dashboard-live-observer-dogfood",
   "title": "Dogfood Samantha live worker dashboard visibility",
   "targetAgent": "codex-reviewer",
+  "resultMode": "report",
   "targetFiles": [],
   "forbiddenChanges": ["**/*"],
   "setupCommands": [

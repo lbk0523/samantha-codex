@@ -2,6 +2,7 @@
   "id": "omht-readonly-status-canary",
   "title": "Read-only omht status canary",
   "targetAgent": "codex-reviewer",
+  "resultMode": "report",
   "targetFiles": [],
   "forbiddenChanges": ["**/*"],
   "verifyCommands": ["git status --short"],

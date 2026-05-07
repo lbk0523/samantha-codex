@@ -1,23 +1,23 @@
 # Samantha-Codex Build Plan
 
-Last updated: 2026-05-06
+Last updated: 2026-05-07
 
-Current planning status: MVP control plane built, read-only dogfood completed, the first low-risk writer dogfood passed with a Samantha-owned commit, explicit merge apply/push/cleanup gates are implemented, and the local daemon plus Telegram poll/reply loop are operating. The Orchestrator Agent workflow is now the primary Telegram path: `/work -> /plan -> /go -> /now`.
+Current planning status: MVP control plane built, read-only dogfood completed, the first low-risk writer dogfood passed with a Samantha-owned commit, explicit merge apply/push/cleanup gates are implemented, and the local daemon plus Telegram poll/reply loop are operating. The product priority has shifted from a Telegram-first command bot to a status reporting and work operations system.
 
 ## Purpose
 
 Samantha-Codex is a Codex-only personal agent control plane.
 
-The target user experience is simple: BK talks to one 24/7 orchestrator, and Samantha decomposes work, dispatches specialist Codex agents, verifies their outputs, merges only safe results, and reports back through one surface.
+The target user experience is simple: BK sees one operating surface for status, blockers, decisions, and reports. Samantha stores the durable state, calls bounded Codex agents when useful, dispatches specialist agents only through safety gates, verifies their outputs, merges only safe results, and reports back through one surface.
 
 This is not a general multi-agent platform first. It is a safety-first operations layer for BK's real projects.
 
 ## Core Decisions
 
-1. Samantha has two layers: an LLM Orchestrator Agent for planning and coordination, and a deterministic TypeScript Control Plane for safety, state, dispatch, verification, merge, push, and audit.
-2. BK talks only to the Samantha Orchestrator Agent through Telegram or a future UI, not to individual worker agents.
-3. The Orchestrator Agent creates plan proposals, asks clarifying questions when needed, decomposes work into tasks, and chooses worker/reviewer/evaluator roles.
-4. Codex/GPT agents below the Orchestrator Agent are workers, reviewers, evaluators, or spec helpers.
+1. Samantha's core is a deterministic TypeScript CEO office for safety, state, status reporting, decision queues, dispatch, verification, merge, push, and audit.
+2. BK talks only to Samantha's operating surface, not to individual worker agents.
+3. LLM orchestrator calls are bounded. They create plan proposals, ask clarifying questions when needed, decompose work into tasks, synthesize results, or draft reports.
+4. Codex/GPT agents are planners, synthesizers, workers, reviewers, evaluators, or spec helpers.
 5. Writer agents must work in isolated git worktrees.
 6. Start with one writer at a time. Parallelism starts with non-writer agents.
 7. Agent output is accepted only after structured result, scope, and verification gates pass.
@@ -25,14 +25,14 @@ This is not a general multi-agent platform first. It is a safety-first operation
 
 ## Design Correction Status
 
-The earlier decision that "the orchestrator is deterministic TypeScript code" was too coarse. It protected execution safety, but it collapsed the intended Orchestrator Agent into project-profile templates and a single-worker dispatch path.
+The durable orchestrator should remain deterministic TypeScript code. The earlier correction usefully restored an LLM Orchestrator Agent for planning and synthesis, but that agent must be a bounded call, not a permanently running CEO.
 
 Corrected terminology:
 
-- `Samantha Orchestrator Agent`: LLM agent that discusses the request with BK, creates the task/team plan, and reports plan/result in user language.
-- `Samantha Control Plane`: deterministic TypeScript code that stores state, enforces policy, dispatches approved tasks, verifies results, and controls merge/push/cleanup.
+- `Deterministic CEO Office`: TypeScript code that stores state, tracks work, maintains decision queues, enforces policy, dispatches approved tasks, verifies results, and controls merge/push/cleanup.
+- `Samantha Orchestrator Agent`: bounded LLM call that creates plans, asks focused questions, or synthesizes reports in user language.
 
-The correction has been implemented for the first useful remote workflow. The Control Plane still owns safety and execution; the Orchestrator Agent now owns Telegram planning and result synthesis.
+The correction has been implemented for the first useful remote workflow. The deterministic CEO office still owns safety, state, and execution. The Orchestrator Agent assists with planning and result synthesis, including Telegram-facing messages, but it does not own the operating system.
 
 ## Current State
 
@@ -90,9 +90,10 @@ Already implemented:
 
 Not yet implemented:
 
+- first-class status reporting and BK decision queue UX
 - richer automatic team construction with reviewer/evaluator/spec agents beyond explicit task proposals
 - recovery execution that can safely restore artifacts from prior worker worktrees without relying on a worker-worktree `repoRoot`
-- higher-quality compact result reports for real Telegram use
+- higher-quality compact result reports for dashboard, CLI, and Telegram adapters
 
 Important dogfood findings:
 
@@ -101,7 +102,8 @@ Important dogfood findings:
 - Failed dispatch attempts may leave clean worktrees behind; Samantha can now reuse or finalize them instead of forcing manual branch cleanup.
 - Already-merged runs should report as already integrated, not as generic HEAD mismatch failures.
 - `/now` should be the only routine next-action Telegram command; old id-based commands should not appear as recommended actions.
-- `/check` and `/problems` are the Telegram status/diagnostic surface. Local `status` and `doctor` remain useful CLI names.
+- `/check` and `/problems` are the Telegram status/diagnostic surface. Local `status`, `doctor`, and dashboard views remain the deeper operating surfaces.
+- Mobile is useful for quick checks, approvals, and short feedback, not long or intense development sessions.
 - Codex workers should not receive parent `.git` metadata write access.
 - Samantha should create commits itself after worker output passes scope and verify gates.
 - Audit logs are mandatory before 24/7 operation; otherwise Samantha cannot explain what happened after the fact.
@@ -186,6 +188,7 @@ Build:
 - parallel non-writer execution
 - writer concurrency cap of `1`
 - plan summary report
+- Stage 9 evidence policy in `docs/PARALLELISM_EVIDENCE.md`
 
 Success criteria:
 
@@ -281,7 +284,7 @@ These gates should not be weakened for convenience:
 
 ## What Not To Build Yet
 
-Do not prioritize these until the Telegram operating surface is stable:
+Do not prioritize these until the status reporting and work operations surface is stable:
 
 - multi-writer parallelism
 - web dashboard with write controls
@@ -292,13 +295,14 @@ Do not prioritize these until the Telegram operating surface is stable:
 
 ## Immediate Next Step
 
-Improve result and recovery quality on the compressed Telegram workflow. The next proof point is:
+Improve the status reporting and decision-loop quality of the existing control plane. Telegram should receive the same concise report as an adapter, but the proof point is the operations model, not Telegram itself:
 
 ```text
-/work <small request> -> /plan -> /go -> /now -> /check
-failed plan result -> /recover -> /plan -> /go -> /now
+status store -> report generator -> BK decision queue -> safe next action
+small request -> bounded plan call -> approved tasks -> result report
+failed plan result -> recovery request -> bounded recovery plan -> result report
 ```
 
-Accept the slice only if BK does not need task ids, action ids, run ids, proposal ids, draft ids, repo paths, or target file paths; reports back to Telegram are short and clear; recovery plans use canonical project repo roots; stale pending tasks do not pollute `/now`; and no tmux observer window remains after workers finish.
+Accept the slice only if BK can understand current work, blockers, risks, decisions needed, and the next safe action without task ids, action ids, run ids, proposal ids, draft ids, repo paths, or target file paths. Recovery plans must use canonical project repo roots, stale pending tasks must not pollute `/now`, and no tmux observer window may remain after workers finish.
 
 The detailed next plan is in [NEXT_PLAN.md](NEXT_PLAN.md).

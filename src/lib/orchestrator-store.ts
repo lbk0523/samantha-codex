@@ -14,6 +14,7 @@ export interface OrchestrationRequestRecord {
   text: string;
   status: OrchestrationRequestStatus;
   createdAt: string;
+  recoveryOfPlanId?: string;
   plannedAt?: string;
   discardedAt?: string;
 }
@@ -50,6 +51,14 @@ export interface OrchestratorSynthesisPayload {
   summary: string;
   nextActions: string[];
   risks: string[];
+  userMessage: string;
+}
+
+export interface OrchestratorQuestionDraftPayload {
+  title: string;
+  prompt: string;
+  options: string[];
+  risk?: string;
   userMessage: string;
 }
 

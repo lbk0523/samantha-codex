@@ -45,7 +45,7 @@ function deprecatedReplacement(command: string): string | undefined {
     "/proposal": "/now",
     "/proposal_next": "/now",
     "/propose": "/work <요청>",
-    "/accept": "/go",
+    "/accept": "/approve",
     "/reject": "/cancel",
     "/drafts": "/now",
     "/draft_next": "/now",
@@ -63,7 +63,7 @@ function deprecatedReplacement(command: string): string | undefined {
     "/action_current": "/now",
     "/run_next": "/go",
     "/run-next": "/go",
-    "/yes": "/go",
+    "/yes": "/approve",
     "/prepare_dispatch": "/go",
     "/prepare-dispatch": "/go",
     "/approve_action": "/go",
@@ -111,6 +111,9 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   }
   if (text === "/go") {
     return { id: `remote-${commandToken}-go`, type: "actions:go", args: { source: "remote", receivedAt } };
+  }
+  if (text === "/approve") {
+    return { id: `remote-${commandToken}-approve`, type: "decisions:approve-latest", args: { source: "remote", receivedAt } };
   }
   if (text === "/recover") {
     return {

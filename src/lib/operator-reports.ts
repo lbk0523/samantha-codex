@@ -1,4 +1,5 @@
 import type { TaskSpec } from "./contracts";
+import type { CeoStatusSnapshot, CeoNextActionKind } from "./ceo-status";
 import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
@@ -45,6 +46,12 @@ function telegramSafeClipText(text: string, maxLength = 3500): string {
 
 function remoteSafeSuggestion(value: string): string {
   return telegramSafeLine(value);
+}
+
+function remoteNotificationText(value: string): string {
+  return remoteSafeSuggestion(value)
+    .replace(/\b(?:request|plan|action|draft|proposal|run|task|decision)-[a-z0-9][a-z0-9-]{4,}\b/gi, "해당 항목")
+    .replace(/(?:\/[A-Za-z0-9._-]+){2,}/g, "<local path>");
 }
 
 function code(value: string): string {
@@ -141,6 +148,28 @@ function lifecycleText(lifecycle: RunLifecycleRecord | undefined): string {
 
 function resultModeLabel(mode: string | undefined): string {
   return mode === "report" ? "계획/보고" : "구현/수정";
+}
+
+function telegramCommandForNextAction(kind: CeoNextActionKind): string {
+  if (kind === "plan") return "/plan";
+  if (kind === "review_plan" || kind === "answer_questions") return "/plan_current";
+  if (kind === "resolve_decision") return "/approve";
+  if (kind === "approve_action" || kind === "watch_action" || kind === "merge_check" || kind === "push" || kind === "cleanup") return "/go";
+  if (kind === "recover") return "/recover";
+  if (kind === "diagnose") return "/problems";
+  return "/check";
+}
+
+function agentRoleLabel(agentId: string | undefined): string {
+  if (agentId === "codex-reviewer") return "Reviewer";
+  if (agentId === "codex-evaluator") return "Evaluator";
+  if (agentId === "codex-spec") return "Spec";
+  if (agentId === "codex-worker") return "Writer";
+  return "Agent";
+}
+
+function roleOutcomeLine(input: { agentId?: string; title: string; mode?: string; outcome: string }): string {
+  return `- ${agentRoleLabel(input.agentId)}: ${oneLine(input.title)}: ${input.outcome} (${resultModeLabel(input.mode)})`;
 }
 
 function repoName(repoRoot: string | undefined): string {
@@ -523,6 +552,7 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "- `/work <요청>`: 새 작업 요청 저장",
     "- `/plan`: Orchestrator Agent가 실행 전 계획 작성",
     "- `/plan_current`: 현재 계획 다시 보기",
+    "- `/approve`: 현재 단일 계획 승인 결정만 승인",
     "- `/go`: 계획 승인, worker 실행 큐 등록, 또는 최신 성공 run 통합 gate 진행",
     "- `/revise <피드백>`: 현재 계획을 수정 요청",
     "- `/cancel`: 승인 전 계획/요청 취소",
@@ -536,6 +566,7 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "",
     "자동 분류가 틀렸을 때만 `/plan <project_id> <scope_id>`로 보정하세요.",
     "run, task, action, proposal, draft ID를 직접 입력하는 명령은 Telegram에서 제거했습니다.",
+    "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
   ].join("\n");
 }
 
@@ -551,6 +582,32 @@ export function remoteDeprecatedCommandReport(input: { command: string; replacem
     "다음 액션:",
     `- 텔레그램: ${code(input.replacement)}`,
     `- 상태 기준으로 다시 판단: ${code("/now")}`,
+  ].join("\n");
+}
+
+export function remoteDecisionApprovedReport(): string {
+  return [
+    "# approve",
+    "",
+    "현재 계획 승인 결정을 승인했습니다.",
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code("/go")}`,
+    "",
+    "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
+  ].join("\n");
+}
+
+export function remoteApprovalRedirectReport(input: { reason: string }): string {
+  return [
+    "# approve",
+    "",
+    remoteNotificationText(input.reason),
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code("/now")}`,
+    "",
+    "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
   ].join("\n");
 }
 
@@ -586,6 +643,7 @@ export function runShowReport(runId: string, run: RunSummary | undefined): strin
 
 export function nextActionReport(input: { runs: RunSummary[]; tasks: TaskSpec[]; lifecycles?: RunLifecycleRecord[] }): string {
   const activeTasks = input.tasks.filter((task) => task.status !== "archived");
+  const archivedTaskIds = new Set(input.tasks.filter((task) => task.status === "archived").map((task) => task.id));
   const pending = activeTasks.find((task) => task.status === "pending");
   if (pending) {
     return [
@@ -602,6 +660,16 @@ export function nextActionReport(input: { runs: RunSummary[]; tasks: TaskSpec[];
 
   const latest = input.runs.at(-1);
   if (latest) {
+    if (!latest.pass && archivedTaskIds.has(latest.taskId)) {
+      return [
+        "# next-action",
+        "",
+        `Latest run: ${code(latest.runId)}`,
+        "",
+        "No immediate action.",
+        "The failed task is archived, so this stale failure will not be retried.",
+      ].join("\n");
+    }
     if (latest.pass && latest.commit) {
       const lifecycle = input.lifecycles?.find((record) => record.runId === latest.runId);
       if (lifecycle?.mergedAt && lifecycle.pushedAt && lifecycle.cleanedAt) {
@@ -751,6 +819,8 @@ export function nowReport(input: {
   }
 
   const primaryWorkflowTimestamp = latestPrimaryWorkflowTimestamp(input);
+  const activeTasks = input.tasks.filter((task) => task.status !== "archived");
+  const archivedTaskIds = new Set(input.tasks.filter((task) => task.status === "archived").map((task) => task.id));
   const pendingIntegrationRun = latestRunNeedingIntegration(input.runs, input.lifecycles);
   if (pendingIntegrationRun) {
     return nowLinesForPassedRun(
@@ -782,7 +852,7 @@ export function nowReport(input: {
     return ["# now", "", "운영 상태 확인이 필요합니다.", oneLine(issue), "", "다음 액션:", `- 텔레그램: ${code("/problems")}`].join("\n");
   }
 
-  const pendingTask = input.tasks.find((task) => task.status === "pending");
+  const pendingTask = activeTasks.find((task) => task.status === "pending");
   if (pendingTask) {
     return [
       "# now",
@@ -803,7 +873,7 @@ export function nowReport(input: {
     ).join("\n");
   }
 
-  if (latest && !latest.pass && timestamp(latest.finishedAt) >= primaryWorkflowTimestamp) {
+  if (latest && !latest.pass && timestamp(latest.finishedAt) >= primaryWorkflowTimestamp && !archivedTaskIds.has(latest.taskId)) {
     return [
       "# now",
       "",
@@ -860,6 +930,33 @@ export function taskShowReport(taskId: string, task: TaskSpec | undefined): stri
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+export function ceoNotificationReport(snapshot: CeoStatusSnapshot): string {
+  const decision = snapshot.needsDecision[0];
+  const canApproveDecision = Boolean(decision?.title.startsWith("Review plan:"));
+  const nextCommand = telegramCommandForNextAction(snapshot.nextAction.kind);
+  const risks = snapshot.risks.slice(0, 3).map(remoteNotificationText);
+  const lines = [
+    "# ceo-notify",
+    "",
+    `상태: ${snapshot.overall}`,
+    `요약: decisions=${snapshot.needsDecision.length} active=${snapshot.active.length} blocked=${snapshot.blocked.length} risks=${snapshot.risks.length}`,
+    decision ? `결정 필요: ${remoteNotificationText(decision.title)}` : "",
+    decision ? `이유: ${remoteNotificationText(decision.reason)}` : "",
+    "",
+    "리스크:",
+    ...(risks.length ? risks.map((risk) => `- ${risk}`) : ["- 없음"]),
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code(decision ? canApproveDecision ? "/approve" : "/revise <피드백>" : nextCommand)}`,
+    decision && canApproveDecision ? `- 수정 필요 시: ${code("/revise <피드백>")}` : "",
+    decision ? `- 취소: ${code("/cancel")}` : "",
+    "",
+    "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
+  ];
+
+  return lines.filter((line) => line !== "").join("\n");
 }
 
 export function proposalAddedReport(proposal: ProposalRecord): string {
@@ -1048,6 +1145,16 @@ export function orchestratorPlanReport(input: {
           ...payload.tasks.map((task) =>
             `- ${code(task.id)} ${telegramSafeLine(task.title)} agent=${code(task.targetAgent)} mode=${code(task.resultMode ?? "write")}`,
           ),
+          "",
+          "역할 흐름:",
+          ...payload.tasks.map((task) =>
+            roleOutcomeLine({
+              agentId: task.targetAgent,
+              title: task.title,
+              mode: task.resultMode,
+              outcome: task.resultMode === "report" ? "보고 산출" : "구현 산출",
+            }),
+          ),
         ]
       : []),
     payload?.risks.length ? "" : "",
@@ -1118,6 +1225,7 @@ export function orchestratorPlanResultReport(input: {
   runLogs: WorkerRunLog[];
   synthesis?: OrchestratorSynthesisPayload;
   synthesisFailure?: string;
+  sourcePlan?: OrchestratorPlanRecord;
 }): string {
   const failed = input.actions.filter((action) => action.status !== "completed" || action.result?.pass === false);
   const runLogForAction = (action: RemoteActionRecord) =>
@@ -1152,6 +1260,11 @@ export function orchestratorPlanResultReport(input: {
   const repoNames = Array.from(
     new Set(input.actions.map((action) => repoName(runLogForAction(action)?.input.repoRoot ?? action.repoRoot))),
   );
+  const recoveryVerdict = input.sourcePlan
+    ? needsRecovery
+      ? `복구 판단: 원 문제 미해결 - ${oneLine(input.sourcePlan.payload?.summary ?? input.sourcePlan.requestId)} 추가 복구 필요`
+      : `복구 판단: 원 문제 해결됨 - ${oneLine(input.sourcePlan.payload?.summary ?? input.sourcePlan.requestId)}`
+    : "";
 
   return [
     "# plan-result",
@@ -1161,6 +1274,7 @@ export function orchestratorPlanResultReport(input: {
     planWorkTypeLine({ runLogs: input.runLogs, mergeCommands, needsRecovery }),
     `완료 작업: ${input.actions.length - failed.length}/${input.actions.length}`,
     input.synthesis ? `종합 결과: ${code(input.synthesis.outcome)}` : "",
+    recoveryVerdict,
     "",
     input.synthesis ? "오케스트레이터 종합:" : "",
     input.synthesis ? telegramSafeClipText(input.synthesis.userMessage, 1400) : "",
@@ -1177,7 +1291,12 @@ export function orchestratorPlanResultReport(input: {
           ? "보고 완료"
           : "통과";
       return [
-        `- ${telegramSafeLine(action.taskTitle)}: ${actionOutcome}`,
+        roleOutcomeLine({
+          agentId: runLog?.agent.id ?? action.targetAgent,
+          title: action.taskTitle,
+          mode: runLog?.task.resultMode,
+          outcome: actionOutcome,
+        }),
         `  대상: ${repoName(runLog?.input.repoRoot ?? action.repoRoot)} / ${resultModeLabel(runLog?.task.resultMode)}`,
         runLog ? `  보고: ${oneLine(workerFinalMessage(runLog))}` : "",
         action.result?.failure ? `  실패 이유: ${telegramSafeLine(action.result.failure)}` : "",

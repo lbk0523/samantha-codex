@@ -2,6 +2,7 @@
   "id": "fixture-reviewer-readonly",
   "title": "Fixture reviewer read-only check",
   "targetAgent": "codex-reviewer",
+  "resultMode": "report",
   "targetFiles": [],
   "forbiddenChanges": ["**/*"],
   "verifyCommands": ["git status --short"],

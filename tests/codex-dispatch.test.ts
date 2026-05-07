@@ -57,6 +57,7 @@ describe("codex dispatch preparation", () => {
       {
         ...task,
         targetAgent: "codex-reviewer",
+        resultMode: "report",
         targetFiles: [],
         forbiddenChanges: ["**/*"],
       },
@@ -70,7 +71,8 @@ describe("codex dispatch preparation", () => {
       },
     );
 
-    expect(prompt).toContain("This is a non-writer task");
+    expect(prompt).toContain("This is a non-writer report-only task");
+    expect(prompt).toContain("Do not edit, create, delete, format, commit, push, or move files.");
     expect(prompt).toContain("- (none; read-only task)");
     expect(prompt).toContain("- **/*");
   });

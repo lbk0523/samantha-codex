@@ -53,6 +53,16 @@ export function materializeOrchestratorPlan(input: {
   const proposalBatchIndex = new Map<string, number>();
 
   for (const [batchIndex, batch] of payload.batches.entries()) {
+    const writerTaskIds = batch.filter((id) => {
+      const proposal = payload.tasks.find((task) => task.id === id);
+      if (!proposal || proposal.resultMode === "report") return false;
+      return input.agents.find((agent) => agent.id === proposal.targetAgent)?.writerClass === "writer";
+    });
+    if (writerTaskIds.length > 1) {
+      violations.push(
+        `batches[${batchIndex}] exceeds writer cap 1: ${writerTaskIds.join(", ")}`,
+      );
+    }
     for (const id of batch) {
       if (!proposalIds.has(id)) violations.push(`batches[${batchIndex}] references unknown task proposal: ${id}`);
       proposalBatchIndex.set(id, batchIndex);

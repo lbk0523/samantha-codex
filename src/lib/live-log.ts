@@ -169,16 +169,20 @@ function shellQuote(value: string): string {
 }
 
 async function runTmux(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const child = Bun.spawn(["tmux", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ]);
-  return { exitCode, stdout, stderr };
+  try {
+    const child = Bun.spawn(["tmux", ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    return { exitCode, stdout, stderr };
+  } catch (err) {
+    return { exitCode: 127, stdout: "", stderr: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 export async function startTmuxObserver(input: {

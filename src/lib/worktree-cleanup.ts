@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import type { WorktreeAllocation } from "./contracts";
 import { git, gitHead, gitRaw, gitTopLevel } from "./git";
 import type { WorkerRunLog } from "./run-log";
@@ -58,6 +58,14 @@ async function gitSucceeds(args: string[], cwd: string): Promise<boolean> {
   }
 }
 
+async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
+  }
+}
+
 function commitForLog(log: WorkerRunLog): string {
   return log.result.commit?.commitHash ?? log.result.evaluation?.harness?.commit ?? "";
 }
@@ -73,6 +81,7 @@ export async function cleanupCompletedWorktree(input: WorktreeCleanupInput): Pro
   const allocation = allocationForLog(log);
   const commit = commitForLog(log);
   const repoRoot = await gitTopLevel(input.repoRoot);
+  const canonicalRepoRoot = await canonicalPath(repoRoot);
   const violations: string[] = [];
 
   if (!allocation) {
@@ -84,7 +93,7 @@ export async function cleanupCompletedWorktree(input: WorktreeCleanupInput): Pro
   if (!commit) {
     violations.push("run did not report a commit");
   }
-  if (allocation && allocation.repoRoot !== repoRoot) {
+  if (allocation && (await canonicalPath(allocation.repoRoot)) !== canonicalRepoRoot) {
     violations.push("run log repoRoot does not match target repo");
   }
   if (allocation && allocation.worktreePath === repoRoot) {

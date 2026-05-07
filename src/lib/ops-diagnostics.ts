@@ -70,6 +70,8 @@ const systemdFiles = [
   "samantha-telegram-poll.timer",
   "samantha-telegram-reply.service",
   "samantha-telegram-reply.timer",
+  "samantha-ceo-notify.service",
+  "samantha-ceo-notify.timer",
 ];
 
 async function exists(path: string): Promise<boolean> {

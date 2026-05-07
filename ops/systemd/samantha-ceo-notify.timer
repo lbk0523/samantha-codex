@@ -1,0 +1,13 @@
+[Unit]
+Description=Generate Samantha Codex periodic CEO notification
+Documentation=https://github.com/lbk0523/samantha-codex
+
+[Timer]
+OnBootSec=2min
+OnCalendar=hourly
+Persistent=true
+AccuracySec=1min
+Unit=samantha-ceo-notify.service
+
+[Install]
+WantedBy=timers.target

@@ -69,6 +69,7 @@ describe("sendOutboxReplies", () => {
       outboxDir: outbox,
       statePath,
       minAgeMs: 0,
+      now: new Date(Date.now() + 1000),
       fetchImpl,
     });
 
@@ -262,6 +263,52 @@ describe("sendOutboxReplies", () => {
     }
   });
 
+  test("delivers compact CEO notifications through existing Telegram outbox sender", async () => {
+    const root = await makeRoot();
+    const outbox = join(root, "outbox");
+    const statePath = join(root, "state", "telegram-replies.json");
+    await mkdir(outbox, { recursive: true });
+    await writeFile(
+      join(outbox, "remote-20260507-110100-ceo-notify-needs-decision-abc12345.md"),
+      [
+        "# ceo-notify",
+        "",
+        "상태: needs_decision",
+        "요약: decisions=1 active=0 blocked=0 risks=0",
+        "결정 필요: Review plan: Mobile approval",
+        "",
+        "다음 액션:",
+        "- 텔레그램: `/approve`",
+        "",
+        "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
+      ].join("\n"),
+      "utf8",
+    );
+    const sentBodies: unknown[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      sentBodies.push(JSON.parse(String(init?.body)));
+      return { statusText: "OK", json: async () => ({ ok: true }) };
+    }) as unknown as typeof fetch;
+
+    const result = await sendOutboxReplies({
+      token: "token",
+      chatId: "12345",
+      outboxDir: outbox,
+      statePath,
+      sendExisting: true,
+      minAgeMs: 0,
+      now: new Date(Date.now() + 1000),
+      fetchImpl,
+    });
+
+    expect(result.sent[0]?.file).toContain("ceo-notify");
+    const text = (sentBodies[0] as { text: string }).text;
+    expect(text).toContain("CEO 알림");
+    expect(text).toContain("텔레그램: `/approve`");
+    expect(text).toContain("CLI 또는 dashboard");
+    expect(text).not.toContain("decision-");
+  });
+
   test("does not send id-only Telegram messages after reports that return ids", () => {
     const messages = telegramReplyMessages(
       "remote-propose.md",
@@ -301,6 +348,7 @@ describe("sendOutboxReplies", () => {
       sendExisting: true,
       minAgeMs: 0,
       clientTimeoutMs: 1,
+      now: new Date(Date.now() + 1000),
       fetchImpl,
     });
 
@@ -378,6 +426,7 @@ describe("sendOutboxReplies", () => {
       statePath,
       sendExisting: true,
       minAgeMs: 0,
+      now: new Date(Date.now() + 1000),
       fetchImpl: firstAttempt,
     });
 
@@ -402,6 +451,7 @@ describe("sendOutboxReplies", () => {
       outboxDir: outbox,
       statePath,
       minAgeMs: 0,
+      now: new Date(Date.now() + 1000),
       fetchImpl: retry,
     });
 

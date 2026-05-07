@@ -1,5 +1,6 @@
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import {
+  ceoNotificationReport,
   nowReport,
   orchestrationRequestAddedReport,
   orchestratorGoMaterializedReport,
@@ -22,6 +23,7 @@ const visibleTelegramCommands = [
   "/work",
   "/plan",
   "/plan_current",
+  "/approve",
   "/revise",
   "/cancel",
   "/go",
@@ -78,6 +80,8 @@ const deprecatedCommandFixtures = [
   ["/draft-approve", "/go"],
   ["/prepare_dispatch task-1", "/go"],
   ["/approve-action action-1", "/go"],
+  ["/accept", "/approve"],
+  ["/yes", "/approve"],
 ] as const;
 
 function assert(condition: unknown, message: string): void {
@@ -285,6 +289,33 @@ function checkTelegramReports(): void {
     ["prepared action", remoteActionPreparedReport(action)],
     ["action result", remoteActionResultReport({ action: completedAction, runLog })],
     ["now", nowReport({ runs: [], tasks: [], actions: [], orchestratorPlans: [plan] })],
+    [
+      "ceo notification",
+      ceoNotificationReport({
+        generatedAt: "2026-05-07T11:00:00.000Z",
+        overall: "needs_decision",
+        completed: [],
+        active: [],
+        blocked: [],
+        needsDecision: [
+          {
+            kind: "decision",
+            id: "decision-20260507-plan-abc12345",
+            title: "Review plan: Telegram UX cleanup",
+            status: "pending",
+            reason: "Approve, request revision, or cancel before Samantha materializes worker tasks.",
+            subject: "orchestrator_plan:plan-20260506-090100-work-def67890",
+          },
+        ],
+        risks: ["Do not expose action-20260506-090200-telegram-ux-def67890 in Telegram."],
+        nextAction: {
+          kind: "resolve_decision",
+          label: "Resolve decision",
+          command: "bun run samantha decisions:resolve decision-20260507-plan-abc12345 --resolution=approved",
+          reason: "BK decision required.",
+        },
+      }),
+    ],
   ] as const;
 
   for (const [name, report] of reports) {

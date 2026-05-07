@@ -4,49 +4,67 @@
 
 ```text
 BK
-  <-> Telegram / future web UI
-Samantha Orchestrator Agent
-  - receives instructions
-  - discusses goals, scope, risk, and next actions with BK
-  - decomposes work into one or more task proposals
-  - chooses worker/reviewer/evaluator roles and dependency order
-  - produces an execution plan for BK approval
-Samantha Control Plane
+  <-> CLI / dashboard / Telegram approval adapter / future UI
+Deterministic CEO Office
   - stores requests, plans, tasks, actions, and audit logs
+  - tracks status, blockers, risks, next actions, and BK decision needs
   - enforces safety policy before any dispatch
+  - calls bounded LLM agents for planning, synthesis, review, or question drafting
   - allocates worktrees and dispatches approved Codex CLI agents
   - evaluates worker outputs and verification commands
   - merges/pushes only after gates pass
-Codex Agents
+Bounded Codex Agents
+  - codex-orchestrator planner/synthesizer
+  - codex-spec       non-writer
   - codex-worker     writer
   - codex-reviewer   non-writer
   - codex-evaluator  non-writer
-  - codex-spec       non-writer
 Git worktrees / audit logs / dashboard
 ```
 
 ## Near-Term Scope
 
-The first useful system is not a general multi-agent platform. It is a safe personal operations layer:
+The first useful system is not a general multi-agent platform and not a Telegram-first command bot. It is a safe personal status reporting and work operations layer:
 
-1. BK sends one instruction to Samantha.
-2. The Orchestrator Agent turns the instruction into an explicit plan and asks BK for approval when needed.
-3. The Control Plane materializes an approved plan into one or more safe tasks.
-4. The Control Plane may run non-writer agents in parallel.
-5. The Control Plane runs at most one production writer until safety gates are proven.
-6. The Control Plane verifies, merges, pushes, and reports.
+1. Samantha stores structured work state.
+2. Samantha tracks status, blockers, risks, next actions, and BK decision needs.
+3. Samantha generates clear periodic or on-demand reports.
+4. A bounded Orchestrator Agent call can turn a request into an explicit plan and ask BK for approval when needed.
+5. The CEO office materializes an approved plan into one or more safe tasks.
+6. The CEO office may run non-writer agents in parallel.
+7. The CEO office runs at most one production writer until safety gates are proven.
+8. The CEO office verifies, merges, pushes, and reports.
 
 ## Current Status
 
-The current implementation has the first useful Orchestrator Agent workflow on top of the Control Plane. Telegram `/work` stores an orchestration request, `/plan` runs `codex-orchestrator` through the local Codex CLI in read-only mode, `/plan_current` rereads the current unapproved plan without rerunning Codex, `/revise <feedback>` supersedes the current unapproved plan and creates a revised planning request, `/cancel` discards the current pending request or unapproved plan, and `/go` validates the plan before creating task/action records.
+The current implementation has a useful bounded Orchestrator Agent workflow on top of the deterministic CEO office. Telegram `/work` stores an orchestration request, `/plan` runs `codex-orchestrator` through the local Codex CLI in read-only mode, `/plan_current` rereads the current unapproved plan without rerunning Codex, `/revise <feedback>` supersedes the current unapproved plan and creates a revised planning request, `/cancel` discards the current pending request or unapproved plan, and `/go` validates the plan before creating task/action records.
 
-The Control Plane materializes approved plans into tasks and dispatch actions, promotes dependent actions only after prerequisites pass, runs approved actions through `actions:watch`, and reruns `codex-orchestrator` to write one `# plan-result` report once all actions for a materialized plan finish. If that plan result failed, `/recover` creates a new recovery orchestration request for the next `/plan` without retrying or dispatching by itself.
+The Control Plane materializes approved plans into tasks and dispatch actions, promotes dependent actions only after prerequisites pass, runs approved actions through `actions:watch`, and reruns `codex-orchestrator` to write one `# plan-result` report once all actions for a materialized plan finish. If that plan result failed, `/recover` creates a new recovery orchestration request for the next `/plan` without retrying or dispatching by itself. Recovery requests carry failed-plan evidence, run-log context, failed verify details, and explicit instructions to use project profile canonical repo roots rather than old worker worktrees.
 
-Telegram is intentionally small. The routine surface is `/work`, `/plan`, `/plan_current`, `/revise`, `/cancel`, `/go`, `/recover`, `/now`, `/check`, and `/problems`. Older proposal/draft/task/action/run id commands are no longer normal Telegram operations; they return deprecated-command guidance and point back to the orchestrator flow. Local CLI and inbox commands remain available for debugging and recovery.
+When a recovery request produces a passing materialized plan, result reports say the original problem was fixed. If the recovery plan also fails, reports say the original problem remains unresolved and recovery is still needed. Linked successful recoveries also prevent stale failed source plans, actions, and tasks from continuing to drive CEO status or next-action reporting.
 
-The remaining gap is not a rewrite. The next work is improving result reporting, recovery execution after `/recover -> /plan -> /go`, and practical dogfood confidence for real remote work.
+Telegram is intentionally small and is an adapter for notification, approval, short feedback, and status checks. The routine surface is `/work`, `/plan`, `/plan_current`, `/revise`, `/cancel`, `/go`, `/recover`, `/now`, `/check`, and `/problems`. Older proposal/draft/task/action/run id commands are no longer normal Telegram operations; they return deprecated-command guidance and point back to the orchestrator flow. Local CLI, dashboard, and inbox commands remain available for deeper operation, debugging, and recovery.
 
-The existing Control Plane should remain responsible for safety and execution; it should not be discarded.
+Telegram notifications are compact outbox reports. On the Ubuntu host, `samantha-ceo-notify.timer` runs `ceo:notify` periodically, writes a remote outbox CEO summary, and records generation in `state/ceo-reports.jsonl`; `telegram:reply` delivers it through the existing Telegram reply adapter and records delivery in `state/telegram-replies.json`. Telegram can approve only the single current plan-approval decision through `/approve`; ambiguous or multiple pending decisions redirect BK back to `/now`, CLI, or dashboard. Telegram never accepts shell commands, repo paths, or task/action/run/decision ids as workflow inputs.
+
+The remaining gap is not a rewrite. The next work is aligning the existing loop around status reporting, work operations, and BK decision queues, while keeping Telegram as a thin adapter.
+
+The current architecture canary is role-aware but intentionally small: the Orchestrator Agent may choose report-only `codex-reviewer`, `codex-evaluator`, or `codex-spec` tasks before or alongside one `codex-worker` write task. The Control Plane keeps non-writers read-only, rejects non-writer write proposals, and keeps writer concurrency capped at one. This is not general multi-agent team construction.
+
+The existing deterministic CEO office should remain responsible for safety, state, and execution; it should not be discarded.
+
+## Bounded LLM Call Contract
+
+LLM calls are bounded helpers, not state owners. The only accepted orchestrator call modes are:
+
+- planning: produce one structured `ORCHESTRATOR_PLAN` payload
+- synthesis: produce one structured `ORCHESTRATOR_SYNTHESIS` payload from completed worker evidence
+- question drafting: produce one structured `ORCHESTRATOR_QUESTION_DRAFT` payload for an ambiguous blocker
+- review/spec/evaluation: report-only worker tasks that stay behind the normal task and dispatch gates
+
+Every bounded call runs as a proposal generator. It may not directly create tasks, approve actions, dispatch workers, mark runs, merge, push, clean up worktrees, or update lifecycle state. Samantha validates the structured payload first, then the deterministic CEO office decides whether to append plan state, create a decision item, materialize tasks/actions, or write a report.
+
+Question-drafting output is stored only as a BK decision item after deterministic validation. A question draft never resolves its own decision and never advances work by itself.
 
 ## Skill Policy
 

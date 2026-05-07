@@ -128,21 +128,29 @@ cp ops/systemd/samantha-telegram-poll.service ~/.config/systemd/user/
 cp ops/systemd/samantha-telegram-poll.timer ~/.config/systemd/user/
 cp ops/systemd/samantha-telegram-reply.service ~/.config/systemd/user/
 cp ops/systemd/samantha-telegram-reply.timer ~/.config/systemd/user/
+cp ops/systemd/samantha-ceo-notify.service ~/.config/systemd/user/
+cp ops/systemd/samantha-ceo-notify.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user start samantha-telegram-reply.service
 systemctl --user enable --now samantha-telegram-poll.timer
 systemctl --user enable --now samantha-telegram-reply.timer
+systemctl --user enable --now samantha-ceo-notify.timer
 ```
 
 The first `samantha-telegram-reply.service` run baselines existing `outbox/remote-*.md` files without sending them. New remote outbox reports are sent after that.
+
+`samantha-ceo-notify.timer` is Ubuntu-host automation. It runs `ceo:notify` hourly, writes a compact CEO report into `outbox/remote-*.md`, and leaves delivery to `samantha-telegram-reply.timer`. Report generation is recorded in `state/ceo-reports.jsonl`; Telegram delivery, retries, and failures are recorded in `state/telegram-replies.json`.
 
 Inspect:
 
 ```bash
 systemctl --user status samantha-telegram-poll.timer
 systemctl --user status samantha-telegram-reply.timer
+systemctl --user status samantha-ceo-notify.timer
 journalctl --user -u samantha-telegram-poll.service -n 100 --no-pager
 journalctl --user -u samantha-telegram-reply.service -n 100 --no-pager
+journalctl --user -u samantha-ceo-notify.service -n 100 --no-pager
+bun run samantha health:check
 bun run samantha doctor
 ```
 
@@ -151,6 +159,7 @@ The service templates are tuned for interactive latency:
 - `inbox:watch` polls local inbox every 1 second.
 - `samantha-telegram-poll.timer` restarts polling 3 seconds after the prior poll exits.
 - `samantha-telegram-reply.timer` scans outbox 3 seconds after the prior reply pass exits.
+- `samantha-ceo-notify.timer` generates a periodic CEO notification hourly.
 
 Normal reply latency should usually be a few seconds. It can be longer when Telegram network calls are slow or when the machine is sleeping.
 
@@ -161,3 +170,6 @@ For routine operation, use Telegram `/now` first. It reports the next command to
 - Do not run multiple watchers manually; the lock should block duplicates, but one service instance is the intended shape.
 - Keep remote adapters write-only into `inbox/`.
 - Keep merge, push, and worktree cleanup as explicit gated Samantha commands.
+- Mac clients may edit, test, commit, and push normal repo code. Do not run Samantha daemon, watch, poll, reply, worker dispatch, dashboard runtime, or systemd timer processes from Mac.
+- Ubuntu/Samantha host owns `state/`, `runs/`, `.samantha-worktrees/`, dashboard runtime output, and final automation verification.
+- Host-only verification commands are run on Ubuntu only: `bun run test:host`, `bun run verify:host`, and `bun run test:all`.

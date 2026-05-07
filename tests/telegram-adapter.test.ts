@@ -31,7 +31,7 @@ describe("pollTelegramToInbox", () => {
               update_id: 10,
               message: {
                 date: 1770000000,
-                text: "/now",
+                text: "/approve",
                 from: { id: 12345 },
                 chat: { id: 12345 },
               },
@@ -51,9 +51,9 @@ describe("pollTelegramToInbox", () => {
 
     expect(result.nextOffset).toBe(11);
     expect(result.enqueued).toHaveLength(1);
-    expect(result.enqueued[0]?.command.type).toBe("ops:now");
-    expect(result.enqueued[0]?.command.id).toMatch(/^remote-\d{8}-\d{6}-now-[0-9a-f]{8}-now$/);
-    expect(await readFile(result.enqueued[0]?.path ?? "", "utf8")).toContain("ops:now");
+    expect(result.enqueued[0]?.command.type).toBe("decisions:approve-latest");
+    expect(result.enqueued[0]?.command.id).toMatch(/^remote-\d{8}-\d{6}-approve-[0-9a-f]{8}-approve$/);
+    expect(await readFile(result.enqueued[0]?.path ?? "", "utf8")).toContain("decisions:approve-latest");
   });
 
   test("can authorize by Telegram chat id for legacy Samantha env compatibility", async () => {

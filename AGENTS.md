@@ -2,11 +2,12 @@
 
 ## Project
 
-This repository builds a Codex-only version of Samantha: a personal 24/7 control plane that receives instructions from BK, decomposes them into tasks, dispatches Codex CLI agents, and reports back through one orchestrator surface.
+This repository builds a Codex-only version of Samantha: a personal 24/7 operations control plane that tracks work state, manages approvals and safety gates, dispatches bounded Codex CLI agents when needed, and reports back through one orchestrator surface.
 
 ## Operating Rules
 
-- The orchestrator is deterministic TypeScript code, not a permanently running LLM conversation.
+- The orchestrator is a deterministic TypeScript CEO office, not a permanently running LLM conversation.
+- LLM orchestrator calls are bounded planning, synthesis, review, or question-drafting workers.
 - Codex/GPT agents are workers, reviewers, evaluators, or spec helpers.
 - BK talks only to the orchestrator.
 - Production code writers must work in isolated git worktrees.
@@ -44,7 +45,8 @@ Build the minimum Codex-only control plane:
 - agent profile contracts
 - task contracts
 - file-backed task store
+- status reporting and decision queues
 - safety policy validation
-- later: Telegram command loop, Codex CLI dispatch, worktree merge, audit dashboard
+- later: remote notification/approval adapters, Codex CLI dispatch, worktree merge, audit dashboard
 
 Avoid adding frameworks before the control-plane contract is stable.

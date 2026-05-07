@@ -3,6 +3,7 @@ import type { ProjectProfile } from "./project-profile";
 import type {
   OrchestrationRequestRecord,
   OrchestratorPlanPayload,
+  OrchestratorQuestionDraftPayload,
   OrchestratorPlanStatus,
   OrchestratorPlanRecord,
   OrchestratorSynthesisPayload,
@@ -26,6 +27,13 @@ export interface OrchestratorSynthesisRunResult {
   failure?: string;
 }
 
+export interface OrchestratorQuestionDraftRunResult {
+  command: CommandRunResult;
+  rawOutput: string;
+  payload?: OrchestratorQuestionDraftPayload;
+  failure?: string;
+}
+
 export function buildOrchestratorPrompt(input: {
   request: OrchestrationRequestRecord;
   projectProfiles: ProjectProfile[];
@@ -34,8 +42,10 @@ export function buildOrchestratorPrompt(input: {
 }): string {
   return [
     "You are the Samantha Orchestrator Agent.",
-    "Your job is to discuss the user's request, create an execution plan, and decide what worker tasks should exist.",
+    "Your job is to make one bounded planning proposal for the deterministic Samantha CEO office.",
     "Do not edit files. Do not create task drafts. Do not dispatch workers. Do not run merge, push, or cleanup commands.",
+    "Do not claim that you created tasks, approved actions, changed durable state, merged, pushed, or cleaned up work.",
+    "Your output is advisory data only. TypeScript validation and BK decisions own all state changes and execution.",
     "Inspect the repository if needed, then return a plan that the Samantha control plane can review.",
     "",
     "User request:",
@@ -54,6 +64,13 @@ export function buildOrchestratorPrompt(input: {
     "If it is plannable, keep `questions` empty and include one or more task proposals.",
     "For each task, set `projectId` to one of the known project profile ids whenever possible.",
     "Leave `repoRoot` empty or set it exactly to the selected project profile repo.",
+    "Choose task roles deliberately:",
+    "- Use `codex-spec` for report-only requirement shaping, scope decomposition, or acceptance criteria before implementation.",
+    "- Use `codex-reviewer` for report-only code review, risk review, or existing-state audit before implementation.",
+    "- Use `codex-evaluator` for report-only validation planning, test strategy, or result assessment that does not need file edits.",
+    "- Use `codex-worker` only for implementation/write tasks that may change files.",
+    "Non-writer tasks must use `resultMode: \"report\"` and must not depend on unmerged files produced by writer tasks.",
+    "Do not add extra role tasks unless they reduce concrete risk for the user's request.",
     "Never set `repoRoot` to a path under `.samantha-worktrees`, `runs`, `state`, or a previous worker worktree.",
     "Worker tasks must start from the canonical project repo; do not recover by dispatching a new worker with an old worker worktree as its repo.",
     "For recovery requests, treat run logs, changed files, and worker worktree paths as evidence only.",
@@ -197,6 +214,67 @@ export async function runOrchestratorSynthesis(input: {
   }
 }
 
+export function buildOrchestratorQuestionDraftPrompt(input: {
+  blocker: string;
+  context?: string;
+  subject?: { type: string; id: string };
+}): string {
+  return [
+    "You are the Samantha Orchestrator Agent in bounded question-drafting mode.",
+    "Draft one concise BK decision question for an ambiguous blocker.",
+    "Do not edit files. Do not create tasks. Do not dispatch workers. Do not run merge, push, or cleanup commands.",
+    "Do not claim that you changed durable state. The deterministic CEO office may validate your draft and store it as a decision item.",
+    "",
+    `Blocker: ${input.blocker}`,
+    input.context ? `Context: ${input.context}` : "Context: none",
+    input.subject ? `Subject: ${input.subject.type}:${input.subject.id}` : "Subject: none",
+    "",
+    "Return a concise Korean explanation, then include exactly one machine-readable payload.",
+    "The payload must start with `ORCHESTRATOR_QUESTION_DRAFT:` followed by a strict JSON object.",
+    "",
+    "Payload shape:",
+    JSON.stringify(
+      {
+        title: "short decision title",
+        prompt: "single question BK can answer",
+        options: ["approve", "revise", "cancel"],
+        risk: "risk if BK does not decide",
+        userMessage: "Korean message to show BK",
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+}
+
+export async function runOrchestratorQuestionDraft(input: {
+  blocker: string;
+  context?: string;
+  subject?: { type: string; id: string };
+  agent: AgentProfile;
+  repoRoot: string;
+  codexBin?: string;
+}): Promise<OrchestratorQuestionDraftRunResult> {
+  const prompt = buildOrchestratorQuestionDraftPrompt(input);
+  const command = await runCommand(buildCodexOrchestratorCommand({
+    agent: input.agent,
+    repoRoot: input.repoRoot,
+    prompt,
+    codexBin: input.codexBin,
+  }));
+  const rawOutput = [command.stdout, command.stderr].filter(Boolean).join("\n");
+
+  if (command.exitCode !== 0) {
+    return { command, rawOutput, failure: `orchestrator question draft command failed with exit ${command.exitCode}` };
+  }
+
+  try {
+    return { command, rawOutput, payload: parseOrchestratorQuestionDraftPayload(rawOutput) };
+  } catch (err) {
+    return { command, rawOutput, failure: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export function parseOrchestratorPlanPayload(output: string): OrchestratorPlanPayload {
   const messages = extractAgentMessages(output);
   const candidates = [...messages.slice().reverse(), output];
@@ -231,6 +309,23 @@ export function parseOrchestratorSynthesisPayload(output: string): OrchestratorS
   throw new Error("ORCHESTRATOR_SYNTHESIS payload not found");
 }
 
+export function parseOrchestratorQuestionDraftPayload(output: string): OrchestratorQuestionDraftPayload {
+  const messages = extractAgentMessages(output);
+  const candidates = [...messages.slice().reverse(), output];
+  let parseError: unknown;
+  for (const candidate of candidates) {
+    const json = extractMarkedJson(candidate, "ORCHESTRATOR_QUESTION_DRAFT:");
+    if (!json) continue;
+    try {
+      return validateQuestionDraftPayload(JSON.parse(json));
+    } catch (err) {
+      parseError = err;
+    }
+  }
+  if (parseError) throw parseError;
+  throw new Error("ORCHESTRATOR_QUESTION_DRAFT payload not found");
+}
+
 function projectProfileLines(profiles: ProjectProfile[]): string[] {
   if (profiles.length === 0) return ["- none"];
   return profiles.map((profile) => {
@@ -250,6 +345,7 @@ function buildOrchestratorSynthesisPrompt(input: {
   return [
     "You are the Samantha Orchestrator Agent in final synthesis mode.",
     "Do not edit files. Do not dispatch workers. Do not run merge, push, or cleanup commands.",
+    "Do not claim that you changed durable state. Summarize only the evidence provided by Samantha.",
     "Summarize the completed worker team result for BK in Korean and recommend the next action.",
     "",
     `Request: ${input.request?.text ?? input.plan.requestId}`,
@@ -343,7 +439,7 @@ function validatePlanPayload(raw: unknown): OrchestratorPlanPayload {
     throw new Error("ORCHESTRATOR_PLAN must be an object");
   }
   const value = raw as Record<string, unknown>;
-  return {
+  const payload = {
     summary: requiredString(value.summary, "summary"),
     assumptions: stringArray(value.assumptions, "assumptions"),
     questions: stringArray(value.questions, "questions"),
@@ -354,6 +450,8 @@ function validatePlanPayload(raw: unknown): OrchestratorPlanPayload {
     batches: batchArray(value.batches, "batches"),
     userMessage: requiredString(value.userMessage, "userMessage"),
   };
+  validatePlanPayloadConsistency(payload);
+  return payload;
 }
 
 function validateSynthesisPayload(raw: unknown): OrchestratorSynthesisPayload {
@@ -372,6 +470,41 @@ function validateSynthesisPayload(raw: unknown): OrchestratorSynthesisPayload {
     risks: stringArray(value.risks, "risks"),
     userMessage: requiredString(value.userMessage, "userMessage"),
   };
+}
+
+function validateQuestionDraftPayload(raw: unknown): OrchestratorQuestionDraftPayload {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("ORCHESTRATOR_QUESTION_DRAFT must be an object");
+  }
+  const value = raw as Record<string, unknown>;
+  const options = stringArray(value.options, "options");
+  if (options.length === 0) throw new Error("options must not be empty");
+  return {
+    title: requiredString(value.title, "title"),
+    prompt: requiredString(value.prompt, "prompt"),
+    options,
+    risk: optionalString(value.risk, "risk"),
+    userMessage: requiredString(value.userMessage, "userMessage"),
+  };
+}
+
+function validatePlanPayloadConsistency(payload: OrchestratorPlanPayload): void {
+  const proposalIds = new Set(payload.tasks.map((task) => task.id));
+  if (proposalIds.size !== payload.tasks.length) throw new Error("task ids must be unique");
+  if (payload.questions.length > 0 && payload.tasks.length > 0) {
+    throw new Error("plans with questions must not include task proposals");
+  }
+  if (payload.questions.length > 0 && payload.batches.length > 0) {
+    throw new Error("plans with questions must not include batches");
+  }
+  if (payload.questions.length === 0 && payload.tasks.length === 0) {
+    throw new Error("planned payloads must include at least one task or blocking questions");
+  }
+  for (const [index, batch] of payload.batches.entries()) {
+    for (const taskId of batch) {
+      if (!proposalIds.has(taskId)) throw new Error(`batches[${index}] references unknown task proposal: ${taskId}`);
+    }
+  }
 }
 
 function requiredString(value: unknown, field: string): string {

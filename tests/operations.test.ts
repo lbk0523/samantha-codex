@@ -183,6 +183,16 @@ describe("plan batches", () => {
 
     expect(buildPlanBatches(tasks)).toEqual([["review-a", "review-b"], ["write"]]);
   });
+
+  test("serializes ready writers under writer cap one", () => {
+    const tasks: LoadedPlanTask[] = [
+      { ref: { id: "write-a", task: "a.json", agent: "writer.json", repoRoot: "." }, task, agent: writer },
+      { ref: { id: "write-b", task: "b.json", agent: "writer.json", repoRoot: "." }, task, agent: writer },
+      { ref: { id: "review", task: "r.json", agent: "reviewer.json", repoRoot: "." }, task, agent: reviewer },
+    ];
+
+    expect(buildPlanBatches(tasks)).toEqual([["review"], ["write-a"], ["write-b"]]);
+  });
 });
 
 describe("inbox and remote commands", () => {
@@ -259,6 +269,7 @@ describe("inbox and remote commands", () => {
       },
     });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/go" }, "bk").type).toBe("actions:go");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/approve" }, "bk").type).toBe("decisions:approve-latest");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/recover" }, "bk")).toMatchObject({
       type: "orchestrator:recover-latest",
       args: { senderId: "bk" },
@@ -299,7 +310,7 @@ describe("inbox and remote commands", () => {
       ["/run run-1", "/now"],
       ["/failures", "/problems"],
       ["/proposal_next", "/now"],
-      ["/accept proposal-1", "/go"],
+      ["/accept proposal-1", "/approve"],
       ["/reject proposal-1", "/cancel"],
       ["/draft_next", "/now"],
       ["/draft-prepare omht", "/plan"],
@@ -311,7 +322,7 @@ describe("inbox and remote commands", () => {
       ["/actions", "/now"],
       ["/run_next", "/go"],
       ["/run-next", "/go"],
-      ["/yes", "/go"],
+      ["/yes", "/approve"],
       ["/action action-1", "/now"],
       ["/action_current", "/now"],
       ["/prepare_dispatch task-pass", "/go"],
@@ -1099,6 +1110,24 @@ describe("inbox and remote commands", () => {
       }),
       "utf8",
     );
+    await writeFile(
+      join(inbox, "004-approve.json"),
+      JSON.stringify({
+        id: "remote-approve",
+        type: "decisions:approve-latest",
+        args: { receivedAt: "2026-05-05T10:43:00.000Z" },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "005-go.json"),
+      JSON.stringify({
+        id: "remote-go-approved",
+        type: "actions:go",
+        args: { receivedAt: "2026-05-05T10:44:00.000Z" },
+      }),
+      "utf8",
+    );
 
     const proc = Bun.spawn(
       [
@@ -1132,7 +1161,11 @@ describe("inbox and remote commands", () => {
     expect(planReport).toContain("`telegram-orchestration-plan`");
     expect(planReport).toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
 
-    const goReport = await readFile(join(outbox, "003-go.md"), "utf8");
+    const gateReport = await readFile(join(outbox, "003-go.md"), "utf8");
+    expect(gateReport).toContain("# decision-required");
+    const approveReport = await readFile(join(outbox, "004-approve.md"), "utf8");
+    expect(approveReport).toContain("# approve");
+    const goReport = await readFile(join(outbox, "005-go.md"), "utf8");
     expect(goReport).toContain("# go");
     expect(goReport).toContain("오케스트레이터 계획을 승인했고 worker 실행 큐에 등록했습니다.");
     expect(goReport).toContain("`task-telegram-orchestration-plan`");
@@ -1262,6 +1295,24 @@ describe("inbox and remote commands", () => {
       }),
       "utf8",
     );
+    await writeFile(
+      join(inbox, "002-approve.json"),
+      JSON.stringify({
+        id: "remote-approve",
+        type: "decisions:approve-latest",
+        args: { receivedAt: "2026-05-05T10:43:00.000Z" },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "003-go.json"),
+      JSON.stringify({
+        id: "remote-go-approved",
+        type: "actions:go",
+        args: { receivedAt: "2026-05-05T10:44:00.000Z" },
+      }),
+      "utf8",
+    );
 
     const proc = Bun.spawn(
       [
@@ -1285,7 +1336,9 @@ describe("inbox and remote commands", () => {
     ]);
 
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-    const goReport = await readFile(join(outbox, "001-go.md"), "utf8");
+    const gateReport = await readFile(join(outbox, "001-go.md"), "utf8");
+    expect(gateReport).toContain("# decision-required");
+    const goReport = await readFile(join(outbox, "003-go.md"), "utf8");
     expect(goReport).toContain("오케스트레이터 계획을 실행 큐에 등록하지 못했습니다.");
     expect(goReport).toContain("verifyCommands must not be empty");
     expect(goReport).toContain("matches state/**");
@@ -1371,6 +1424,90 @@ describe("inbox and remote commands", () => {
       repoRoot: "/repo/omht",
       status: "pending",
     });
+  });
+
+  test("materializes a role-aware reviewer to writer canary plan", () => {
+    const blockedSkills = [
+      "using-git-worktrees",
+      "dispatching-parallel-agents",
+      "subagent-driven-development",
+    ];
+    const result = materializeOrchestratorPlan({
+      plan: {
+        schemaVersion: 1,
+        id: "plan-role-aware-canary",
+        requestId: "request-role-aware-canary",
+        status: "planned",
+        createdAt: "2026-05-06T02:00:00.000Z",
+        payload: {
+          summary: "reviewer가 위험을 먼저 확인한 뒤 worker가 작은 변경을 수행합니다.",
+          assumptions: [],
+          questions: [],
+          scope: ["reviewer report-only preflight", "single writer implementation"],
+          nonScope: ["parallel writers", "post-write review of unmerged worker files"],
+          risks: ["dependent worker tasks do not share unmerged worktree changes"],
+          tasks: [
+            {
+              id: "review-risk",
+              title: "Review implementation risk",
+              targetAgent: "codex-reviewer",
+              projectId: "samantha",
+              resultMode: "report",
+              repoRoot: "",
+              targetFiles: [],
+              forbiddenChanges: ["state/**"],
+              setupCommands: [],
+              verifyCommands: ["bun run typecheck"],
+              instructions: "Inspect existing Samantha workflow risk. Do not edit files.",
+              dependencies: [],
+            },
+            {
+              id: "apply-small-change",
+              title: "Apply small workflow change",
+              targetAgent: "codex-worker",
+              projectId: "samantha",
+              resultMode: "write",
+              repoRoot: "",
+              targetFiles: ["src/**", "tests/**"],
+              forbiddenChanges: ["state/**"],
+              setupCommands: [],
+              verifyCommands: ["bun run typecheck"],
+              instructions: "Apply the smallest code change after considering the reviewer report.",
+              dependencies: ["review-risk"],
+            },
+          ],
+          batches: [["review-risk"], ["apply-small-change"]],
+          userMessage: "역할을 나눠 안전하게 진행합니다.",
+        },
+      },
+      agents: [
+        { ...reviewer, skillPolicy: { requiredBundles: [], blockedSkills } },
+        { ...writer, skillPolicy: { requiredBundles: [], blockedSkills } },
+      ],
+      projects: [
+        {
+          schemaVersion: 1,
+          id: "samantha",
+          repoRoot: "/repo/samantha-codex",
+          setupCommands: [],
+          verifyCommands: ["bun run typecheck"],
+          forbiddenChanges: ["state/**"],
+        },
+      ],
+      createdAt: "2026-05-06T02:01:00.000Z",
+      commandId: "remote-go",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.tasks.map((task) => [task.id, task.targetAgent, task.resultMode, task.repoRoot])).toEqual([
+      ["task-review-risk", "codex-reviewer", "report", "/repo/samantha-codex"],
+      ["task-apply-small-change", "codex-worker", "write", "/repo/samantha-codex"],
+    ]);
+    expect(result.actions.map((action) => [action.taskId, action.status, action.dependsOnActionIds?.length ?? 0])).toEqual([
+      ["task-review-risk", "pending", 0],
+      ["task-apply-small-change", "waiting", 1],
+    ]);
   });
 
   test("materializes recovery plans from canonical project roots only", () => {
@@ -2152,6 +2289,24 @@ describe("inbox and remote commands", () => {
         id: "remote-go-dependent",
         type: "actions:go",
         args: { receivedAt: "2026-05-06T10:01:00.000Z" },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "002-approve.json"),
+      JSON.stringify({
+        id: "remote-approve-dependent",
+        type: "decisions:approve-latest",
+        args: { receivedAt: "2026-05-06T10:02:00.000Z" },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "003-go.json"),
+      JSON.stringify({
+        id: "remote-go-dependent-approved",
+        type: "actions:go",
+        args: { receivedAt: "2026-05-06T10:03:00.000Z" },
       }),
       "utf8",
     );
