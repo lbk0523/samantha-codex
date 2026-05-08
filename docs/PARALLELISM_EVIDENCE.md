@@ -32,10 +32,11 @@ There is no Stage 9 writer cap increase.
 
 ## Dogfood Notes
 
-The first MVP implementation reached Stage 9 without changing runtime writer
-concurrency. The current evidence is limited to implementation behavior and
-focused tests for non-writer batching, writer serialization, materialization
-rejection, and deterministic integration gates.
+Phase 4 P9 reviewed the mature planning path without changing runtime writer
+concurrency. The evidence covers ambiguous work that stays question-only,
+recovery work that uses canonical project roots, report-only specialist work
+that remains read-only, and one-writer implementation plans with advisory
+alternatives and selected-plan-only materialization.
 
 These notes are sufficient for parallel report-only specialists plus one writer.
 They are not sufficient for multi-writer execution.

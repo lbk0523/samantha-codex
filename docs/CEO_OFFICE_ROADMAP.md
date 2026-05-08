@@ -141,7 +141,7 @@ Detailed stages:
 
 ### 4. Planning And Delegation Maturity
 
-Status: active.
+Status: implemented.
 
 Objective: improve bounded planning quality while keeping the deterministic CEO
 Office in control of durable state and safety gates.

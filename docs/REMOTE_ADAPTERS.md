@@ -28,7 +28,7 @@ failed plan result -> /recover -> /plan -> /go
 - `/work <request>` captures new work as an orchestration request; it does not create a task or dispatch a worker.
 - `/plan` runs the local Codex CLI `codex-orchestrator` profile in read-only mode and returns the generated plan.
 - `/plan_current` shows the current unapproved plan again without rerunning the orchestrator.
-- `/go` validates the orchestrator plan, creates task records, and approves dispatch actions. It does not execute workers inside `inbox:watch`.
+- `/go` validates the selected task set in the orchestrator plan, creates task records, and approves dispatch actions. It does not execute workers inside `inbox:watch`.
 - `/revise <feedback>` supersedes the current unapproved plan and creates a new planning request with the feedback.
 - `/cancel` discards the current pending planning request or unapproved plan. It cannot stop workers or cancel actions.
 - `/recover` turns the latest failed materialized plan result into a new orchestration request. It does not retry or dispatch by itself.
@@ -36,6 +36,11 @@ failed plan result -> /recover -> /plan -> /go
 - `/problems` is the diagnostic view.
 
 `/help` shows only this short flow. Lower-level inspection and explicit id-based commands are not exposed as Telegram commands. Deprecated Telegram commands return a short replacement hint instead of running the old flow.
+
+Plans may be executable, question-only, or blocked by prerequisites. Question-only
+and prerequisite-blocked plans show `/revise <feedback>` instead of `/go` as the
+safe next step. Alternatives and tradeoffs are advisory; `/go` materializes only
+the selected `tasks` and `batches` path after deterministic validation.
 
 ## Supported Commands
 
@@ -116,7 +121,12 @@ Remote dispatch uses an action gate plus a separate runner instead of direct com
 actions:watch -> tasks:dispatch <task-id> --allocate --execute --tmux
 ```
 
-`/go` first checks for an active orchestrator plan. If the plan is ready, it validates all proposed tasks, writes task records, writes dispatch actions, marks dependency-free actions approved, leaves dependent actions waiting, and marks the plan materialized. If the plan has questions or unsafe fields, it returns a block report and does not create tasks or actions. If a request is still waiting for a plan, `/go` returns the same next-step guidance as `/now`. If no orchestration state exists, `/go` may advance Samantha's fixed integration gates for the latest passed run; otherwise it reports that there is no actionable plan instead of approving stale task/action/draft state. No worker is started inside `inbox:watch`.
+`/go` first checks for an active orchestrator plan. If the plan is ready, it validates the selected proposed tasks, writes task records, writes dispatch actions, marks dependency-free actions approved, leaves dependent actions waiting, and marks the plan materialized. If the plan has questions, prerequisites, blockers, or unsafe fields, it returns a block report and does not create tasks or actions. If a request is still waiting for a plan, `/go` returns the same next-step guidance as `/now`. If no orchestration state exists, `/go` may advance Samantha's fixed integration gates for the latest passed run; otherwise it reports that there is no actionable plan instead of approving stale task/action/draft state. No worker is started inside `inbox:watch`.
+
+Role-aware plans may include report-only `codex-spec`, `codex-reviewer`,
+`codex-evaluator`, `codex-researcher`, `codex-content`, or `codex-operations`
+tasks before or beside one `codex-worker` write task. Non-writers remain
+read-only and production writers remain capped at one.
 
 Dependent plan actions use `waiting` status with explicit `dependsOnActionIds`. `actions:watch` promotes a waiting action only after every dependency action completed successfully. If a dependency fails or disappears, the dependent action is marked failed without running a worker.
 

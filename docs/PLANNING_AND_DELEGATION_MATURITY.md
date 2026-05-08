@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-08
 
-Status: active.
+Status: implemented.
 
 This document contains the execution stages for roadmap Phase 4:
 [Planning And Delegation Maturity](CEO_OFFICE_ROADMAP.md#4-planning-and-delegation-maturity).
@@ -231,12 +231,49 @@ bun run verify:host
 Do not run Samantha daemon, watch, poll, reply, worker dispatch, or dashboard
 runtime processes from Mac.
 
+P9 outcome: completed for the deterministic planning path. This stage did not
+add new runtime behavior; it reviewed the mature Phase 4 behavior already
+covered by focused tests and existing architecture, remote-adapter, and
+parallelism evidence docs.
+
+Dogfood evidence:
+
+| Case | Evidence | Exit-gate outcome |
+| --- | --- | --- |
+| Ambiguous work | `tests/project-profile.test.ts` classifies unclear Korean/English requests as `ambiguity_heavy` with `questions_first`; `tests/orchestrator-planning-baseline.test.ts` keeps ambiguous plans question-only; `tests/operator-reports.test.ts` shows `/revise <feedback>` instead of `/go`. | Met: ambiguous work produces BK clarification instead of unsafe task materialization. |
+| Recovery work | `tests/recovery-context.test.ts`, `tests/recovery-continuity.test.ts`, `tests/operations.test.ts`, and `tests/orchestrator-materializer.test.ts` cover `/recover -> /plan -> /go`, failed-plan evidence, canonical project roots, and rejection of old worker worktree roots. | Met: recovery is evidence-driven and does not blindly retry failed workers. |
+| Report-only specialist work | `tests/orchestrator-materializer.test.ts`, `tests/worker-dispatch.test.ts`, and `tests/codex-dispatch.test.ts` cover role-aware `codex-spec`, `codex-reviewer`, `codex-evaluator`, `codex-researcher`, `codex-content`, and `codex-operations` report-only contracts. | Met: non-writers remain read-only, produce reports, and fail if they edit files. |
+| One-writer implementation plan | `tests/orchestrator-materializer.test.ts`, `tests/operations.test.ts`, `tests/policy.test.ts`, and `tests/parallelism-evidence.test.ts` cover selected-plan-only materialization, advisory alternatives, writer cap `1`, and readable report-only specialist plus writer outcomes. | Met: implementation plans can use report-only risk reducers, but only one writer materializes at a time. |
+
+Behavior documentation reviewed:
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) records that bounded LLM calls are proposal
+  generators and that Samantha keeps durable state, execution, and safety gates.
+- [REMOTE_ADAPTERS.md](REMOTE_ADAPTERS.md) records the `/work -> /plan -> /go`
+  path, `/recover`, plan blockers, and selected-plan-only materialization.
+- [PARALLELISM_EVIDENCE.md](PARALLELISM_EVIDENCE.md) records that P9 does not
+  increase `writerCap`; report-only non-writer confidence remains separate from
+  any future multi-writer decision.
+
+Phase 5 follow-ups, explicitly outside Phase 4:
+
+- stronger safety-policy contracts and dangerous-transition tests
+- explicit risk classification across requests, plans, actions, merges, pushes,
+  cleanup, and recovery
+- richer audit trails and immutable event views for decisions, actions, runs,
+  merges, pushes, cleanup, and recovery
+- operator review reports that reconstruct a completed work item from request
+  to final state
+- documented rollback and recovery drills for larger or riskier work
+- any writer-cap increase, multi-writer execution, or general agent-team
+  construction
+
 ## Exit Criteria
 
-- Samantha can create useful plans for ambiguous work without immediately
+- Met: Samantha can create useful plans for ambiguous work without immediately
   dispatching unsafe tasks.
-- Plan materialization remains deterministic and validated.
-- Worker prompts are role-aware and narrow.
-- Failed or incomplete plans produce actionable recovery paths.
-- BK can see assumptions, tradeoffs, prerequisites, selected role strategy, and
-  one next safe action from the operating surface.
+- Met: plan materialization remains deterministic and validated.
+- Met: worker prompts are role-aware and narrow.
+- Met: failed or incomplete plans produce actionable recovery paths.
+- Met: BK can see assumptions, tradeoffs, prerequisites, selected role
+  strategy, and one next safe action from the operating surface.
