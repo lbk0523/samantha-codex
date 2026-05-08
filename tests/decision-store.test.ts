@@ -184,33 +184,51 @@ describe("DecisionStore", () => {
   });
 
   test("only resolved approved decisions allow orchestrator materialization", () => {
+    const approval = createDecisionItem({
+      title: "Review risky plan",
+      prompt: "Approve the plan before materialization.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-1" },
+      options: ["approve", "revise", "cancel"],
+      risk: "Touches dispatch gates.",
+      createdAt: "2026-05-07T10:00:00.000Z",
+    });
     expect(decisionAllowsOrchestratorMaterialization(undefined)).toBe(false);
-    expect(decisionAllowsOrchestratorMaterialization(decision)).toBe(false);
+    expect(decisionAllowsOrchestratorMaterialization(approval)).toBe(false);
     expect(decisionAllowsOrchestratorMaterialization({
-      ...decision,
+      ...approval,
       status: "resolved",
       resolution: "needs_revision",
       resolvedAt: "2026-05-07T10:05:00.000Z",
       resolvedBy: "bk",
     })).toBe(false);
     expect(decisionAllowsOrchestratorMaterialization({
-      ...decision,
+      ...approval,
       status: "resolved",
       resolution: "approved",
       resolvedAt: "2026-05-07T10:05:00.000Z",
       resolvedBy: "bk",
     })).toBe(true);
+    expect(decisionAllowsOrchestratorMaterialization({
+      ...decision,
+      status: "resolved",
+      resolution: "approved",
+      resolvedAt: "2026-05-07T10:05:00.000Z",
+      resolvedBy: "bk",
+    })).toBe(false);
   });
 
   test("converts bounded question drafts into pending blocker decisions", () => {
+    const payload = {
+      title: "Clarify blocker",
+      prompt: "Should Samantha recover or wait?",
+      options: ["recover", "wait"],
+      risk: "Wrong recovery may waste a worker run.",
+      userMessage: "BK decision required.",
+    };
     const created = decisionFromQuestionDraft({
-      payload: {
-        title: "Clarify blocker",
-        prompt: "Should Samantha recover or wait?",
-        options: ["recover", "wait"],
-        risk: "Wrong recovery may waste a worker run.",
-        userMessage: "BK decision required.",
-      },
+      payload,
       subject: { type: "run", id: "run-1" },
       createdAt: "2026-05-07T10:08:00.000Z",
     });
@@ -224,5 +242,14 @@ describe("DecisionStore", () => {
       subject: { type: "run", id: "run-1" },
       risk: "Wrong recovery may waste a worker run.",
     });
+    expect(() => decisionFromQuestionDraft({
+      payload,
+      createdAt: "2026-05-07T10:08:00.000Z",
+    })).toThrow("question draft decisions require a subject");
+    expect(() => decisionFromQuestionDraft({
+      payload: { ...payload, options: ["approve", "wait"] },
+      subject: { type: "run", id: "run-1" },
+      createdAt: "2026-05-07T10:08:00.000Z",
+    })).toThrow("question draft options must not authorize execution");
   });
 });

@@ -66,6 +66,22 @@ function nonEmptyOptions(options: string[] | undefined): string[] {
   return values;
 }
 
+const executionAdvancingQuestionOptionPatterns = [
+  /^\/?(?:approve|go)\b/i,
+  /^(?:proceed|execute|dispatch|materialize|merge|push)\b/i,
+  /^(승인|진행|실행|머지|푸시)(?:\s|$|[:：-])/i,
+];
+
+function questionDraftOptions(options: string[]): string[] {
+  const values = nonEmptyOptions(options);
+  if (values.length < 2 || values.length > 3) throw new Error("question draft options must contain 2 or 3 choices");
+  if (values.some((option) => option.length > 48)) throw new Error("question draft options must be 48 characters or less");
+  if (values.some((option) => executionAdvancingQuestionOptionPatterns.some((pattern) => pattern.test(option)))) {
+    throw new Error("question draft options must not authorize execution");
+  }
+  return values;
+}
+
 function planApprovalPrompt(plan: OrchestratorPlanRecord): string {
   const base = "Approve, request revision, or cancel before Samantha materializes worker tasks.";
   const payload = plan.payload;
@@ -164,11 +180,14 @@ export function decisionFromQuestionDraft(input: {
   createdAt: string;
   source?: DecisionItem["source"];
 }): DecisionItem {
+  if (!input.subject) throw new Error("question draft decisions require a subject");
+  if (!input.payload.risk?.trim()) throw new Error("question draft risk is required");
+
   return createDecisionItem({
     kind: "blocker_clarification",
     title: input.payload.title,
     prompt: input.payload.prompt,
-    options: input.payload.options,
+    options: questionDraftOptions(input.payload.options),
     risk: input.payload.risk,
     subject: input.subject,
     source: input.source ?? "system",
@@ -177,7 +196,7 @@ export function decisionFromQuestionDraft(input: {
 }
 
 export function decisionAllowsOrchestratorMaterialization(decision: DecisionItem | undefined): boolean {
-  return decision?.status === "resolved" && decision.resolution === "approved";
+  return decision?.kind === "orchestrator_plan_approval" && decision.status === "resolved" && decision.resolution === "approved";
 }
 
 export function decisionHasCurrentPlanSubject(decision: DecisionItem, plans: OrchestratorPlanRecord[]): boolean {

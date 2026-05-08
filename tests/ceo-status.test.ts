@@ -302,6 +302,55 @@ describe("CEO status snapshot", () => {
     expect(snapshot.nextAction).toMatchObject({ kind: "review_plan", command: "/go", targetId: "plan-approved" });
   });
 
+  test("pending blocker clarification prevents approved plan materialization", () => {
+    const approved = {
+      ...createDecisionItem({
+        title: "Review approved plan",
+        prompt: "Approve, revise, or cancel.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: "plan-approved" },
+        createdAt: "2026-05-07T09:11:00.000Z",
+      }),
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedAt: "2026-05-07T09:12:00.000Z",
+      resolvedBy: "bk" as const,
+    };
+    const clarification = createDecisionItem({
+      title: "Clarify blocker",
+      prompt: "Should Samantha narrow scope before materialization?",
+      kind: "blocker_clarification",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-approved" },
+      options: ["answer", "revise", "cancel"],
+      risk: "Materializing before BK answers can dispatch the wrong work.",
+      createdAt: "2026-05-07T09:13:00.000Z",
+    });
+
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      decisions: [approved, clarification],
+      orchestratorPlans: [{ ...plan, id: "plan-approved", status: "planned" }],
+    });
+
+    expect(snapshot.overall).toBe("needs_decision");
+    expect(snapshot.needsDecision).toEqual([
+      expect.objectContaining({
+        id: clarification.id,
+        decisionKind: "blocker_clarification",
+        options: ["answer", "revise", "cancel"],
+      }),
+    ]);
+    expect(snapshot.active).not.toContainEqual(expect.objectContaining({ kind: "orchestrator_plan", id: "plan-approved" }));
+    expect(snapshot.nextAction).toMatchObject({
+      kind: "resolve_decision",
+      command: `bun run samantha decisions:resolve ${clarification.id} --resolution=answered --note=<answer>`,
+      targetId: clarification.id,
+    });
+    expect(snapshot.nextAction.command).not.toBe("/go");
+  });
+
   test("blocked orchestrator plans surface one deterministic revision action", () => {
     const blockedPlan = { ...plan, id: "plan-blocked", status: "planned" as const };
     const snapshot = buildCeoStatusSnapshot({

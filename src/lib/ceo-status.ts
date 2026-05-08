@@ -4,6 +4,7 @@ import {
   decisionHasCurrentPlanSubject,
   decisionLifecycleStatus,
   type DecisionItem,
+  type DecisionKind,
 } from "./decision-store";
 import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
@@ -39,6 +40,7 @@ export interface CeoDecisionSummary {
   title: string;
   status: string;
   reason: string;
+  decisionKind?: DecisionKind;
   updatedAt?: string;
   subject?: string;
   options?: string[];
@@ -243,6 +245,27 @@ function nextActionForIntegration(input: {
   };
 }
 
+function decisionResolutionCommand(decision: CeoDecisionSummary): string {
+  if (decision.options?.includes("approve") && decision.decisionKind !== "blocker_clarification") {
+    return "bun run samantha decisions:approve-latest";
+  }
+  if (decision.decisionKind === "blocker_clarification" || decision.options?.includes("answer")) {
+    return `bun run samantha decisions:resolve ${decision.id} --resolution=answered --note=<answer>`;
+  }
+  if (decision.options?.includes("revise")) {
+    return `bun run samantha decisions:resolve ${decision.id} --resolution=needs_revision --note=<feedback>`;
+  }
+  if (decision.options?.includes("cancel")) {
+    return `bun run samantha decisions:resolve ${decision.id} --resolution=canceled --note=<reason>`;
+  }
+  return "bun run samantha decisions:list --pending";
+}
+
+function decisionResolutionLabel(decision: CeoDecisionSummary): string {
+  if (decision.decisionKind === "blocker_clarification") return "Answer the latest blocker clarification";
+  return "Resolve the latest pending BK decision";
+}
+
 function chooseNextAction(input: {
   active: CeoStatusItem[];
   blocked: CeoStatusItem[];
@@ -258,13 +281,10 @@ function chooseNextAction(input: {
 }): CeoNextAction {
   const latestDecision = input.needsDecision[0];
   if (latestDecision?.kind === "decision") {
-    const command = latestDecision.options?.includes("approve")
-      ? "bun run samantha decisions:approve-latest"
-      : "bun run samantha decisions:list --pending";
     return {
       kind: "resolve_decision",
-      label: "Resolve the latest pending BK decision",
-      command,
+      label: decisionResolutionLabel(latestDecision),
+      command: decisionResolutionCommand(latestDecision),
       targetId: latestDecision.id,
       reason: latestDecision.reason,
     };
@@ -506,6 +526,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
         title: decision.title,
         status: decisionLifecycleStatus(decision),
         reason: decision.prompt,
+        decisionKind: decision.kind,
         updatedAt: decisionUpdatedAt(decision),
         subject: decisionSubjectText(decision),
         options: decision.options,

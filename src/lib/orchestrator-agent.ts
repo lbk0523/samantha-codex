@@ -72,6 +72,9 @@ export function buildOrchestratorPrompt(input: {
     "Return a concise Korean user-facing plan, then include exactly one machine-readable payload.",
     "The payload must start with `ORCHESTRATOR_PLAN:` followed by a strict JSON object.",
     "If the request is ambiguous enough that worker delegation would be unsafe, put the blocking questions in `questions` and leave `tasks` empty.",
+    "Use plain plan `questions` for ambiguity found while drafting the current plan, such as unclear scope, project, acceptance criteria, or BK preference.",
+    "`orchestrator:question-draft` is only for an existing ambiguous blocker already linked to a concrete subject such as a plan, run, task, or action.",
+    "Do not ask the question-draft worker from inside a plan payload, and do not turn a plain plan question into a task proposal.",
     "If Samantha lacks a local prerequisite such as a project profile, canonical repo root, concrete verify command, or host-only runtime requirement, put it in `prerequisites` or `blockers` and leave `tasks` empty.",
     "Do not turn missing context, missing profile/root/verify data, or host-only runtime work into speculative worker tasks.",
     "If it is plannable, keep `questions` empty and include one or more task proposals.",
@@ -260,9 +263,14 @@ export function buildOrchestratorQuestionDraftPrompt(input: {
 }): string {
   return [
     "You are the Samantha Orchestrator Agent in bounded question-drafting mode.",
-    "Draft one concise BK decision question for an ambiguous blocker.",
+    "Draft one concise BK decision question for an ambiguous blocker that Samantha already linked to a concrete subject.",
+    "If ambiguity is still inside an unmaterialized plan, plain ORCHESTRATOR_PLAN.questions are sufficient; do not use question-draft for that case.",
     "Do not edit files. Do not create tasks. Do not dispatch workers. Do not run merge, push, or cleanup commands.",
     "Do not claim that you changed durable state. The deterministic CEO office may validate your draft and store it as a decision item.",
+    "Do not choose an option, resolve the blocker, approve execution, or advance work.",
+    "Keep the title under 80 characters, the prompt under 240 characters, and ask exactly one subject-linked question.",
+    "Use 2 or 3 concise options. Options must not be approve/go/proceed/execute/dispatch/materialize/merge/push instructions.",
+    "Include the concrete risk of leaving the blocker unresolved.",
     "",
     `Blocker: ${input.blocker}`,
     input.context ? `Context: ${input.context}` : "Context: none",
@@ -276,7 +284,7 @@ export function buildOrchestratorQuestionDraftPrompt(input: {
       {
         title: "short decision title",
         prompt: "single question BK can answer",
-        options: ["approve", "revise", "cancel"],
+        options: ["answer option", "revise", "cancel"],
         risk: "risk if BK does not decide",
         userMessage: "Korean message to show BK",
       },
@@ -563,14 +571,13 @@ function validateQuestionDraftPayload(raw: unknown): OrchestratorQuestionDraftPa
     throw new Error("ORCHESTRATOR_QUESTION_DRAFT must be an object");
   }
   const value = raw as Record<string, unknown>;
-  const options = stringArray(value.options, "options");
-  if (options.length === 0) throw new Error("options must not be empty");
+  const options = questionDraftOptions(stringArray(value.options, "options"));
   return {
-    title: requiredString(value.title, "title"),
-    prompt: requiredString(value.prompt, "prompt"),
+    title: conciseString(value.title, "title", 80),
+    prompt: conciseString(value.prompt, "prompt", 240),
     options,
-    risk: optionalString(value.risk, "risk"),
-    userMessage: requiredString(value.userMessage, "userMessage"),
+    risk: conciseString(value.risk, "risk", 240),
+    userMessage: conciseString(value.userMessage, "userMessage", 240),
   };
 }
 
@@ -605,6 +612,16 @@ function requiredString(value: unknown, field: string): string {
   return value;
 }
 
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function conciseString(value: unknown, field: string, maxLength: number): string {
+  const text = oneLine(requiredString(value, field));
+  if (text.length > maxLength) throw new Error(`${field} must be ${maxLength} characters or less`);
+  return text;
+}
+
 function optionalString(value: unknown, field: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`${field} must be a string`);
@@ -616,6 +633,26 @@ function stringArray(value: unknown, field: string): string[] {
     throw new Error(`${field} must be a string array`);
   }
   return value;
+}
+
+const executionAdvancingQuestionOptionPatterns = [
+  /^\/?(?:approve|go)\b/i,
+  /^(?:proceed|execute|dispatch|materialize|merge|push)\b/i,
+  /^(승인|진행|실행|머지|푸시)(?:\s|$|[:：-])/i,
+];
+
+function questionDraftOptions(options: string[]): string[] {
+  if (options.length < 2 || options.length > 3) throw new Error("options must contain 2 or 3 choices");
+
+  const normalized = options.map(oneLine);
+  if (normalized.some((option) => !option)) throw new Error("options must be non-empty strings");
+  if (new Set(normalized).size !== normalized.length) throw new Error("options must be unique");
+  if (normalized.some((option) => option.length > 48)) throw new Error("options must be 48 characters or less");
+  if (normalized.some((option) => executionAdvancingQuestionOptionPatterns.some((pattern) => pattern.test(option)))) {
+    throw new Error("options must not authorize execution");
+  }
+
+  return normalized;
 }
 
 function batchArray(value: unknown, field: string): string[][] {

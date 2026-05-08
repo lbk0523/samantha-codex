@@ -2232,8 +2232,11 @@ async function main(): Promise<void> {
 
   if (args.command === "orchestrator:question-draft") {
     const blocker = flag(args, "blocker", "");
-    if (!blocker) throw new Error("usage: orchestrator:question-draft --blocker=<text> [--context=<text>]");
+    if (!blocker) {
+      throw new Error("usage: orchestrator:question-draft --blocker=<text> --subject-type=<type> --subject-id=<id> [--context=<text>]");
+    }
     const subject = decisionSubject(args);
+    if (!subject) throw new Error("orchestrator:question-draft requires --subject-type and --subject-id");
     const result = await runOrchestratorQuestionDraft({
       blocker,
       context: flag(args, "context", "") || undefined,
@@ -3003,7 +3006,7 @@ async function main(): Promise<void> {
       "  decisions:reject-latest [--note=<text>]",
       "  decisions:resolve <decision-id> --resolution=<approved|rejected|needs_revision|answered|canceled>",
       "  decisions:archive <decision-id> --reason=<text>",
-      "  orchestrator:question-draft --blocker=<text> [--context=<text>]",
+      "  orchestrator:question-draft --blocker=<text> --subject-type=<type> --subject-id=<id> [--context=<text>]",
       "  next-action",
       "  doctor [--json]",
       "  health:check [--max-age-ms=15000]",

@@ -62,6 +62,8 @@ describe("orchestrator agent prompt", () => {
     expect(prompt).toContain("Use this classification as an explainable safety hint only.");
     expect(prompt).toContain("It is not permission to dispatch workers or mutate state.");
     expect(prompt).toContain("If classification is `ambiguity_heavy`, prefer blocking questions");
+    expect(prompt).toContain("Use plain plan `questions` for ambiguity found while drafting the current plan");
+    expect(prompt).toContain("`orchestrator:question-draft` is only for an existing ambiguous blocker");
     expect(prompt).toContain("put it in `prerequisites` or `blockers` and leave `tasks` empty");
     expect(prompt).toContain("Do not turn missing context, missing profile/root/verify data, or host-only runtime work into speculative worker tasks.");
     expect(prompt).toContain("Prefer the simplest safe approach first");
@@ -164,13 +166,16 @@ describe("orchestrator agent prompt", () => {
       subject: { type: "run", id: "run-1" },
     });
     expect(prompt).toContain("bounded question-drafting mode");
+    expect(prompt).toContain("plain ORCHESTRATOR_PLAN.questions are sufficient");
     expect(prompt).toContain("Do not edit files. Do not create tasks. Do not dispatch workers.");
+    expect(prompt).toContain("Do not choose an option, resolve the blocker, approve execution, or advance work.");
+    expect(prompt).toContain("Use 2 or 3 concise options.");
     expect(prompt).toContain("The deterministic CEO office may validate your draft and store it as a decision item.");
 
     const payload = {
       title: "검증 실패 방향 결정",
       prompt: "테스트 보강을 먼저 할까요?",
-      options: ["approve", "revise"],
+      options: ["테스트 보강", "계획 수정", "취소"],
       risk: "방향 없이 재시도하면 같은 실패가 반복됩니다.",
       userMessage: "BK 결정이 필요합니다.",
     };
@@ -185,5 +190,17 @@ describe("orchestrator agent prompt", () => {
     expect(() => parseOrchestratorQuestionDraftPayload("ORCHESTRATOR_QUESTION_DRAFT: {}")).toThrow(
       "options must be a string array",
     );
+    expect(() => parseOrchestratorQuestionDraftPayload(`ORCHESTRATOR_QUESTION_DRAFT: ${JSON.stringify({
+      ...payload,
+      options: ["approve", "revise"],
+    })}`)).toThrow("options must not authorize execution");
+    expect(() => parseOrchestratorQuestionDraftPayload(`ORCHESTRATOR_QUESTION_DRAFT: ${JSON.stringify({
+      ...payload,
+      options: ["A", "B", "C", "D"],
+    })}`)).toThrow("options must contain 2 or 3 choices");
+    expect(() => parseOrchestratorQuestionDraftPayload(`ORCHESTRATOR_QUESTION_DRAFT: ${JSON.stringify({
+      ...payload,
+      risk: undefined,
+    })}`)).toThrow("risk must be a non-empty string");
   });
 });
