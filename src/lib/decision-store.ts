@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { compactEntityId } from "./ids";
+import { planPayloadBlockerViolations } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord, OrchestratorQuestionDraftPayload } from "./orchestrator-store";
 
 export type DecisionStatus = "pending" | "resolved" | "archived";
@@ -141,6 +142,7 @@ export function decisionFromOrchestratorPlan(input: {
   }
 
   if (input.plan.status === "planned") {
+    if (planPayloadBlockerViolations(input.plan).length > 0) return undefined;
     return createDecisionItem({
       kind: "orchestrator_plan_approval",
       title: `Review plan: ${summary}`,

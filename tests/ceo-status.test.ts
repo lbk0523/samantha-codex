@@ -73,8 +73,22 @@ const plan: OrchestratorPlanRecord = {
     scope: ["status snapshot"],
     nonScope: ["Telegram commands"],
     risks: ["report could hide blockers"],
-    tasks: [],
-    batches: [],
+    tasks: [
+      {
+        id: "status-plan-report",
+        title: "Review CEO status plan",
+        targetAgent: "codex-worker",
+        projectId: "samantha",
+        resultMode: "report",
+        targetFiles: [],
+        forbiddenChanges: ["state/**"],
+        setupCommands: [],
+        verifyCommands: ["bun typecheck"],
+        instructions: "Review the CEO status plan and report findings.",
+        dependencies: [],
+      },
+    ],
+    batches: [["status-plan-report"]],
     userMessage: "Plan ready.",
   },
 };
@@ -286,6 +300,34 @@ describe("CEO status snapshot", () => {
     expect(snapshot.needsDecision).toEqual([]);
     expect(snapshot.active).toContainEqual(expect.objectContaining({ kind: "orchestrator_plan", id: "plan-approved" }));
     expect(snapshot.nextAction).toMatchObject({ kind: "review_plan", command: "/go", targetId: "plan-approved" });
+  });
+
+  test("blocked orchestrator plans surface one deterministic revision action", () => {
+    const blockedPlan = { ...plan, id: "plan-blocked", status: "planned" as const };
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      orchestratorPlans: [blockedPlan],
+      orchestratorPlanBlockers: [
+        {
+          planId: "plan-blocked",
+          requestId: request.id,
+          violations: ["task proposal write: verifyCommands must not be empty"],
+          nextAction: {
+            label: "Revise the current orchestrator plan before materialization",
+            command: "/revise <피드백>",
+            reason: "task proposal write: verifyCommands must not be empty",
+          },
+        },
+      ],
+    });
+    const report = formatCeoStatusReport(snapshot);
+
+    expect(snapshot.overall).toBe("blocked");
+    expect(snapshot.needsDecision).toEqual([]);
+    expect(snapshot.blocked).toContainEqual(expect.objectContaining({ kind: "orchestrator_plan", id: "plan-blocked", status: "blocked" }));
+    expect(snapshot.nextAction).toMatchObject({ kind: "review_plan", command: "/revise <피드백>", targetId: "plan-blocked" });
+    expect(report).toContain("Next safe action:\n- Revise the current orchestrator plan before materialization\n- Telegram: /revise <피드백>");
+    expect(report).not.toContain("Telegram: /go");
   });
 
   test("running approved waiting and pending actions count as active work", () => {

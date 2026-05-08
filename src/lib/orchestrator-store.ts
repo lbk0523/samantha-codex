@@ -45,6 +45,8 @@ export interface OrchestratorPlanPayload {
   summary: string;
   assumptions: string[];
   questions: string[];
+  prerequisites?: string[];
+  blockers?: string[];
   scope: string[];
   nonScope: string[];
   risks: string[];

@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./contracts";
+import { hostOnlyRuntimeViolations, planPayloadBlockerViolations } from "./orchestrator-blockers";
 import type { OrchestratorPlanRecord, OrchestratorTaskProposal } from "./orchestrator-store";
 import type { ProjectProfile } from "./project-profile";
 import { createRemoteDispatchAction, type RemoteActionRecord } from "./remote-action-store";
@@ -44,8 +45,12 @@ export function materializeOrchestratorPlan(input: {
     violations.push("orchestrator plan payload is missing");
     return { ok: false, violations, tasks, actions };
   }
+  const payloadBlockerViolations = planPayloadBlockerViolations(input.plan);
+  violations.push(...payloadBlockerViolations.map((violation) => `orchestrator plan has ${violation}`));
   if (payload.questions.length > 0) violations.push("orchestrator plan still has open questions");
-  if (payload.tasks.length === 0) violations.push("orchestrator plan must contain at least one task");
+  if (payload.tasks.length === 0 && payload.questions.length === 0 && payloadBlockerViolations.length === 0) {
+    violations.push("orchestrator plan must contain at least one task");
+  }
 
   const proposalIds = new Set(payload.tasks.map((task) => task.id));
   const proposalTaskIds = new Map<string, string>();
@@ -276,6 +281,7 @@ function validateTaskProposal(prefix: string, proposal: OrchestratorTaskProposal
   if (!task.repoRoot) violations.push(`${prefix}: repoRoot is required`);
   if (task.verifyCommands.length === 0) violations.push(`${prefix}: verifyCommands must not be empty`);
   violations.push(...validateTaskTargetFiles(task.targetFiles, task.forbiddenChanges).map((violation) => `${prefix}: ${violation}`));
+  violations.push(...hostOnlyRuntimeViolations(proposal).map((violation) => `${prefix}: ${violation}`));
 
   if (!agent) {
     violations.push(`${prefix}: targetAgent is unknown: ${task.targetAgent || "(empty)"}`);

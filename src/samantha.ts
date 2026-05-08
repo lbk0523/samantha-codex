@@ -70,6 +70,7 @@ import {
   taskShowReport,
 } from "./lib/operator-reports";
 import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnostics";
+import { createOrchestratorPlanBlocker, payloadBlockerForPlan, type OrchestratorPlanBlocker } from "./lib/orchestrator-blockers";
 import { runOrchestratorPlan, runOrchestratorQuestionDraft, runOrchestratorSynthesis } from "./lib/orchestrator-agent";
 import { materializeOrchestratorPlan } from "./lib/orchestrator-materializer";
 import {
@@ -408,6 +409,7 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
       actions,
       orchestrationRequests,
       orchestratorPlans,
+      orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(args, orchestratorPlans),
       ops,
       lifecycles,
     }),
@@ -1074,6 +1076,70 @@ async function projectProfileForRemotePlan(input: {
   throw new Error("project id is required: send /plan <project_id>");
 }
 
+async function previewOrchestratorPlanMaterialization(input: {
+  args: ParsedArgs;
+  plan: OrchestratorPlanRecord;
+  createdAt: string;
+  commandId?: string;
+}): Promise<ReturnType<typeof materializeOrchestratorPlan>> {
+  try {
+    const taskStore = new TaskStore(tasksPath(input.args));
+    const actionStore = new RemoteActionStore(remoteActionsPath(input.args));
+    return materializeOrchestratorPlan({
+      plan: input.plan,
+      agents: await loadAgentProfilesById(input.args, input.plan.payload?.tasks.map((task) => task.targetAgent) ?? []),
+      projects: await loadProjectProfiles(projectProfilesDir(input.args)),
+      existingTaskIds: (await taskStore.list()).map((task) => task.id),
+      existingActionIds: (await actionStore.list()).map((action) => action.id),
+      createdAt: input.createdAt,
+      commandId: input.commandId,
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      violations: [`orchestrator materialization prerequisite failed: ${errorMessage(err)}`],
+      tasks: [],
+      actions: [],
+    };
+  }
+}
+
+async function blockerForOrchestratorPlan(input: {
+  args: ParsedArgs;
+  plan: OrchestratorPlanRecord;
+  createdAt: string;
+  commandId?: string;
+}): Promise<OrchestratorPlanBlocker | undefined> {
+  const payloadBlocker = payloadBlockerForPlan(input.plan);
+  if (payloadBlocker) return payloadBlocker;
+  if (input.plan.status !== "planned") return undefined;
+
+  const materialized = await previewOrchestratorPlanMaterialization(input);
+  if (materialized.ok) return undefined;
+  return createOrchestratorPlanBlocker({ plan: input.plan, violations: materialized.violations });
+}
+
+async function orchestratorPlanBlockersForReport(
+  args: ParsedArgs,
+  plans?: OrchestratorPlanRecord[],
+): Promise<OrchestratorPlanBlocker[]> {
+  const candidates = (plans ?? await new OrchestratorPlanStore(orchestratorPlansPath(args)).list())
+    .filter((plan) => plan.status === "planned")
+    .slice()
+    .reverse();
+  const blockers: OrchestratorPlanBlocker[] = [];
+  for (const plan of candidates) {
+    const blocker = await blockerForOrchestratorPlan({
+      args,
+      plan,
+      createdAt: new Date().toISOString(),
+      commandId: `preflight-${plan.id}`,
+    });
+    if (blocker) blockers.push(blocker);
+  }
+  return blockers;
+}
+
 async function nowReportForInbox(args: ParsedArgs): Promise<string> {
   const [runs, tasks, actions, proposals, drafts, orchestrationRequests, orchestratorPlans, ops, lifecycles] = await Promise.all([
     new RunIndex(runsPath(args)).list(),
@@ -1094,6 +1160,7 @@ async function nowReportForInbox(args: ParsedArgs): Promise<string> {
     drafts,
     orchestrationRequests,
     orchestratorPlans,
+    orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(args, orchestratorPlans),
     ops: withoutActiveInboxCommand(ops),
     lifecycles,
   });
@@ -1118,6 +1185,7 @@ async function loadCeoStatusSnapshot(args: ParsedArgs): Promise<CeoStatusSnapsho
     actions,
     orchestrationRequests,
     orchestratorPlans,
+    orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(args, orchestratorPlans),
     ops,
     lifecycles,
   });
@@ -1735,18 +1803,32 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     await new OrchestratorPlanStore(orchestratorPlansPath(args)).append(plan);
     const reportedRequest =
       plan.status === "failed" ? request : await requestStore.markPlanned(request.id, plan.completedAt ?? receivedAt);
-    await ensureDecisionForOrchestratorPlan({
+    const blocker = await blockerForOrchestratorPlan({
       args,
       plan,
-      request: reportedRequest,
       createdAt: plan.completedAt ?? receivedAt,
+      commandId: `plan-preflight-${plan.id}`,
     });
-    return orchestratorPlanReport({ request: reportedRequest, plan });
+    if (!blocker) {
+      await ensureDecisionForOrchestratorPlan({
+        args,
+        plan,
+        request: reportedRequest,
+        createdAt: plan.completedAt ?? receivedAt,
+      });
+    }
+    return orchestratorPlanReport({ request: reportedRequest, plan, blocker });
   }
   if (command.type === "orchestrator:show-current-plan") {
     const plan = await new OrchestratorPlanStore(orchestratorPlansPath(args)).latestActionable();
     if (!plan) return nowReportForInbox(args);
     const request = await new OrchestrationRequestStore(orchestrationRequestsPath(args)).find(plan.requestId);
+    const blocker = await blockerForOrchestratorPlan({
+      args,
+      plan,
+      createdAt: new Date().toISOString(),
+      commandId: `show-preflight-${plan.id}`,
+    });
     return orchestratorPlanReport({
       request: request ?? {
         schemaVersion: 1,
@@ -1757,6 +1839,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
         createdAt: plan.createdAt,
       },
       plan,
+      blocker,
     });
   }
   if (command.type === "drafts:add") {
@@ -1977,6 +2060,20 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
         return orchestratorGoBlockedReport({ plan: orchestratorPlan });
       }
 
+      const materialized = await previewOrchestratorPlanMaterialization({
+        args,
+        plan: orchestratorPlan,
+        createdAt: receivedAt,
+        commandId: command.id,
+      });
+      if (!materialized.ok) {
+        return orchestratorGoBlockedReport({
+          plan: orchestratorPlan,
+          violations: materialized.violations,
+          blocker: createOrchestratorPlanBlocker({ plan: orchestratorPlan, violations: materialized.violations }),
+        });
+      }
+
       const decision = await ensureDecisionForOrchestratorPlan({
         args,
         plan: orchestratorPlan,
@@ -1989,18 +2086,6 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
 
       const taskStore = new TaskStore(tasksPath(args));
       const actionStore = new RemoteActionStore(remoteActionsPath(args));
-      const materialized = materializeOrchestratorPlan({
-        plan: orchestratorPlan,
-        agents: await loadAgentProfilesById(args, orchestratorPlan.payload?.tasks.map((task) => task.targetAgent) ?? []),
-        projects: await loadProjectProfiles(projectProfilesDir(args)),
-        existingTaskIds: (await taskStore.list()).map((task) => task.id),
-        existingActionIds: (await actionStore.list()).map((action) => action.id),
-        createdAt: receivedAt,
-        commandId: command.id,
-      });
-      if (!materialized.ok) {
-        return orchestratorGoBlockedReport({ plan: orchestratorPlan, violations: materialized.violations });
-      }
 
       for (const task of materialized.tasks) {
         await taskStore.append(task);

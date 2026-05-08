@@ -72,6 +72,8 @@ export function buildOrchestratorPrompt(input: {
     "Return a concise Korean user-facing plan, then include exactly one machine-readable payload.",
     "The payload must start with `ORCHESTRATOR_PLAN:` followed by a strict JSON object.",
     "If the request is ambiguous enough that worker delegation would be unsafe, put the blocking questions in `questions` and leave `tasks` empty.",
+    "If Samantha lacks a local prerequisite such as a project profile, canonical repo root, concrete verify command, or host-only runtime requirement, put it in `prerequisites` or `blockers` and leave `tasks` empty.",
+    "Do not turn missing context, missing profile/root/verify data, or host-only runtime work into speculative worker tasks.",
     "If it is plannable, keep `questions` empty and include one or more task proposals.",
     "Prefer the simplest safe approach first and describe it in `selectedApproach`.",
     "Put rejected paths in `rejectedAlternatives` as advisory context only; alternatives must not contain tasks, task ids, batches, or execution instructions.",
@@ -102,6 +104,8 @@ export function buildOrchestratorPrompt(input: {
         summary: "short Korean summary",
         assumptions: ["assumption"],
         questions: [],
+        prerequisites: [],
+        blockers: [],
         scope: ["in scope item"],
         nonScope: ["out of scope item"],
         risks: ["risk or open issue"],
@@ -474,6 +478,8 @@ function validatePlanPayload(raw: unknown): OrchestratorPlanPayload {
     summary: requiredString(value.summary, "summary"),
     assumptions: stringArray(value.assumptions, "assumptions"),
     questions: stringArray(value.questions, "questions"),
+    prerequisites: value.prerequisites === undefined ? undefined : stringArray(value.prerequisites, "prerequisites"),
+    blockers: value.blockers === undefined ? undefined : stringArray(value.blockers, "blockers"),
     scope: stringArray(value.scope, "scope"),
     nonScope: stringArray(value.nonScope, "nonScope"),
     risks: stringArray(value.risks, "risks"),
@@ -524,6 +530,7 @@ function validateQuestionDraftPayload(raw: unknown): OrchestratorQuestionDraftPa
 
 function validatePlanPayloadConsistency(payload: OrchestratorPlanPayload): void {
   const proposalIds = new Set(payload.tasks.map((task) => task.id));
+  const blockers = [...(payload.prerequisites ?? []), ...(payload.blockers ?? [])];
   if (proposalIds.size !== payload.tasks.length) throw new Error("task ids must be unique");
   if (payload.questions.length > 0 && payload.tasks.length > 0) {
     throw new Error("plans with questions must not include task proposals");
@@ -531,8 +538,14 @@ function validatePlanPayloadConsistency(payload: OrchestratorPlanPayload): void 
   if (payload.questions.length > 0 && payload.batches.length > 0) {
     throw new Error("plans with questions must not include batches");
   }
-  if (payload.questions.length === 0 && payload.tasks.length === 0) {
-    throw new Error("planned payloads must include at least one task or blocking questions");
+  if (blockers.length > 0 && payload.tasks.length > 0) {
+    throw new Error("plans with prerequisites or blockers must not include task proposals");
+  }
+  if (blockers.length > 0 && payload.batches.length > 0) {
+    throw new Error("plans with prerequisites or blockers must not include batches");
+  }
+  if (payload.questions.length === 0 && payload.tasks.length === 0 && blockers.length === 0) {
+    throw new Error("planned payloads must include at least one task, blocking questions, prerequisites, or blockers");
   }
   for (const [index, batch] of payload.batches.entries()) {
     for (const taskId of batch) {

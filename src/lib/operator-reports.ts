@@ -4,6 +4,7 @@ import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
 import { buildOperatingSurfaceView } from "./operating-surface";
 import type { OpsSnapshot } from "./ops-diagnostics";
+import { blockerForPlan, payloadBlockerForPlan, type OrchestratorPlanBlocker } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord, OrchestratorSynthesisPayload } from "./orchestrator-store";
 import { classifyRemoteRequest, type ProjectProfile, type ProjectRemoteScope, type RemoteRequestClassification } from "./project-profile";
 import type { ProposalRecord } from "./proposal-store";
@@ -331,7 +332,24 @@ function orchestrationRequestSummary(request: OrchestrationRequestRecord): strin
   return text;
 }
 
-function orchestratorPlanNextLines(plan: OrchestratorPlanRecord): string[] {
+function orchestratorPlanBlockerLines(blocker: OrchestratorPlanBlocker): string[] {
+  return [
+    "",
+    "진행 차단:",
+    ...blocker.violations.map((violation) => `- ${telegramSafeLine(violation)}`),
+  ];
+}
+
+function blockedPlanNextLines(blocker: OrchestratorPlanBlocker): string[] {
+  return [
+    "",
+    "다음 액션:",
+    `- 계획 수정: ${code(blocker.nextAction.command)}`,
+  ];
+}
+
+function orchestratorPlanNextLines(plan: OrchestratorPlanRecord, blocker?: OrchestratorPlanBlocker): string[] {
+  if (blocker) return blockedPlanNextLines(blocker);
   if (plan.status === "questions") {
     return [
       "",
@@ -840,6 +858,7 @@ export function nowReport(input: {
   drafts?: TaskDraftRecord[];
   orchestrationRequests?: OrchestrationRequestRecord[];
   orchestratorPlans?: OrchestratorPlanRecord[];
+  orchestratorPlanBlockers?: OrchestratorPlanBlocker[];
   ops?: OpsSnapshot;
   lifecycles?: RunLifecycleRecord[];
 }): string {
@@ -903,6 +922,7 @@ export function nowReport(input: {
     .reverse()
     .find((plan) => plan.status === "planned" || plan.status === "questions");
   if (latestPlan) {
+    const blocker = blockerForPlan(input.orchestratorPlanBlockers, latestPlan.id) ?? payloadBlockerForPlan(latestPlan);
     return [
       "# now",
       "",
@@ -912,7 +932,8 @@ export function nowReport(input: {
       `계획: ${code(latestPlan.id)}`,
       `요청: ${code(latestPlan.requestId)}`,
       latestPlan.payload?.summary ? `요약: ${telegramSafeLine(latestPlan.payload.summary)}` : "",
-      ...orchestratorPlanNextLines(latestPlan),
+      ...(blocker ? orchestratorPlanBlockerLines(blocker) : []),
+      ...orchestratorPlanNextLines(latestPlan, blocker),
     ]
       .filter(Boolean)
       .join("\n");
@@ -1222,8 +1243,10 @@ export function orchestratorCancelReport(input: {
 export function orchestratorPlanReport(input: {
   request: OrchestrationRequestRecord;
   plan: OrchestratorPlanRecord;
+  blocker?: OrchestratorPlanBlocker;
 }): string {
   const { request, plan } = input;
+  const blocker = input.blocker ?? payloadBlockerForPlan(plan);
   const classification = plan.classification ?? classifyRemoteRequest(request.text);
   if (plan.status === "failed") {
     return [
@@ -1285,20 +1308,22 @@ export function orchestratorPlanReport(input: {
       : []),
     payload?.risks.length ? "" : "",
     ...(payload?.risks.length ? ["리스크:", ...payload.risks.map((risk) => `- ${telegramSafeLine(risk)}`)] : []),
+    ...(blocker ? orchestratorPlanBlockerLines(blocker) : []),
     "",
     "안전장치:",
     "- `/go` 전까지 task/action은 만들지 않습니다.",
     planHasAdvisory(plan) ? "- 대안/트레이드오프는 advisory이며 `/go` materialization 대상이 아닙니다." : undefined,
     "- merge/push/cleanup은 worker 실행 이후에도 별도 gate가 필요합니다.",
-    ...orchestratorPlanNextLines(plan),
+    ...orchestratorPlanNextLines(plan, blocker),
   ]
     .filter((line) => line !== undefined)
     .join("\n");
 }
 
-export function orchestratorGoBlockedReport(input: { plan: OrchestratorPlanRecord; violations?: string[] }): string {
+export function orchestratorGoBlockedReport(input: { plan: OrchestratorPlanRecord; violations?: string[]; blocker?: OrchestratorPlanBlocker }): string {
   const { plan } = input;
   const violations = input.violations ?? [];
+  const blocker = input.blocker ?? payloadBlockerForPlan(plan);
   return [
     "# go",
     "",
@@ -1314,8 +1339,7 @@ export function orchestratorGoBlockedReport(input: { plan: OrchestratorPlanRecor
     "task/action은 만들지 않았습니다.",
     "",
     "다음 액션:",
-    plan.status === "questions" ? `- 답변/수정 요청: ${code("/revise <피드백>")}` : `- 계획 보강 후 재요청: ${code("/work <요청>")}`,
-    `- 상태 확인: ${code("/now")}`,
+    `- ${plan.status === "questions" ? "답변/수정 요청" : blocker ? "계획 수정" : "계획 수정"}: ${code("/revise <피드백>")}`,
   ]
     .filter(Boolean)
     .join("\n");

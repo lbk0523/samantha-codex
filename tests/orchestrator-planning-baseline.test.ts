@@ -204,7 +204,7 @@ describe("Phase 4 P1 orchestrator planning baseline fixtures", () => {
       "plans with questions must not include task proposals",
     );
     expect(() => parseOrchestratorPlanPayload(raw("ORCHESTRATOR_PLAN:", { ...valid, tasks: [], batches: [] }))).toThrow(
-      "planned payloads must include at least one task or blocking questions",
+      "planned payloads must include at least one task, blocking questions, prerequisites, or blockers",
     );
     expect(() => parseOrchestratorPlanPayload(raw("ORCHESTRATOR_PLAN:", { ...valid, batches: [["missing"]] }))).toThrow(
       "references unknown task proposal",

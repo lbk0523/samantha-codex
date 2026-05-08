@@ -7,6 +7,7 @@ import {
 } from "./decision-store";
 import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
+import type { OrchestratorPlanBlocker } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "./orchestrator-store";
 import type { RemoteActionRecord } from "./remote-action-store";
 import { recoveryResolvedPlanIds } from "./recovery-continuity";
@@ -86,6 +87,7 @@ export interface BuildCeoStatusSnapshotInput {
   actions?: RemoteActionRecord[];
   orchestrationRequests?: OrchestrationRequestRecord[];
   orchestratorPlans?: OrchestratorPlanRecord[];
+  orchestratorPlanBlockers?: OrchestratorPlanBlocker[];
   lifecycles?: RunLifecycleRecord[];
   ops?: OpsSnapshot;
 }
@@ -250,6 +252,7 @@ function chooseNextAction(input: {
   actions: RemoteActionRecord[];
   tasks: TaskSpec[];
   orchestrationRequests: OrchestrationRequestRecord[];
+  orchestratorPlanBlockers: OrchestratorPlanBlocker[];
   integration?: { run: RunSummary; lifecycle?: RunLifecycleRecord; nextKind: "merge_check" | "push" | "cleanup" };
   ops?: OpsSnapshot;
 }): CeoNextAction {
@@ -282,6 +285,17 @@ function chooseNextAction(input: {
       command: "/go or /revise <feedback>",
       targetId: latestDecision.id,
       reason: latestDecision.reason,
+    };
+  }
+
+  const blockedPlan = input.orchestratorPlanBlockers[0];
+  if (blockedPlan) {
+    return {
+      kind: "review_plan",
+      label: blockedPlan.nextAction.label,
+      command: blockedPlan.nextAction.command,
+      targetId: blockedPlan.planId,
+      reason: blockedPlan.nextAction.reason,
     };
   }
 
@@ -408,6 +422,8 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
   const actions = input.actions ?? [];
   const orchestrationRequests = input.orchestrationRequests ?? [];
   const orchestratorPlans = input.orchestratorPlans ?? [];
+  const orchestratorPlanBlockers = input.orchestratorPlanBlockers ?? [];
+  const blockedPlanIds = new Set(orchestratorPlanBlockers.map((blocker) => blocker.planId));
   const lifecycles = input.lifecycles ?? [];
   const resolvedPlanIds = recoveryResolvedPlanIds({
     requests: orchestrationRequests,
@@ -427,13 +443,17 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
   const actionTaskIds = new Set(actions.map((action) => action.taskId));
   const decisionsBySubject = latestDecisionBySubject(decisions);
   const activePendingDecisions = decisions.filter(
-    (decision) => decision.status === "pending" && decisionHasCurrentPlanSubject(decision, orchestratorPlans),
+    (decision) =>
+      decision.status === "pending" &&
+      decisionHasCurrentPlanSubject(decision, orchestratorPlans) &&
+      !(decision.subject?.type === "orchestrator_plan" && blockedPlanIds.has(decision.subject.id)),
   );
   const decisionSubjectKeys = new Set(decisionsBySubject.keys());
 
   const approvedPlans = sortRecent(
     orchestratorPlans
       .filter((plan) => plan.status === "planned")
+      .filter((plan) => !blockedPlanIds.has(plan.id))
       .filter((plan) => decisionAllowsOrchestratorMaterialization(decisionsBySubject.get(`orchestrator_plan:${plan.id}`)))
       .map((plan) => ({
         kind: "orchestrator_plan" as const,
@@ -492,6 +512,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
       })),
     ...orchestratorPlans
       .filter((plan) => plan.status === "planned" || plan.status === "questions")
+      .filter((plan) => !blockedPlanIds.has(plan.id))
       .filter((plan) => !pendingDecisionSubjectKeys.has(`orchestrator_plan:${plan.id}`))
       .filter((plan) => !decisionSubjectKeys.has(`orchestrator_plan:${plan.id}`))
       .map((plan) => ({
@@ -513,9 +534,21 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     (run) => !run.pass && !resolvedTaskIds.has(run.taskId) && !archivedTaskIds.has(run.taskId),
   );
   const failedPlans = orchestratorPlans.filter((plan) => planNeedsRecovery(plan) && !resolvedPlanIds.has(plan.id));
+  const planById = new Map(orchestratorPlans.map((plan) => [plan.id, plan]));
   const blockedTasks = tasks.filter((task) => task.status === "blocked" || task.status === "failed");
 
   const blocked: CeoStatusItem[] = [
+    ...orchestratorPlanBlockers.map((blocker) => {
+      const plan = planById.get(blocker.planId);
+      return {
+        kind: "orchestrator_plan" as const,
+        id: blocker.planId,
+        title: oneLine(plan?.payload?.summary ?? blocker.requestId),
+        status: "blocked",
+        updatedAt: plan ? planUpdatedAt(plan) : undefined,
+        detail: blocker.violations[0] ?? "plan materialization prerequisite failed",
+      };
+    }),
     ...failedActions.map((action) => ({
       kind: "action" as const,
       id: action.id,
@@ -558,7 +591,9 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     ...failedPlans.map((plan) => `Plan needs recovery ${plan.id}: ${blockedPlanDetail(plan)}`),
     ...orchestratorPlans
       .filter((plan) => plan.status === "planned" || plan.status === "questions")
+      .filter((plan) => !blockedPlanIds.has(plan.id))
       .flatMap((plan) => plan.payload?.risks ?? []),
+    ...orchestratorPlanBlockers.flatMap((blocker) => blocker.violations.map((violation) => `Blocked plan ${blocker.planId}: ${violation}`)),
     ...decisions.filter((decision) => decision.status === "pending").map((decision) => decision.risk ?? ""),
     ...(input.ops?.failures ?? []),
     ...(input.ops?.warnings ?? []),
@@ -577,6 +612,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     actions,
     tasks,
     orchestrationRequests,
+    orchestratorPlanBlockers,
     integration,
     ops: input.ops,
   });

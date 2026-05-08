@@ -1296,20 +1296,11 @@ describe("inbox and remote commands", () => {
       "utf8",
     );
     await writeFile(
-      join(inbox, "002-approve.json"),
+      join(inbox, "002-now.json"),
       JSON.stringify({
-        id: "remote-approve",
-        type: "decisions:approve-latest",
+        id: "remote-now",
+        type: "ops:now",
         args: { receivedAt: "2026-05-05T10:43:00.000Z" },
-      }),
-      "utf8",
-    );
-    await writeFile(
-      join(inbox, "003-go.json"),
-      JSON.stringify({
-        id: "remote-go-approved",
-        type: "actions:go",
-        args: { receivedAt: "2026-05-05T10:44:00.000Z" },
       }),
       "utf8",
     );
@@ -1336,16 +1327,41 @@ describe("inbox and remote commands", () => {
     ]);
 
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-    const gateReport = await readFile(join(outbox, "001-go.md"), "utf8");
-    expect(gateReport).toContain("# decision-required");
-    const goReport = await readFile(join(outbox, "003-go.md"), "utf8");
+    const goReport = await readFile(join(outbox, "001-go.md"), "utf8");
     expect(goReport).toContain("오케스트레이터 계획을 실행 큐에 등록하지 못했습니다.");
     expect(goReport).toContain("verifyCommands must not be empty");
     expect(goReport).toContain("matches state/**");
     expect(goReport).toContain("dependency references unknown task proposal: missing-task");
     expect(goReport).toContain("repoRoot must not point to a Samantha worker worktree");
     expect(goReport).toContain("repoRoot must match project profile repoRoot for project omht");
+    expect(goReport).toContain("계획 수정: `/revise <피드백>`");
+    expect(goReport).not.toContain("# decision-required");
+    expect(goReport).not.toContain("/approve");
+    const now = await readFile(join(outbox, "002-now.md"), "utf8");
+    expect(now).toContain("진행 차단:");
+    expect(now).toContain("계획 수정: `/revise <피드백>`");
+    expect(now).not.toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
+    const ceo = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "ceo:status",
+        `--state-dir=${state}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const ceoReport = await new Response(ceo.stdout).text();
+    expect({
+      stderr: await new Response(ceo.stderr).text(),
+      exitCode: await ceo.exited,
+    }).toMatchObject({ exitCode: 0 });
+    expect(ceoReport).toContain("Telegram: /revise <피드백>");
+    expect(ceoReport).not.toContain("Telegram: /go");
     await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(state, "decisions.jsonl"), "utf8")).rejects.toThrow();
     expect(await new RemoteActionStore(join(state, "remote-actions.jsonl")).list()).toEqual([]);
   });
 
@@ -1745,7 +1761,7 @@ describe("inbox and remote commands", () => {
           title: "Show current plan",
           targetAgent: "codex-worker",
           projectId: "samantha",
-          repoRoot: "/repo/samantha",
+          repoRoot: "",
           resultMode: "report",
           targetFiles: ["docs/**"],
           forbiddenChanges: ["state/**"],

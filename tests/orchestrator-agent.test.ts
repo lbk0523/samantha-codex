@@ -59,6 +59,8 @@ describe("orchestrator agent prompt", () => {
     expect(prompt).toContain("Use this classification as an explainable safety hint only.");
     expect(prompt).toContain("It is not permission to dispatch workers or mutate state.");
     expect(prompt).toContain("If classification is `ambiguity_heavy`, prefer blocking questions");
+    expect(prompt).toContain("put it in `prerequisites` or `blockers` and leave `tasks` empty");
+    expect(prompt).toContain("Do not turn missing context, missing profile/root/verify data, or host-only runtime work into speculative worker tasks.");
     expect(prompt).toContain("Prefer the simplest safe approach first");
     expect(prompt).toContain("Put rejected paths in `rejectedAlternatives` as advisory context only");
     expect(prompt).toContain("Only `tasks` and `batches` represent the selected executable plan path.");
@@ -114,7 +116,19 @@ describe("orchestrator agent prompt", () => {
       ...payload,
       tasks: [],
       batches: [],
-    })}`)).toThrow("planned payloads must include at least one task or blocking questions");
+    })}`)).toThrow("planned payloads must include at least one task, blocking questions, prerequisites, or blockers");
+    const prerequisiteOnly = parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify({
+      ...payload,
+      prerequisites: ["project profile must define a canonical repo root"],
+      tasks: [],
+      batches: [],
+    })}`);
+    expect(prerequisiteOnly.tasks).toEqual([]);
+    expect(prerequisiteOnly.prerequisites).toEqual(["project profile must define a canonical repo root"]);
+    expect(() => parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify({
+      ...payload,
+      blockers: ["host-only runtime verification is required"],
+    })}`)).toThrow("plans with prerequisites or blockers must not include task proposals");
     expect(() => parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify({
       ...payload,
       batches: [["missing"]],

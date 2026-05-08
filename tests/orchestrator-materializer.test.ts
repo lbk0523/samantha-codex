@@ -314,6 +314,52 @@ describe("materializeOrchestratorPlan role-aware specialist contract", () => {
     );
   });
 
+  test("keeps prerequisites and host-only runtime requirements out of worker tasks", () => {
+    const prerequisite = materializeOrchestratorPlan({
+      plan: {
+        ...plan([], []),
+        payload: {
+          ...plan([], []).payload!,
+          prerequisites: ["canonical repo root is missing from the project profile"],
+        },
+      },
+      agents: [worker],
+      projects: [project],
+      createdAt: "2026-05-07T00:03:56.000Z",
+      commandId: "remote-go-prerequisite",
+    });
+
+    expect(prerequisite.ok).toBe(false);
+    expect(prerequisite.tasks).toEqual([]);
+    expect(prerequisite.actions).toEqual([]);
+    expect(prerequisite.violations).toContain(
+      "orchestrator plan has prerequisite: canonical repo root is missing from the project profile",
+    );
+
+    const hostOnly = materializeOrchestratorPlan({
+      plan: plan([
+        proposal({
+          id: "host-runtime",
+          title: "Run host runtime verification",
+          targetAgent: "codex-worker",
+          resultMode: "write",
+          targetFiles: ["src/samantha.ts"],
+          verifyCommands: ["bun run verify:host"],
+          instructions: "Run host runtime verification.",
+        }),
+      ], [["host-runtime"]]),
+      agents: [worker],
+      projects: [project],
+      createdAt: "2026-05-07T00:03:57.000Z",
+      commandId: "remote-go-host-only",
+    });
+
+    expect(hostOnly.ok).toBe(false);
+    expect(hostOnly.violations).toContain(
+      "task proposal host-runtime: verifyCommands[0] contains a host-only runtime requirement; report it as a blocker/next action instead of a worker task command",
+    );
+  });
+
   test("keeps dependent writer actions waiting for report-only prerequisites", () => {
     const result = materializeOrchestratorPlan({
       plan: plan([

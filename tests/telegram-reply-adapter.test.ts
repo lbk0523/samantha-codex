@@ -269,6 +269,30 @@ describe("sendOutboxReplies", () => {
     expect(report).not.toContain("request-20260508-work-abc12345");
   });
 
+  test("keeps blocked plan Telegram reports on the deterministic revision action", () => {
+    const report = compactTelegramReport(
+      [
+        "# now",
+        "",
+        "오케스트레이터 계획이 생성되어 검토를 기다리고 있습니다.",
+        "계획: `plan-20260508-work-def67890`",
+        "요청: `request-20260508-work-abc12345`",
+        "요약: Unsafe plan",
+        "",
+        "진행 차단:",
+        "- task proposal write: verifyCommands must not be empty",
+        "",
+        "다음 액션:",
+        "- 계획 수정: `/revise <피드백>`",
+      ].join("\n"),
+    );
+
+    expect(report).toContain("진행 차단:");
+    expect(report).toContain("계획 수정: `/revise <피드백>`");
+    expect(report).not.toContain("/go");
+    expect(report).not.toContain("plan-20260508-work-def67890");
+  });
+
   test("normalizes deprecated commands before Telegram display", () => {
     const report = compactTelegramReport(
       [

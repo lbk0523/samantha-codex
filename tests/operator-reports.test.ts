@@ -674,6 +674,27 @@ describe("operator reports", () => {
     expect(nowReport({ runs: [], tasks: [], actions: [], orchestratorPlans: [orchestratorPlan] })).toContain(
       "계획 다시 보기: `/plan_current`",
     );
+    const blockedNow = nowReport({
+      runs: [],
+      tasks: [],
+      actions: [],
+      orchestratorPlans: [orchestratorPlan],
+      orchestratorPlanBlockers: [
+        {
+          planId: orchestratorPlan.id,
+          requestId: orchestratorPlan.requestId,
+          violations: ["task proposal task-proposal-1: verifyCommands must not be empty"],
+          nextAction: {
+            label: "Revise the current orchestrator plan before materialization",
+            command: "/revise <피드백>",
+            reason: "task proposal task-proposal-1: verifyCommands must not be empty",
+          },
+        },
+      ],
+    });
+    expect(blockedNow).toContain("진행 차단:");
+    expect(blockedNow).toContain("계획 수정: `/revise <피드백>`");
+    expect(blockedNow).not.toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
     expect(nowReport({ runs: [], tasks: [task], actions: [] })).toContain("텔레그램: `/problems`");
     expect(nowReport({ runs: [], tasks: [task], actions: [] })).not.toContain("텔레그램: `/go`");
     expect(nowReport({ runs: [], tasks: [], actions: [], drafts: [draft] })).toContain("지금 바로 필요한 원격 액션은 없습니다.");
@@ -914,6 +935,26 @@ describe("operator reports", () => {
     expect(ambiguousQuestions).toContain("답변/수정 요청: `/revise <피드백>`");
     expect(ambiguousQuestions).not.toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
 
+    const prerequisiteBlocked = orchestratorPlanReport({
+      request: { ...orchestrationRequest, id: "request-prerequisite", status: "planned" },
+      plan: {
+        ...orchestratorPlan,
+        id: "plan-prerequisite",
+        payload: {
+          ...orchestratorPlan.payload!,
+          summary: "Host verification prerequisite",
+          prerequisites: ["Ubuntu host must run verify:host"],
+          tasks: [],
+          batches: [],
+          userMessage: "로컬 prerequisite 때문에 실행할 수 없습니다.",
+        },
+      },
+    });
+    expect(prerequisiteBlocked).toContain("진행 차단:");
+    expect(prerequisiteBlocked).toContain("prerequisite: Ubuntu host must run verify:host");
+    expect(prerequisiteBlocked).toContain("계획 수정: `/revise <피드백>`");
+    expect(prerequisiteBlocked).not.toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
+
     const recoveryReady = orchestratorPlanReport({
       request: { ...orchestrationRequest, id: "request-recovery-ready", recoveryOfPlanId: "plan-original-failed", status: "planned" },
       plan: { ...orchestratorPlan, id: "plan-recovery-ready" },
@@ -928,6 +969,7 @@ describe("operator reports", () => {
     expect(blocked).toContain("오케스트레이터 계획을 실행 큐에 등록하지 못했습니다.");
     expect(blocked).toContain("orchestrator plan still has open questions");
     expect(blocked).toContain("답변/수정 요청: `/revise <피드백>`");
+    expect(blocked).not.toContain("상태 확인: `/now`");
 
     const materialized = orchestratorGoMaterializedReport({
       plan: { ...advisoryPlan, status: "materialized" },
