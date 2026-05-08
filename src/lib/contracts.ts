@@ -1,4 +1,4 @@
-export type AgentRole = "writer" | "reviewer" | "evaluator" | "spec";
+export type AgentRole = "writer" | "reviewer" | "evaluator" | "spec" | "researcher" | "content" | "operations";
 export type WriterClass = "writer" | "non-writer";
 export type WorktreePolicy = "per-task" | "none";
 export type MergePolicy = "samantha-controlled" | "none";

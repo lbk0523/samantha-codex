@@ -72,6 +72,8 @@ describe("codex dispatch preparation", () => {
     );
 
     expect(prompt).toContain("This is a non-writer report-only task");
+    expect(prompt).toContain("Role contract: review existing code, plan risk, regressions, and safety issues");
+    expect(prompt).toContain("Produce the report artifact in your final response. Do not create report files.");
     expect(prompt).toContain("Do not edit, create, delete, format, commit, push, or move files.");
     expect(prompt).toContain("- (none; read-only task)");
     expect(prompt).toContain("- **/*");
@@ -91,6 +93,38 @@ describe("codex dispatch preparation", () => {
     ]);
     expect(prepared.command).toContain("--model");
     expect(prepared.command).toContain("gpt-5.5");
+  });
+
+  test("uses a read-only sandbox for non-writer specialists", () => {
+    const prepared = prepareCodexDispatch(
+      {
+        ...task,
+        targetAgent: "codex-researcher",
+        resultMode: "report",
+        targetFiles: [],
+        forbiddenChanges: ["**/*"],
+      },
+      {
+        ...agent,
+        id: "codex-researcher",
+        role: "researcher",
+        writerClass: "non-writer",
+        worktreePolicy: "none",
+        mergePolicy: "none",
+      },
+      "/repo",
+    );
+
+    expect(prepared.prompt).toContain("Role contract: research repository-local facts");
+    expect(prepared.command.slice(0, 7)).toEqual([
+      "codex",
+      "exec",
+      "--cd",
+      "/repo",
+      "--sandbox",
+      "read-only",
+      "--json",
+    ]);
   });
 
   test("can use an explicit codex executable path", () => {

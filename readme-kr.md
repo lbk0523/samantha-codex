@@ -23,6 +23,9 @@ Deterministic CEO Office
 Bounded LLM Agents
   - codex-orchestrator planner/synthesizer
   - codex-spec       non-writer
+  - codex-researcher non-writer
+  - codex-content    non-writer
+  - codex-operations non-writer
 Codex Agents
   - codex-worker     writer
   - codex-reviewer   non-writer

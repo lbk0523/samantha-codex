@@ -110,12 +110,44 @@ describe("prepareWorkerDispatch", () => {
           mergePolicy: "none",
         },
         repoRoot: root,
-        allocate: true,
+        allocate: false,
         worktreesDir: "worktrees",
       });
 
       expect(writer.codex.command).not.toContain("--add-dir");
       expect(reviewer.codex.command).not.toContain("--add-dir");
+      expect(reviewer.worktreePath).toBe(root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects worktree allocation for non-writer profiles", async () => {
+    const root = await makeRepo();
+    try {
+      await expect(
+        prepareWorkerDispatch({
+          task: {
+            ...task,
+            id: "worker-dispatch-reviewer-allocation-fixture",
+            targetAgent: "codex-reviewer",
+            resultMode: "report",
+            targetFiles: [],
+            forbiddenChanges: ["**/*"],
+          },
+          agent: {
+            ...agent,
+            id: "codex-reviewer",
+            role: "reviewer",
+            writerClass: "non-writer",
+            worktreePolicy: "none",
+            mergePolicy: "none",
+          },
+          repoRoot: root,
+          allocate: true,
+          worktreesDir: "worktrees",
+        }),
+      ).rejects.toThrow("agent worktreePolicy none must not allocate worktrees");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -227,9 +259,57 @@ describe("prepareWorkerDispatch", () => {
     }
   });
 
+  test("passes report-only specialist tasks with no changed files and no commit", async () => {
+    const root = await makeRepo();
+    const binDir = await mkdtemp(join(tmpdir(), "samantha-codex-bin-"));
+    const fakeCodex = join(binDir, "fake-codex");
+    try {
+      await writeFile(
+        fakeCodex,
+        "#!/usr/bin/env bash\necho 'Report artifact: repository status reviewed.'\necho 'HARNESS_RESULT: {\"status\":\"pass\",\"note\":\"report only\",\"commit\":\"\"}'\n",
+        "utf8",
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const result = await executeWorkerDispatch({
+        task: {
+          ...task,
+          id: "report-only-specialist-fixture",
+          targetAgent: "codex-reviewer",
+          targetFiles: [],
+          forbiddenChanges: ["**/*"],
+          verifyCommands: ["test -f README.md"],
+          resultMode: "report",
+        },
+        agent: {
+          ...agent,
+          id: "codex-reviewer",
+          role: "reviewer",
+          writerClass: "non-writer",
+          worktreePolicy: "none",
+          mergePolicy: "none",
+        },
+        repoRoot: root,
+        allocate: false,
+        worktreesDir: "worktrees",
+        codexBin: fakeCodex,
+      });
+
+      expect(result.preparation.worktreePath).toBe(root);
+      expect(result.preparation.codex.command).toContain("read-only");
+      expect(result.evaluation?.changedFiles).toEqual([]);
+      expect(result.commit).toBeUndefined();
+      expect(result.pass).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(binDir, { recursive: true, force: true });
+    }
+  });
+
   test("fails report-only specialist tasks that edit files and does not commit", async () => {
     const root = await makeRepo();
-    const fakeCodex = join(root, "fake-codex");
+    const binDir = await mkdtemp(join(tmpdir(), "samantha-codex-bin-"));
+    const fakeCodex = join(binDir, "fake-codex");
     try {
       await writeFile(
         fakeCodex,
@@ -265,7 +345,7 @@ describe("prepareWorkerDispatch", () => {
           mergePolicy: "none",
         },
         repoRoot: root,
-        allocate: true,
+        allocate: false,
         worktreesDir: "worktrees",
         codexBin: fakeCodex,
       });
@@ -276,6 +356,7 @@ describe("prepareWorkerDispatch", () => {
       expect(result.pass).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
+      await rm(binDir, { recursive: true, force: true });
     }
   });
 

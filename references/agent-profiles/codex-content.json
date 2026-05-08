@@ -1,0 +1,16 @@
+{
+  "id": "codex-content",
+  "role": "content",
+  "model": "gpt-5.5",
+  "writerClass": "non-writer",
+  "worktreePolicy": "none",
+  "mergePolicy": "none",
+  "skillPolicy": {
+    "requiredBundles": [],
+    "blockedSkills": [
+      "using-git-worktrees",
+      "dispatching-parallel-agents",
+      "subagent-driven-development"
+    ]
+  }
+}

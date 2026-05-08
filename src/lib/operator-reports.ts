@@ -189,6 +189,9 @@ function agentRoleLabel(agentId: string | undefined): string {
   if (agentId === "codex-reviewer") return "Reviewer";
   if (agentId === "codex-evaluator") return "Evaluator";
   if (agentId === "codex-spec") return "Spec";
+  if (agentId === "codex-researcher") return "Researcher";
+  if (agentId === "codex-content") return "Content";
+  if (agentId === "codex-operations") return "Operations";
   if (agentId === "codex-worker") return "Writer";
   return "Agent";
 }

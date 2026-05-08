@@ -16,6 +16,9 @@ Deterministic CEO Office
 Bounded Codex Agents
   - codex-orchestrator planner/synthesizer
   - codex-spec       non-writer
+  - codex-researcher non-writer
+  - codex-content    non-writer
+  - codex-operations non-writer
   - codex-worker     writer
   - codex-reviewer   non-writer
   - codex-evaluator  non-writer
@@ -52,7 +55,7 @@ quality, decision safety, notification idempotency, recovery clarity, host
 automation readiness, and evidence-gated parallelism while keeping Telegram as a
 thin adapter.
 
-The current architecture canary is role-aware but intentionally small: the Orchestrator Agent may choose report-only `codex-reviewer`, `codex-evaluator`, or `codex-spec` tasks before or alongside one `codex-worker` write task. The Control Plane keeps non-writers read-only, rejects non-writer write proposals, and keeps writer concurrency capped at one. This is not general multi-agent team construction.
+The current architecture canary is role-aware but intentionally small: the Orchestrator Agent may choose report-only `codex-reviewer`, `codex-evaluator`, `codex-spec`, `codex-researcher`, `codex-content`, or `codex-operations` tasks before or alongside one `codex-worker` write task. The Control Plane keeps non-writers read-only, rejects non-writer write proposals, and keeps writer concurrency capped at one. This is not general multi-agent team construction.
 
 The existing deterministic CEO office should remain responsible for safety, state, and execution; it should not be discarded.
 
@@ -91,6 +94,7 @@ Samantha remains responsible for worktree allocation, dispatch, merge, push, and
 ## First Safety Gates
 
 - writer profiles require `worktreePolicy: "per-task"`
+- non-writer profiles require `resultMode: "report"` tasks with `worktreePolicy: "none"` and `mergePolicy: "none"`
 - writer tasks require non-empty `targetFiles`
 - writer tasks require non-empty `forbiddenChanges`
 - writer concurrency starts at `1`

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
-import { DEFAULT_SAFETY_POLICY, validateDispatch } from "../src/lib/policy";
+import { DEFAULT_SAFETY_POLICY, validateAgentProfile, validateDispatch } from "../src/lib/policy";
 
 const worker: AgentProfile = {
   id: "codex-worker",
@@ -43,6 +45,38 @@ const reviewer: AgentProfile = {
 describe("validateDispatch", () => {
   test("keeps the default writer cap at one", () => {
     expect(DEFAULT_SAFETY_POLICY.writerCap).toBe(1);
+  });
+
+  test("accepts bundled agent profile contracts", async () => {
+    const dir = join(import.meta.dir, "..", "references", "agent-profiles");
+    const files = (await readdir(dir)).filter((file) => file.endsWith(".json")).sort();
+    const profiles = await Promise.all(
+      files.map(async (file) => JSON.parse(await readFile(join(dir, file), "utf8")) as AgentProfile),
+    );
+
+    expect(profiles.map((profile) => profile.id)).toEqual([
+      "codex-content",
+      "codex-evaluator",
+      "codex-operations",
+      "codex-orchestrator",
+      "codex-researcher",
+      "codex-reviewer",
+      "codex-spec",
+      "codex-worker",
+    ]);
+    expect(profiles.flatMap((profile) => validateAgentProfile(profile))).toEqual([]);
+  });
+
+  test("blocks profiles with unknown roles", () => {
+    const result = validateAgentProfile({ ...reviewer, id: "codex-unknown", role: "unknown" } as unknown as AgentProfile);
+
+    expect(result).toContain("agent profile role is unknown: unknown");
+  });
+
+  test("keeps codex-worker as the only writer profile", () => {
+    const result = validateAgentProfile({ ...worker, id: "codex-reviewer" });
+
+    expect(result).toContain("only codex-worker may be a writer profile");
   });
 
   test("allows a writer task with target files, forbidden changes, and worktree isolation", () => {

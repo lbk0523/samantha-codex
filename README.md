@@ -27,6 +27,10 @@ Codex Agents
   - codex-worker     writer
   - codex-reviewer   non-writer
   - codex-evaluator  non-writer
+  - codex-spec       non-writer
+  - codex-researcher non-writer
+  - codex-content    non-writer
+  - codex-operations non-writer
   - codex-orchestrator planner/synthesizer
 ```
 
@@ -144,7 +148,7 @@ Samantha accepts writer output only when all gates pass:
 - every `verifyCommand` exits with code `0`
 - Samantha creates the writer commit after gates pass
 
-Writer agents do not commit or push. Production code writers use per-task worktrees. Non-writer agents may run in parallel; writer concurrency starts at one until dogfood evidence justifies more.
+Writer agents do not commit or push. Production code writers use per-task worktrees. Non-writer agents are report-only, use no worktree or merge policy, and may run in parallel; writer concurrency starts at one until dogfood evidence justifies more.
 
 ## Project Layout
 

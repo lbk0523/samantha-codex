@@ -51,6 +51,9 @@ describe("orchestrator agent prompt", () => {
     expect(prompt).toContain("Use `codex-spec` for report-only requirement shaping");
     expect(prompt).toContain("Use `codex-reviewer` for report-only code review");
     expect(prompt).toContain("Use `codex-evaluator` for report-only validation planning");
+    expect(prompt).toContain("Use `codex-researcher` for report-only repository-local research");
+    expect(prompt).toContain("Use `codex-content` for report-only content drafting");
+    expect(prompt).toContain("Use `codex-operations` for report-only operational analysis");
     expect(prompt).toContain("Use `codex-worker` only for implementation/write tasks");
     expect(prompt).toContain("Non-writer tasks must use `resultMode: \"report\"`");
     expect(prompt).toContain("Deterministic request classification:");

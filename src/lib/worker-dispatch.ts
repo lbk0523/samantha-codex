@@ -64,6 +64,9 @@ export async function prepareWorkerDispatch(
   if (!plan.mayDispatch) {
     throw new Error(`dispatch blocked:\n${plan.violations.join("\n")}`);
   }
+  if (input.allocate && input.agent.worktreePolicy === "none") {
+    throw new Error("dispatch blocked:\nagent worktreePolicy none must not allocate worktrees");
+  }
 
   const allocation = input.allocate
     ? await allocateWorktree({
@@ -74,7 +77,9 @@ export async function prepareWorkerDispatch(
     : undefined;
   const worktreePath =
     allocation?.worktreePath ??
-    worktreePathForTask(input.repoRoot, input.task.id, input.worktreesDir);
+    (input.agent.worktreePolicy === "none"
+      ? input.repoRoot
+      : worktreePathForTask(input.repoRoot, input.task.id, input.worktreesDir));
 
   return {
     taskId: input.task.id,

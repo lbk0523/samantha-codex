@@ -5,6 +5,54 @@ export interface PreparedCodexDispatch {
   command: string[];
 }
 
+function roleReportContract(agent: AgentProfile): string[] {
+  if (agent.writerClass !== "non-writer") return [];
+
+  const common = [
+    "Produce the report artifact in your final response. Do not create report files.",
+    "Ground conclusions in repository evidence, explicit task instructions, or stated assumptions.",
+  ];
+
+  if (agent.role === "spec") {
+    return [
+      "Role contract: shape requirements, scope boundaries, acceptance criteria, and unresolved questions.",
+      ...common,
+    ];
+  }
+  if (agent.role === "reviewer") {
+    return [
+      "Role contract: review existing code, plan risk, regressions, and safety issues with file/line references when possible.",
+      ...common,
+    ];
+  }
+  if (agent.role === "evaluator") {
+    return [
+      "Role contract: assess validation strategy, test coverage, result evidence, and remaining release risk.",
+      ...common,
+    ];
+  }
+  if (agent.role === "researcher") {
+    return [
+      "Role contract: research repository-local facts, prior decisions, and technical context without changing files.",
+      ...common,
+    ];
+  }
+  if (agent.role === "content") {
+    return [
+      "Role contract: draft or critique content in the final response without writing files.",
+      ...common,
+    ];
+  }
+  if (agent.role === "operations") {
+    return [
+      "Role contract: analyze operational state, runbook steps, prerequisites, and safe next actions without mutating state.",
+      ...common,
+    ];
+  }
+
+  return common;
+}
+
 export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): string {
   const reportOnly = task.resultMode === "report";
   const writeBoundary =
@@ -31,12 +79,14 @@ export function buildCodexWorkerPrompt(task: TaskSpec, agent: AgentProfile): str
     task.setupCommands && task.setupCommands.length > 0
       ? task.setupCommands.map((cmd) => `- ${cmd}`)
       : ["- (none)"];
+  const roleContract = roleReportContract(agent);
 
   return [
     `You are ${agent.id}, a Codex-only Samantha worker agent.`,
     "",
     "Samantha owns orchestration, worktree allocation, merge, push, and safety gates.",
     writeBoundary,
+    ...(roleContract.length > 0 ? ["", ...roleContract] : []),
     "",
     `Task: ${task.id}`,
     `Title: ${task.title}`,
@@ -82,7 +132,7 @@ export function buildCodexExecCommand(input: {
     "--cd",
     input.worktreePath,
     "--sandbox",
-    "workspace-write",
+    input.agent.writerClass === "non-writer" ? "read-only" : "workspace-write",
   ];
 
   command.push("--json");
