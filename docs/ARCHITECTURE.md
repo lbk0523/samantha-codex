@@ -47,7 +47,10 @@ Telegram is intentionally small and is an adapter for notification, approval, sh
 
 Telegram notifications are compact outbox reports. On the Ubuntu host, `samantha-ceo-notify.timer` runs `ceo:notify` periodically, writes a remote outbox CEO summary, and records generation in `state/ceo-reports.jsonl`; `telegram:reply` delivers it through the existing Telegram reply adapter and records delivery in `state/telegram-replies.json`. Telegram can approve only the single current plan-approval decision through `/approve`; ambiguous or multiple pending decisions redirect BK back to `/now`, CLI, or dashboard. Telegram never accepts shell commands, repo paths, or task/action/run/decision ids as workflow inputs.
 
-The remaining gap is not a rewrite. The next work is aligning the existing loop around status reporting, work operations, and BK decision queues, while keeping Telegram as a thin adapter.
+The current product phase is MVP hardening. The next work should improve report
+quality, decision safety, notification idempotency, recovery clarity, host
+automation readiness, and evidence-gated parallelism while keeping Telegram as a
+thin adapter.
 
 The current architecture canary is role-aware but intentionally small: the Orchestrator Agent may choose report-only `codex-reviewer`, `codex-evaluator`, or `codex-spec` tasks before or alongside one `codex-worker` write task. The Control Plane keeps non-writers read-only, rejects non-writer write proposals, and keeps writer concurrency capped at one. This is not general multi-agent team construction.
 

@@ -117,6 +117,8 @@ describe("collectOpsSnapshot", () => {
     expect(snapshot.queues.latestRemoteCommand?.type).toBe("status:show");
     expect(snapshot.queues.latestRemoteOutbox?.file).toBe("remote-b.md");
     expect(snapshot.telegram.offset?.nextOffset).toBe(77);
+    expect(snapshot.warnings).toContain("1 unsent remote outbox report(s)");
+    expect(snapshot.warnings).not.toContain("systemd template not installed: samantha-ceo-notify.timer");
     expect(JSON.stringify(snapshot)).not.toContain("secret");
   });
 
@@ -139,6 +141,81 @@ describe("collectOpsSnapshot", () => {
     expect(snapshot.failures).toContain("Codex executable is missing: codex");
     expect(snapshot.failures).toContain("daemon lock is missing");
     expect(snapshot.warnings).toContain("telegram offset state is missing");
+    expect(snapshot.warnings).toContain("telegram reply state is missing");
+    expect(snapshot.warnings).toContain("systemd template not installed: samantha-ceo-notify.timer");
+  });
+
+  test("reports stale heartbeat and dead lock state as runtime failures", async () => {
+    const root = await makeRoot();
+    const stateDir = join(root, "state");
+    const systemdDir = join(root, "systemd");
+    const binDir = join(root, "bin");
+    const lockPath = join(stateDir, "daemon.lock");
+    const heartbeatPath = join(stateDir, "heartbeat.json");
+    await Promise.all([
+      mkdir(stateDir, { recursive: true }),
+      mkdir(systemdDir, { recursive: true }),
+      mkdir(binDir, { recursive: true }),
+    ]);
+    await writeFile(join(root, ".env"), "TELEGRAM_BOT_TOKEN=secret\nTELEGRAM_CHAT_ID=12345\n", "utf8");
+    await writeFile(join(binDir, "codex"), "", "utf8");
+    await writeFile(join(stateDir, "telegram-offset.json"), JSON.stringify({ nextOffset: 77 }), "utf8");
+    await writeFile(
+      join(stateDir, "telegram-replies.json"),
+      JSON.stringify({ schemaVersion: 1, sentFiles: [], updatedAt: "2026-05-03T10:00:00.000Z" }),
+      "utf8",
+    );
+    for (const file of [
+      "samantha-inbox-watch.service",
+      "samantha-actions-watch.service",
+      "samantha-telegram-poll.service",
+      "samantha-telegram-poll.timer",
+      "samantha-telegram-reply.service",
+      "samantha-telegram-reply.timer",
+      "samantha-ceo-notify.service",
+      "samantha-ceo-notify.timer",
+    ]) {
+      await writeFile(join(systemdDir, file), "", "utf8");
+    }
+    await acquireDaemonLock({
+      lockPath,
+      command: "inbox:watch",
+      pid: 202,
+      now: new Date("2026-05-03T09:59:00.000Z"),
+      isAlive: () => false,
+    });
+    await writeDaemonHeartbeat(heartbeatPath, {
+      schemaVersion: 1,
+      pid: 101,
+      command: "inbox:watch",
+      status: "running",
+      lockPath,
+      inboxDir: join(root, "inbox"),
+      outboxDir: join(root, "outbox"),
+      archiveDir: join(root, "archive"),
+      processedTotal: 3,
+      updatedAt: "2026-05-03T10:00:00.000Z",
+    });
+
+    const snapshot = await collectOpsSnapshot({
+      envFilePath: join(root, ".env"),
+      inboxDir: join(root, "inbox"),
+      outboxDir: join(root, "outbox"),
+      heartbeatPath,
+      lockPath,
+      telegramOffsetPath: join(stateDir, "telegram-offset.json"),
+      telegramRepliesPath: join(stateDir, "telegram-replies.json"),
+      systemdUserDir: systemdDir,
+      env: { PATH: binDir },
+      now: new Date("2026-05-03T10:01:00.000Z"),
+      maxAgeMs: 5_000,
+      isAlive: () => false,
+    });
+
+    expect(snapshot.ok).toBe(false);
+    expect(snapshot.failures.some((failure) => failure.startsWith("heartbeat is stale"))).toBe(true);
+    expect(snapshot.failures).toContain("heartbeat pid is not running: 101");
+    expect(snapshot.failures).toContain("lock pid is not running: 202");
   });
 
   test("can exclude the currently processed inbox command from queue counts", async () => {

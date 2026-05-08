@@ -155,7 +155,7 @@ Writer agents do not commit or push. Production code writers use per-task worktr
 - `references/agent-profiles/` defines Codex agent contracts.
 - `references/tasks/` and `references/plans/` contain fixtures and canaries.
 - `references/project-profiles/` contains canonical project profile hints.
-- `docs/` contains architecture, operations, remote adapter, dashboard, dogfood, and next-plan notes.
+- `docs/` contains roadmap, architecture, operations, adapter, and policy notes.
 - `ops/systemd/` contains automation-host service and timer templates.
 
 ## Design Notes
@@ -163,9 +163,11 @@ Writer agents do not commit or push. Production code writers use per-task worktr
 For deeper context, see:
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/NEXT_PLAN.md](docs/NEXT_PLAN.md)
+- [docs/DETERMINISTIC_CEO_OFFICE.md](docs/DETERMINISTIC_CEO_OFFICE.md)
+- [docs/CEO_OFFICE_ROADMAP.md](docs/CEO_OFFICE_ROADMAP.md)
+- [docs/MVP_IMPLEMENTATION.md](docs/MVP_IMPLEMENTATION.md)
+- [docs/MVP_HARDENING.md](docs/MVP_HARDENING.md)
+- [docs/NORTH_STAR.md](docs/NORTH_STAR.md)
 - [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md)
 - [docs/REMOTE_ADAPTERS.md](docs/REMOTE_ADAPTERS.md)
-- [docs/DASHBOARD_DOGFOOD.md](docs/DASHBOARD_DOGFOOD.md)
-- [docs/DOGFOOD_SCENARIOS.md](docs/DOGFOOD_SCENARIOS.md)
-- [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)
+- [docs/PARALLELISM_EVIDENCE.md](docs/PARALLELISM_EVIDENCE.md)

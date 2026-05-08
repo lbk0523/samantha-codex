@@ -50,6 +50,11 @@ export interface CreateDecisionItemInput {
   risk?: string;
 }
 
+export function decisionLifecycleStatus(decision: DecisionItem): string {
+  if (decision.status === "resolved") return decision.resolution ?? "resolved";
+  return decision.status;
+}
+
 function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -157,6 +162,21 @@ export function decisionAllowsOrchestratorMaterialization(decision: DecisionItem
   return decision?.status === "resolved" && decision.resolution === "approved";
 }
 
+export function decisionHasCurrentPlanSubject(decision: DecisionItem, plans: OrchestratorPlanRecord[]): boolean {
+  if (decision.subject?.type !== "orchestrator_plan") return true;
+  const plan = plans.find((item) => item.id === decision.subject?.id);
+  return Boolean(plan && (plan.status === "planned" || plan.status === "questions"));
+}
+
+export function decisionIsCurrentPlanApproval(decision: DecisionItem, plans: OrchestratorPlanRecord[]): boolean {
+  if (decision.status !== "pending") return false;
+  if (decision.kind !== "orchestrator_plan_approval") return false;
+  if (!decision.options.includes("approve")) return false;
+  if (decision.subject?.type !== "orchestrator_plan") return false;
+  const plan = plans.find((item) => item.id === decision.subject?.id);
+  return plan?.status === "planned";
+}
+
 async function readJsonLines<T>(path: string): Promise<T[]> {
   try {
     const raw = await readFile(path, "utf8");
@@ -185,6 +205,13 @@ export class DecisionStore {
 
   async listPending(): Promise<DecisionItem[]> {
     return (await this.list()).filter((decision) => decision.status === "pending");
+  }
+
+  async latestPending(predicate: (decision: DecisionItem) => boolean = () => true): Promise<DecisionItem | undefined> {
+    return (await this.list())
+      .slice()
+      .reverse()
+      .find((decision) => decision.status === "pending" && predicate(decision));
   }
 
   async find(id: string): Promise<DecisionItem | undefined> {
@@ -230,14 +257,32 @@ export class DecisionStore {
     });
   }
 
+  async resolveLatestPending(
+    input: {
+      resolvedAt: string;
+      resolution: DecisionResolution;
+      note?: string;
+      predicate?: (decision: DecisionItem) => boolean;
+    },
+  ): Promise<DecisionItem | undefined> {
+    const decision = await this.latestPending(input.predicate);
+    if (!decision) return undefined;
+    return this.resolve(decision.id, input);
+  }
+
   async archive(id: string, input: { archivedAt: string; reason: string }): Promise<DecisionItem> {
-    return this.update(id, (decision) => ({
-      ...decision,
-      status: "archived",
-      updatedAt: input.archivedAt,
-      archivedAt: input.archivedAt,
-      archiveReason: oneLine(input.reason),
-    }));
+    return this.update(id, (decision) => {
+      if (decision.status === "archived") throw new Error("decision already archived");
+      const reason = oneLine(input.reason);
+      if (!reason) throw new Error("decision archive reason is required");
+      return {
+        ...decision,
+        status: "archived",
+        updatedAt: input.archivedAt,
+        archivedAt: input.archivedAt,
+        archiveReason: reason,
+      };
+    });
   }
 
   private async update(id: string, update: (decision: DecisionItem) => DecisionItem): Promise<DecisionItem> {

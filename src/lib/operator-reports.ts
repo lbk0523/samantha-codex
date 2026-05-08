@@ -1,7 +1,8 @@
 import type { TaskSpec } from "./contracts";
-import type { CeoStatusSnapshot, CeoNextActionKind } from "./ceo-status";
+import type { CeoStatusSnapshot } from "./ceo-status";
 import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
+import { buildOperatingSurfaceView } from "./operating-surface";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord, OrchestratorSynthesisPayload } from "./orchestrator-store";
 import type { ProjectProfile, ProjectRemoteScope } from "./project-profile";
@@ -150,16 +151,6 @@ function resultModeLabel(mode: string | undefined): string {
   return mode === "report" ? "계획/보고" : "구현/수정";
 }
 
-function telegramCommandForNextAction(kind: CeoNextActionKind): string {
-  if (kind === "plan") return "/plan";
-  if (kind === "review_plan" || kind === "answer_questions") return "/plan_current";
-  if (kind === "resolve_decision") return "/approve";
-  if (kind === "approve_action" || kind === "watch_action" || kind === "merge_check" || kind === "push" || kind === "cleanup") return "/go";
-  if (kind === "recover") return "/recover";
-  if (kind === "diagnose") return "/problems";
-  return "/check";
-}
-
 function agentRoleLabel(agentId: string | undefined): string {
   if (agentId === "codex-reviewer") return "Reviewer";
   if (agentId === "codex-evaluator") return "Evaluator";
@@ -260,6 +251,15 @@ function orchestratorPlanNextLines(plan: OrchestratorPlanRecord): string[] {
   }
   if (plan.status === "materialized") return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
   return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
+}
+
+function recoveryPlanVerdictLine(request: OrchestrationRequestRecord, plan: OrchestratorPlanRecord): string | undefined {
+  if (!request.recoveryOfPlanId) return undefined;
+  const target = oneLine(plan.payload?.summary ?? request.recoveryOfPlanId);
+  if (plan.status === "questions") return `복구 판단: 원 문제는 BK 확인 필요 - ${target}`;
+  if (plan.status === "planned") return `복구 판단: 원 문제는 BK 승인 필요 - ${target}`;
+  if (plan.status === "failed") return `복구 판단: 원 문제 미해결 - 복구 계획 생성 실패`;
+  return undefined;
 }
 
 function actionNeedsRecovery(action: RemoteActionRecord): boolean {
@@ -593,6 +593,19 @@ export function remoteDecisionApprovedReport(): string {
     "",
     "다음 액션:",
     `- 텔레그램: ${code("/go")}`,
+    "",
+    "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
+  ].join("\n");
+}
+
+export function remoteDecisionRejectedReport(): string {
+  return [
+    "# reject",
+    "",
+    "현재 계획 승인 결정을 거절했습니다.",
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code("/now")}`,
     "",
     "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
   ].join("\n");
@@ -933,25 +946,29 @@ export function taskShowReport(taskId: string, task: TaskSpec | undefined): stri
 }
 
 export function ceoNotificationReport(snapshot: CeoStatusSnapshot): string {
+  const view = buildOperatingSurfaceView(snapshot);
   const decision = snapshot.needsDecision[0];
-  const canApproveDecision = Boolean(decision?.title.startsWith("Review plan:"));
-  const nextCommand = telegramCommandForNextAction(snapshot.nextAction.kind);
+  const nextCommand = view.primaryAction.telegramCommand ?? "/check";
+  const canApproveDecision = nextCommand === "/approve";
   const risks = snapshot.risks.slice(0, 3).map(remoteNotificationText);
   const lines = [
     "# ceo-notify",
     "",
     `상태: ${snapshot.overall}`,
-    `요약: decisions=${snapshot.needsDecision.length} active=${snapshot.active.length} blocked=${snapshot.blocked.length} risks=${snapshot.risks.length}`,
+    `핵심: ${remoteNotificationText(view.headline)}`,
+    `요약: ${view.summary}`,
     decision ? `결정 필요: ${remoteNotificationText(decision.title)}` : "",
     decision ? `이유: ${remoteNotificationText(decision.reason)}` : "",
     "",
-    "리스크:",
-    ...(risks.length ? risks.map((risk) => `- ${risk}`) : ["- 없음"]),
-    "",
     "다음 액션:",
-    `- 텔레그램: ${code(decision ? canApproveDecision ? "/approve" : "/revise <피드백>" : nextCommand)}`,
+    `- 텔레그램: ${code(nextCommand)}`,
     decision && canApproveDecision ? `- 수정 필요 시: ${code("/revise <피드백>")}` : "",
     decision ? `- 취소: ${code("/cancel")}` : "",
+    snapshot.blocked.length ? `- 현재 블로커: ${remoteNotificationText(snapshot.blocked[0]?.title ?? "확인 필요")}` : "",
+    snapshot.historicalFailures.length ? `- 히스토리 실패: ${snapshot.historicalFailures.length}건은 CLI 또는 dashboard에서 확인` : "",
+    "",
+    "리스크:",
+    ...(risks.length ? risks.map((risk) => `- ${risk}`) : ["- 없음"]),
     "",
     "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
   ];
@@ -1112,6 +1129,7 @@ export function orchestratorPlanReport(input: {
       "오케스트레이터 계획 생성에 실패했습니다.",
       `요청: ${code(request.id)}`,
       `계획: ${code(plan.id)}`,
+      recoveryPlanVerdictLine(request, plan),
       plan.failure ? `실패 이유: ${oneLine(plan.failure)}` : "",
       plan.command ? `exit: ${code(String(plan.command.exitCode))}` : "",
       "",
@@ -1130,6 +1148,7 @@ export function orchestratorPlanReport(input: {
     `요청: ${code(request.id)}`,
     `계획: ${code(plan.id)}`,
     `상태: ${code(plan.status)}`,
+    recoveryPlanVerdictLine(request, plan),
     "",
     payload?.userMessage ? telegramSafeClipText(payload.userMessage, 1400) : "오케스트레이터가 표시할 메시지를 반환하지 않았습니다.",
     "",

@@ -110,8 +110,8 @@ describe("CEO status snapshot", () => {
     expect(snapshot.needsDecision).toEqual([]);
     expect(snapshot.nextAction.kind).toBe("none");
     expect(report).toContain("# ceo:status");
-    expect(report).toContain("Summary: decisions=0 active=0 blocked=0 completed=0 risks=0");
-    expect(report).toContain("BK decisions:\n- none");
+    expect(report).toContain("Summary: decisions=0 active=0 blocked=0 historical_failures=0 completed=0 risks=0");
+    expect(report).toContain("Needs BK:\n- none");
     expect(report).toContain("Next safe action:\n- No safe action required");
   });
 
@@ -126,7 +126,7 @@ describe("CEO status snapshot", () => {
     expect(snapshot.nextAction).toMatchObject({ kind: "plan", command: "/plan", targetId: "request-1" });
   });
 
-  test("planned and question plans appear under BK decisions", () => {
+  test("planned and question plans appear under Needs BK", () => {
     const questionPlan: OrchestratorPlanRecord = {
       ...plan,
       id: "plan-questions",
@@ -173,8 +173,119 @@ describe("CEO status snapshot", () => {
       expect.objectContaining({ kind: "decision", id: decision.id, subject: "orchestrator_plan:plan-1" }),
     ]);
     expect(snapshot.nextAction).toMatchObject({ kind: "resolve_decision", targetId: decision.id });
-    expect(report).toContain("BK decisions:\n- Decision: Review CEO status plan");
-    expect(report).toContain("subject=orchestrator_plan:plan-1");
+    expect(report).toContain("Needs BK:\n- Decision: Review CEO status plan");
+    expect(report).not.toContain(decision.id);
+    expect(report).not.toContain("subject=orchestrator_plan:plan-1");
+  });
+
+  test("stale and resolved decisions do not appear as active needs", () => {
+    const stale = createDecisionItem({
+      title: "Review stale plan",
+      prompt: "Approve, revise, or cancel.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-stale" },
+      createdAt: "2026-05-07T09:10:00.000Z",
+    });
+    const approved = {
+      ...createDecisionItem({
+        title: "Review approved plan",
+        prompt: "Approve, revise, or cancel.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: "plan-approved" },
+        createdAt: "2026-05-07T09:11:00.000Z",
+      }),
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedAt: "2026-05-07T09:12:00.000Z",
+      resolvedBy: "bk" as const,
+    };
+    const rejected = {
+      ...createDecisionItem({
+        title: "Review rejected plan",
+        prompt: "Approve, revise, or cancel.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: "plan-rejected" },
+        createdAt: "2026-05-07T09:13:00.000Z",
+      }),
+      status: "resolved" as const,
+      resolution: "rejected" as const,
+      resolvedAt: "2026-05-07T09:14:00.000Z",
+      resolvedBy: "bk" as const,
+    };
+    const archived = {
+      ...createDecisionItem({
+        title: "Review archived plan",
+        prompt: "Approve, revise, or cancel.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: "plan-archived" },
+        createdAt: "2026-05-07T09:15:00.000Z",
+      }),
+      status: "archived" as const,
+      archivedAt: "2026-05-07T09:16:00.000Z",
+      archiveReason: "No longer active.",
+    };
+    const current = createDecisionItem({
+      title: "Review current plan",
+      prompt: "Approve, revise, or cancel.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-current" },
+      createdAt: "2026-05-07T09:17:00.000Z",
+    });
+    const missingPlan = createDecisionItem({
+      title: "Review missing plan",
+      prompt: "Approve, revise, or cancel.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-missing" },
+      createdAt: "2026-05-07T09:18:00.000Z",
+    });
+    const plans: OrchestratorPlanRecord[] = [
+      { ...plan, id: "plan-stale", status: "canceled" },
+      { ...plan, id: "plan-approved", status: "planned" },
+      { ...plan, id: "plan-rejected", status: "planned" },
+      { ...plan, id: "plan-current", status: "planned" },
+    ];
+
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      decisions: [stale, approved, rejected, archived, current, missingPlan],
+      orchestratorPlans: plans,
+    });
+
+    expect(snapshot.needsDecision.map((item) => item.title)).toEqual(["Review current plan"]);
+    expect(snapshot.nextAction).toMatchObject({ kind: "resolve_decision", command: "bun run samantha decisions:approve-latest" });
+  });
+
+  test("approved plan decisions become a go action without a new active need", () => {
+    const approved = {
+      ...createDecisionItem({
+        title: "Review approved plan",
+        prompt: "Approve, revise, or cancel.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: "plan-approved" },
+        createdAt: "2026-05-07T09:11:00.000Z",
+      }),
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedAt: "2026-05-07T09:12:00.000Z",
+      resolvedBy: "bk" as const,
+    };
+
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      decisions: [approved],
+      orchestratorPlans: [{ ...plan, id: "plan-approved", status: "planned" }],
+    });
+
+    expect(snapshot.needsDecision).toEqual([]);
+    expect(snapshot.active).toContainEqual(expect.objectContaining({ kind: "orchestrator_plan", id: "plan-approved" }));
+    expect(snapshot.nextAction).toMatchObject({ kind: "review_plan", command: "/go", targetId: "plan-approved" });
   });
 
   test("running approved waiting and pending actions count as active work", () => {
@@ -294,6 +405,241 @@ describe("CEO status snapshot", () => {
     expect(snapshot.risks.join("\n")).not.toContain("Plan needs recovery plan-failed-source");
   });
 
+  test("historical failed runs do not dominate pending decision status", () => {
+    const decision = createDecisionItem({
+      title: "Review plan: Current work",
+      prompt: "Approve, revise, or cancel.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-current" },
+      createdAt: "2026-05-07T12:00:00.000Z",
+    });
+    const failedRuns: RunSummary[] = [1, 2, 3].map((index) => ({
+      schemaVersion: 1,
+      runId: `run-old-${index}`,
+      taskId: `task-old-${index}`,
+      taskTitle: `Old failed task ${index}`,
+      agentId: "codex-worker",
+      repoRoot: "/repo",
+      worktreePath: `/worktrees/task-old-${index}`,
+      logPath: `/runs/run-old-${index}.json`,
+      startedAt: `2026-05-0${index}T10:00:00.000Z`,
+      finishedAt: `2026-05-0${index}T10:10:00.000Z`,
+      outcome: "verify_failed",
+      pass: false,
+      commit: "",
+      failureReason: "typecheck failed",
+    }));
+
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      decisions: [decision],
+      runs: failedRuns,
+      orchestratorPlans: [{ ...plan, id: "plan-current", status: "planned" }],
+    });
+    const report = formatCeoStatusReport(snapshot);
+
+    expect(snapshot.overall).toBe("needs_decision");
+    expect(snapshot.blocked).toEqual([]);
+    expect(snapshot.historicalFailures.map((item) => item.id)).toEqual(["run-old-3", "run-old-2", "run-old-1"]);
+    expect(snapshot.nextAction).toMatchObject({ kind: "resolve_decision", targetId: decision.id });
+    expect(report.indexOf("Next safe action:")).toBeLessThan(report.indexOf("Historical failures:"));
+    expect(report.indexOf("Needs BK:")).toBeLessThan(report.indexOf("Historical failures:"));
+  });
+
+  test("unresolved historical failures remain visible when no current work exists", () => {
+    const failedRun: RunSummary = {
+      schemaVersion: 1,
+      runId: "run-unresolved",
+      taskId: "task-unresolved",
+      taskTitle: "Unresolved failed task",
+      agentId: "codex-worker",
+      repoRoot: "/repo",
+      worktreePath: "/worktrees/task-unresolved",
+      logPath: "/runs/run-unresolved.json",
+      startedAt: "2026-05-07T10:00:00.000Z",
+      finishedAt: "2026-05-07T10:10:00.000Z",
+      outcome: "blocked",
+      pass: false,
+      commit: "",
+      failureReason: "worker blocked",
+    };
+
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      runs: [failedRun],
+    });
+    const report = formatCeoStatusReport(snapshot);
+
+    expect(snapshot.overall).toBe("needs_recovery");
+    expect(snapshot.blocked).toEqual([]);
+    expect(snapshot.historicalFailures).toContainEqual(expect.objectContaining({ kind: "run", id: "run-unresolved" }));
+    expect(snapshot.risks).toContain("Historical failed run run-unresolved: worker blocked");
+    expect(snapshot.nextAction).toMatchObject({ kind: "recover", command: "/problems", targetId: "run-unresolved" });
+    expect(report).toContain("Historical failures:\n- Unresolved failed task (run:run-unresolved, blocked) - worker blocked");
+  });
+
+  test("current actionable blockers stay visible before historical failures", () => {
+    const failedAction: RemoteActionRecord = {
+      ...action,
+      id: "action-current-failed",
+      status: "failed",
+      completedAt: "2026-05-07T12:00:00.000Z",
+      result: { pass: false, outcome: "verify_failed", failure: "current verify failed" },
+    };
+    const failedRun: RunSummary = {
+      schemaVersion: 1,
+      runId: "run-old",
+      taskId: "task-old",
+      taskTitle: "Old failed task",
+      agentId: "codex-worker",
+      repoRoot: "/repo",
+      worktreePath: "/worktrees/task-old",
+      logPath: "/runs/run-old.json",
+      startedAt: "2026-05-06T10:00:00.000Z",
+      finishedAt: "2026-05-06T10:10:00.000Z",
+      outcome: "verify_failed",
+      pass: false,
+      commit: "",
+      failureReason: "old verify failed",
+    };
+
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      actions: [failedAction],
+      runs: [failedRun],
+    });
+    const report = formatCeoStatusReport(snapshot);
+
+    expect(snapshot.blocked.map((item) => item.id)).toEqual(["action-current-failed"]);
+    expect(snapshot.historicalFailures.map((item) => item.id)).toEqual(["run-old"]);
+    expect(snapshot.nextAction).toMatchObject({ kind: "recover", targetId: "action-current-failed" });
+    expect(report.indexOf("Blocked / recovery:")).toBeLessThan(report.indexOf("Historical failures:"));
+  });
+
+  test("resolved failed runs produce a clean idle status", () => {
+    const failedRun: RunSummary = {
+      schemaVersion: 1,
+      runId: "run-fixed-source",
+      taskId: "task-fixed-source",
+      taskTitle: "Fixed source failure",
+      agentId: "codex-worker",
+      repoRoot: "/repo",
+      worktreePath: "/worktrees/task-fixed-source",
+      logPath: "/runs/run-fixed-source.json",
+      startedAt: "2026-05-07T10:00:00.000Z",
+      finishedAt: "2026-05-07T10:10:00.000Z",
+      outcome: "verify_failed",
+      pass: false,
+      commit: "",
+      failureReason: "typecheck failed",
+    };
+    const failedPlan: OrchestratorPlanRecord = {
+      ...plan,
+      id: "plan-fixed-source",
+      requestId: "request-fixed-source",
+      status: "materialized",
+      resultReportedAt: "2026-05-07T10:11:00.000Z",
+      taskIds: [failedRun.taskId],
+      synthesis: {
+        outcome: "failed",
+        summary: "Source failed.",
+        nextActions: ["Recover"],
+        risks: [],
+        userMessage: "Needs recovery.",
+      },
+    };
+    const recoveryRequest: OrchestrationRequestRecord = {
+      ...request,
+      id: "request-fixed-recovery",
+      status: "planned",
+      recoveryOfPlanId: failedPlan.id,
+    };
+    const recoveryAction: RemoteActionRecord = {
+      ...action,
+      id: "action-fixed-recovery",
+      taskId: "task-fixed-recovery",
+      taskTitle: "Fix source failure",
+      status: "completed",
+      completedAt: "2026-05-07T10:30:00.000Z",
+      result: { pass: true, outcome: "pass" },
+    };
+    const recoveryPlan: OrchestratorPlanRecord = {
+      ...plan,
+      id: "plan-fixed-recovery",
+      requestId: recoveryRequest.id,
+      status: "materialized",
+      resultReportedAt: "2026-05-07T10:31:00.000Z",
+      actionIds: [recoveryAction.id],
+      taskIds: [recoveryAction.taskId],
+      synthesis: {
+        outcome: "pass",
+        summary: "Recovery fixed the source failure.",
+        nextActions: [],
+        risks: [],
+        userMessage: "Fixed.",
+      },
+    };
+
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      runs: [failedRun],
+      actions: [recoveryAction],
+      orchestrationRequests: [recoveryRequest],
+      orchestratorPlans: [failedPlan, recoveryPlan],
+    });
+
+    expect(snapshot.overall).toBe("idle");
+    expect(snapshot.blocked).toEqual([]);
+    expect(snapshot.historicalFailures).toEqual([]);
+    expect(snapshot.risks).toEqual([]);
+    expect(snapshot.nextAction.kind).toBe("none");
+  });
+
+  test("archived task failures do not create actionable historical recovery", () => {
+    const failedRun: RunSummary = {
+      schemaVersion: 1,
+      runId: "run-archived",
+      taskId: "task-archived",
+      taskTitle: "Archived failed task",
+      agentId: "codex-worker",
+      repoRoot: "/repo",
+      worktreePath: "/worktrees/task-archived",
+      logPath: "/runs/run-archived.json",
+      startedAt: "2026-05-07T10:00:00.000Z",
+      finishedAt: "2026-05-07T10:10:00.000Z",
+      outcome: "verify_failed",
+      pass: false,
+      commit: "",
+      failureReason: "old verify failed",
+    };
+
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      runs: [failedRun],
+      tasks: [
+        {
+          id: "task-archived",
+          title: "Archived failed task",
+          targetAgent: "codex-worker",
+          repoRoot: "/repo",
+          targetFiles: ["src/app.ts"],
+          forbiddenChanges: ["state/**"],
+          verifyCommands: ["bun typecheck"],
+          instructions: "Archived stale task.",
+          status: "archived",
+          archivedAt: "2026-05-07T11:00:00.000Z",
+          archiveReason: "superseded by recovery",
+        },
+      ],
+    });
+
+    expect(snapshot.overall).toBe("idle");
+    expect(snapshot.historicalFailures).toEqual([]);
+    expect(snapshot.risks).not.toContain("Historical failed run run-archived: old verify failed");
+    expect(snapshot.nextAction.kind).toBe("none");
+  });
+
   test("passed run with missing lifecycle becomes merge gate next action", () => {
     const snapshot = buildCeoStatusSnapshot({
       generatedAt: "2026-05-07T00:00:00.000Z",
@@ -355,6 +701,9 @@ describe("CEO status snapshot", () => {
         subject: { type: "orchestrator_plan", id: "plan-mobile-approval" },
         createdAt: "2026-05-07T11:00:00.000Z",
       }),
+    ]);
+    await writeJsonLines(join(stateDir, "orchestrator-plans.jsonl"), [
+      { ...plan, id: "plan-mobile-approval", status: "planned" },
     ]);
 
     const proc = Bun.spawn(
@@ -422,7 +771,69 @@ describe("CEO status snapshot", () => {
     expect(retryExitCode).toBe(0);
     expect(retryStdout).toContain(files[0] ?? "");
     expect(await readdir(outbox)).toEqual(files);
+    const preservedReport = "# preserved CEO report\n";
+    await writeFile(join(outbox, files[0] ?? ""), preservedReport, "utf8");
+    const deliveryState = `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        sentFiles: [files[0]],
+        failures: [{ file: "remote-failed.md", attempts: 1, lastError: "timeout", updatedAt: "2026-05-07T11:02:00.000Z" }],
+        updatedAt: "2026-05-07T11:03:00.000Z",
+      },
+      null,
+      2,
+    )}\n`;
+    await writeFile(join(stateDir, "telegram-replies.json"), deliveryState, "utf8");
+    const duplicate = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "ceo:notify",
+        `--state-dir=${stateDir}`,
+        `--outbox-dir=${outbox}`,
+        "--created-at=2026-05-07T11:01:00.000Z",
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect(await new Response(duplicate.stderr).text()).toBe("");
+    expect(await duplicate.exited).toBe(0);
+    expect(await readFile(join(outbox, files[0] ?? ""), "utf8")).toBe(preservedReport);
+    expect(await readFile(join(stateDir, "telegram-replies.json"), "utf8")).toBe(deliveryState);
     const retryReportLedger = await readFile(join(stateDir, "ceo-reports.jsonl"), "utf8");
     expect(retryReportLedger.split("\n").filter(Boolean)).toHaveLength(1);
+  });
+
+  test("CLI ceo notify uses an hourly default identity for timer retries", async () => {
+    const root = await makeRoot();
+    const stateDir = join(root, "state");
+    const outbox = join(root, "outbox");
+
+    for (const now of ["2026-05-07T11:37:00.000Z", "2026-05-07T11:43:00.000Z"]) {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          "run",
+          "src/samantha.ts",
+          "ceo:notify",
+          `--state-dir=${stateDir}`,
+          `--outbox-dir=${outbox}`,
+          `--now=${now}`,
+        ],
+        { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+      );
+      expect(await new Response(proc.stderr).text()).toBe("");
+      expect(await proc.exited).toBe(0);
+    }
+
+    const files = await readdir(outbox);
+    expect(files).toHaveLength(1);
+    const reportLedger = (await readFile(join(stateDir, "ceo-reports.jsonl"), "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { generatedAt: string; outboxFile: string });
+    expect(reportLedger).toEqual([
+      expect.objectContaining({ generatedAt: "2026-05-07T11:00:00.000Z", outboxFile: files[0] }),
+    ]);
   });
 });

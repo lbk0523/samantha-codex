@@ -1,7 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 
-const DOCS = ["README.md", "readme-kr.md"];
-const LOCAL_ABSOLUTE_PATH = /(?:\/Users\/|\/home\/)/;
+const DOCS = [
+  "README.md",
+  "readme-kr.md",
+  ...(await readdir("docs")).filter((file) => file.endsWith(".md")).map((file) => `docs/${file}`),
+];
+const LOCAL_ABSOLUTE_PATH = /(?:\/Users\/|\/home\/|\/private\/|\/Volumes\/|[A-Za-z]:\\)/;
 
 for (const path of DOCS) {
   const text = await readFile(path, "utf8");

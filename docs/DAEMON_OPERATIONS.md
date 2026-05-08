@@ -17,7 +17,7 @@ bun run samantha inbox:watch
 If Telegram-approved dispatch actions should run, configure the target repo locally and run the action watcher:
 
 ```bash
-SAMANTHA_REPO_ROOT=/home/lbk0523/projects/samantha-codex bun run samantha actions:watch
+SAMANTHA_REPO_ROOT=$HOME/projects/samantha-codex bun run samantha actions:watch
 ```
 
 Check health:
@@ -115,9 +115,9 @@ Set local, uncommitted values:
 TELEGRAM_BOT_TOKEN=<token>
 TELEGRAM_CHAT_ID=<telegram-chat-id>
 # Optional, required when no project profile supplies the worker repo root:
-SAMANTHA_REPO_ROOT=/home/lbk0523/projects/samantha-codex
+SAMANTHA_REPO_ROOT=$HOME/projects/samantha-codex
 # Optional, required when systemd cannot find codex in PATH:
-SAMANTHA_CODEX_BIN=/home/lbk0523/.nvm/versions/node/v24.15.0/bin/codex
+SAMANTHA_CODEX_BIN=$HOME/.local/bin/codex
 ```
 
 Install and enable:

@@ -30,6 +30,7 @@ import {
   remoteApprovalRedirectReport,
   remoteDeprecatedCommandReport,
   remoteDecisionApprovedReport,
+  remoteDecisionRejectedReport,
   remoteGoNoActionablePlanReport,
   remoteHelpReport,
   remoteIntegrationReport,
@@ -223,6 +224,8 @@ describe("operator reports", () => {
     expect(deprecated).not.toContain("/action_current");
     expect(remoteDecisionApprovedReport()).toContain("텔레그램: `/go`");
     expect(remoteDecisionApprovedReport()).not.toContain("decision-");
+    expect(remoteDecisionRejectedReport()).toContain("텔레그램: `/now`");
+    expect(remoteDecisionRejectedReport()).not.toContain("decision-");
     expect(remoteApprovalRedirectReport({ reason: "Telegram approval needs CLI review for decision-abc123" })).toContain("해당 항목");
   });
 
@@ -309,6 +312,7 @@ describe("operator reports", () => {
       completed: [],
       active: [],
       blocked: [],
+      historicalFailures: [],
       needsDecision: [
         {
           kind: "decision",
@@ -317,6 +321,7 @@ describe("operator reports", () => {
           status: "pending",
           reason: "Approve, request revision, or cancel before Samantha materializes worker tasks.",
           subject: "orchestrator_plan:plan-20260507-work-def67890",
+          options: ["approve", "revise", "cancel"],
         },
       ],
       risks: ["Plan needs review before dispatching action-12345"],
@@ -336,6 +341,38 @@ describe("operator reports", () => {
     expect(report).not.toContain("plan-20260507");
     expect(report).not.toContain("action-12345");
     expect(report).not.toContain("bun run");
+  });
+
+  test("renders compact CEO notification with historical failures after next action", () => {
+    const report = ceoNotificationReport({
+      generatedAt: "2026-05-07T11:00:00.000Z",
+      overall: "needs_recovery",
+      completed: [],
+      active: [],
+      blocked: [],
+      historicalFailures: [
+        {
+          kind: "run",
+          id: "run-old",
+          title: "Old failed task",
+          status: "verify_failed",
+          detail: "typecheck failed",
+        },
+      ],
+      needsDecision: [],
+      risks: ["Historical failed run run-old: typecheck failed"],
+      nextAction: {
+        kind: "recover",
+        label: "Review unresolved historical failure",
+        command: "/problems",
+        targetId: "run-old",
+        reason: "typecheck failed",
+      },
+    });
+
+    expect(report).toContain("텔레그램: `/problems`");
+    expect(report).toContain("히스토리 실패: 1건");
+    expect(report.indexOf("다음 액션:")).toBeLessThan(report.indexOf("리스크:"));
   });
 
   test("renders compact run and failure summaries", () => {
@@ -806,6 +843,32 @@ describe("operator reports", () => {
     expect(planReport).toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
     expect(planReport).toContain("계획 수정: `/revise <피드백>`");
     expect(planReport).toContain("계획 취소: `/cancel`");
+
+    const recoveryQuestions = orchestratorPlanReport({
+      request: { ...orchestrationRequest, id: "request-recovery", recoveryOfPlanId: "plan-original-failed", status: "planned" },
+      plan: {
+        ...orchestratorPlan,
+        id: "plan-recovery-questions",
+        status: "questions",
+        payload: {
+          ...orchestratorPlan.payload!,
+          summary: "Recovery needs BK context",
+          questions: ["Which failure should be treated as fixed?"],
+          tasks: [],
+          batches: [],
+          userMessage: "복구 판단에 BK 확인이 필요합니다.",
+        },
+      },
+    });
+    expect(recoveryQuestions).toContain("복구 판단: 원 문제는 BK 확인 필요 - Recovery needs BK context");
+    expect(recoveryQuestions).toContain("답변/수정 요청: `/revise <피드백>`");
+
+    const recoveryReady = orchestratorPlanReport({
+      request: { ...orchestrationRequest, id: "request-recovery-ready", recoveryOfPlanId: "plan-original-failed", status: "planned" },
+      plan: { ...orchestratorPlan, id: "plan-recovery-ready" },
+    });
+    expect(recoveryReady).toContain("복구 판단: 원 문제는 BK 승인 필요 - Telegram orchestration flow");
+    expect(recoveryReady).toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
 
     const blocked = orchestratorGoBlockedReport({
       plan: { ...orchestratorPlan, status: "questions" },

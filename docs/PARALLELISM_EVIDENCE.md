@@ -26,19 +26,16 @@ There is no Stage 9 writer cap increase.
 | Prefer non-writer parallel confidence first | `tests/operations.test.ts` covers ready non-writers in the same plan batch before writers. | `bun run test:portable` |
 | Serialize ready writers | `tests/operations.test.ts` covers two ready writers becoming separate batches. | `bun run test:portable` |
 | Keep non-writers read-only | `tests/policy.test.ts` and `tests/orchestrator-materializer.test.ts` reject non-writer write proposals. | `bun run test:portable` |
-| Keep integration deterministic | Merge, push, and cleanup gates are split across `merge:check`, `merge:apply`, `merge:push`, and `worktree:cleanup`; lifecycle status is recorded in `state/run-lifecycle.jsonl`. | `bun run test:portable` |
-| Keep recovery deterministic | Failed materialized plans use `/recover -> /plan -> /go`; recovery prompts carry failed-plan evidence and canonical repo-root instructions. | `bun run test:portable` |
+| Keep parallel reports readable | `tests/parallelism-evidence.test.ts` covers parallel specialist plus single-writer role outcomes without raw action/status noise. | `bun run test:portable` |
+| Keep integration deterministic | `tests/merge-gate.test.ts` covers merge and push gates; `tests/worktree-cleanup.test.ts` covers cleanup gates; `tests/run-lifecycle-store.test.ts` records lifecycle status in `state/run-lifecycle.jsonl`. | `bun run test:portable` |
+| Keep recovery deterministic | `tests/recovery-context.test.ts`, `tests/recovery-continuity.test.ts`, and `tests/operations.test.ts` cover `/recover -> /plan -> /go`, failed-plan evidence, and canonical repo-root instructions. | `bun run test:portable` |
 
 ## Dogfood Notes
 
-- Existing dogfood notes in `docs/DOGFOOD_SCENARIOS.md` cover dry-run plan
-  batching, read-only worker execution, writer execution, merge candidate
-  checks, explicit merge apply, separate push, and completed worktree cleanup.
-- `docs/BUILD_PLAN.md` records that read-only dogfood completed, the first
-  low-risk writer dogfood passed with a Samantha-owned commit, and explicit
-  merge apply, push, and cleanup gates are implemented.
-- This Stage 9 pass changes no runtime concurrency setting. It adds evidence
-  documentation and focused test coverage for ready-writer serialization.
+The first MVP implementation reached Stage 9 without changing runtime writer
+concurrency. The current evidence is limited to implementation behavior and
+focused tests for non-writer batching, writer serialization, materialization
+rejection, and deterministic integration gates.
 
 These notes are sufficient for parallel report-only specialists plus one writer.
 They are not sufficient for multi-writer execution.

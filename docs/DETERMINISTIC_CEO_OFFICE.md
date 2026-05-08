@@ -72,7 +72,7 @@ LLM output is a proposal, analysis, or draft. State changes happen only after de
 
 ## First MVP Scope
 
-The first MVP should prove that Samantha can:
+The first MVP was scoped to prove that Samantha can:
 
 1. Store structured work state.
 2. Track task status, owner, blocker, risk, and next action.
@@ -80,7 +80,8 @@ The first MVP should prove that Samantha can:
 4. Generate a clear periodic or on-demand status report.
 5. Refuse risky actions without the required approval and safety gates.
 
-This MVP can be useful before broad Telegram control, multi-agent team construction, or multi-writer execution.
+This MVP is useful before broad Telegram control, multi-agent team construction,
+or multi-writer execution.
 
 ## Remote Interface Policy
 
@@ -129,17 +130,11 @@ When future work starts drifting, use these checks:
 - If a workflow cannot produce a useful status report, the task model is not structured enough yet.
 - If a mobile interaction requires long context review, move the interaction to CLI or dashboard and keep mobile for notification or approval.
 
-## Practical Next Direction
-
-Prioritize:
-
-1. Task store and task contracts.
-2. Decision and approval queue.
-3. Status report generator.
-4. Read-only dashboard or CLI status view.
-5. Bounded LLM calls for planning, synthesis, review, or question drafting.
-6. Telegram notification and approval adapter.
+## Practical Direction
 
 Do not let Telegram implementation details define Samantha's core architecture.
+Use the roadmap as the source of truth for current and future phases.
 
-For the staged execution roadmap and the first implementation plan, see [CEO_OFFICE_ROADMAP.md](CEO_OFFICE_ROADMAP.md).
+For the long-range roadmap, see [CEO_OFFICE_ROADMAP.md](CEO_OFFICE_ROADMAP.md).
+For the first MVP execution stages, see [MVP_IMPLEMENTATION.md](MVP_IMPLEMENTATION.md).
+For the current hardening phase, see [MVP_HARDENING.md](MVP_HARDENING.md).

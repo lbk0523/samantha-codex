@@ -6,6 +6,8 @@ import { buildCeoReportId, CeoReportStore, type CeoReportRecord } from "./lib/ce
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
 import {
   decisionAllowsOrchestratorMaterialization,
+  decisionHasCurrentPlanSubject,
+  decisionIsCurrentPlanApproval,
   decisionFromQuestionDraft,
   decisionFromOrchestratorPlan,
   DecisionStore,
@@ -45,6 +47,7 @@ import {
   remoteGoNoActionablePlanReport,
   remoteApprovalRedirectReport,
   remoteDecisionApprovedReport,
+  remoteDecisionRejectedReport,
   remoteActionApprovedReport,
   remoteIntegrationReport,
   type RemoteActionArtifactPreview,
@@ -1166,27 +1169,94 @@ function decisionGateReport(decision: DecisionItem | undefined): string {
     .join("\n");
 }
 
-async function approveLatestRemoteDecision(args: ParsedArgs, receivedAt: string): Promise<string> {
-  const store = new DecisionStore(decisionsPath(args));
-  const pending = await store.listPending();
-  const approvable = pending.filter(
-    (decision) => decision.kind === "orchestrator_plan_approval" && decision.options.includes("approve"),
-  );
+async function resolveLatestDecision(input: {
+  args: ParsedArgs;
+  receivedAt: string;
+  resolution: DecisionResolution;
+  note: string;
+  remotePlanApprovalOnly?: boolean;
+}): Promise<DecisionItem | undefined> {
+  const store = new DecisionStore(decisionsPath(input.args));
+  const planStore = new OrchestratorPlanStore(orchestratorPlansPath(input.args));
+  const plans = await planStore.list();
+  const resolved = await store.resolveLatestPending({
+    resolvedAt: input.receivedAt,
+    resolution: input.resolution,
+    note: input.note,
+    predicate: (decision) =>
+      input.remotePlanApprovalOnly
+        ? decisionIsCurrentPlanApproval(decision, plans)
+        : decisionHasCurrentPlanSubject(decision, plans),
+  });
+  await cancelRejectedApprovalPlan({
+    planStore,
+    decision: resolved,
+    canceledAt: input.receivedAt,
+    cancelReason: input.note,
+  });
+  return resolved;
+}
 
-  if (pending.length !== 1 || approvable.length !== 1) {
+async function cancelRejectedApprovalPlan(input: {
+  planStore: OrchestratorPlanStore;
+  decision: DecisionItem | undefined;
+  canceledAt: string;
+  cancelReason: string;
+}): Promise<void> {
+  if (input.decision?.kind !== "orchestrator_plan_approval") return;
+  if (input.decision.resolution !== "rejected") return;
+  if (input.decision.subject?.type !== "orchestrator_plan") return;
+
+  const plan = await input.planStore.find(input.decision.subject.id);
+  if (plan?.status !== "planned" && plan?.status !== "questions") return;
+
+  await input.planStore.markCanceled(plan.id, {
+    canceledAt: input.canceledAt,
+    cancelReason: input.cancelReason,
+  });
+}
+
+async function resolveLatestRemotePlanApprovalDecision(
+  args: ParsedArgs,
+  receivedAt: string,
+  resolution: "approved" | "rejected",
+): Promise<string> {
+  const store = new DecisionStore(decisionsPath(args));
+  const planStore = new OrchestratorPlanStore(orchestratorPlansPath(args));
+  const plans = await planStore.list();
+  const candidates = (await store.list()).filter((decision) => decisionIsCurrentPlanApproval(decision, plans));
+
+  if (candidates.length !== 1) {
     return remoteApprovalRedirectReport({
-      reason: pending.length === 0
-        ? "승인할 단일 계획 결정이 없습니다."
-        : "Telegram approval is only allowed when exactly one plan approval decision is pending.",
+      reason:
+        resolution === "approved"
+          ? candidates.length === 0
+            ? "승인할 현재 pending 계획 결정이 없습니다."
+            : "Telegram approval is only allowed when exactly one current plan approval decision is pending."
+          : candidates.length === 0
+            ? "거절할 현재 pending 계획 결정이 없습니다."
+            : "Telegram rejection is only allowed when exactly one current plan approval decision is pending.",
     });
   }
 
-  await store.resolve(approvable[0].id, {
+  const note = resolution === "approved" ? "Approved via Telegram /approve." : "Rejected via latest decision command.";
+  const resolved = await store.resolve(candidates[0].id, {
     resolvedAt: receivedAt,
-    resolution: "approved",
-    note: "Approved via Telegram /approve.",
+    resolution,
+    note,
   });
-  return remoteDecisionApprovedReport();
+  await cancelRejectedApprovalPlan({
+    planStore,
+    decision: resolved,
+    canceledAt: receivedAt,
+    cancelReason: note,
+  });
+
+  return resolution === "approved" ? remoteDecisionApprovedReport() : remoteDecisionRejectedReport();
+}
+
+async function approveLatestRemoteDecision(args: ParsedArgs, receivedAt: string): Promise<string> {
+  return resolveLatestRemotePlanApprovalDecision(args, receivedAt, "approved");
 }
 
 async function writeCeoNotificationOutbox(
@@ -1194,11 +1264,12 @@ async function writeCeoNotificationOutbox(
   snapshot: CeoStatusSnapshot,
   createdAt: string,
 ): Promise<{ file: string; path: string; record: CeoReportRecord }> {
+  const report = ceoNotificationReport(snapshot);
   const file = compactOutboxFileName({
     createdAt,
     kind: "ceo-notify",
     label: snapshot.overall,
-    source: `${createdAt}-${snapshot.overall}-${snapshot.nextAction.kind}`,
+    source: `${createdAt}-${ceoNotificationIdentity(snapshot)}`,
   });
   const dir = outboxDir(args);
   const path = join(dir, file);
@@ -1224,7 +1295,7 @@ async function writeCeoNotificationOutbox(
   }
   const persistedRecord = await store.append(record);
   await mkdir(dir, { recursive: true });
-  await writeFile(path, `${ceoNotificationReport(snapshot)}\n`, "utf8");
+  await writeFile(path, `${report}\n`, "utf8");
   return { file, path, record: persistedRecord };
 }
 
@@ -1248,6 +1319,48 @@ async function markRunLifecycle(args: ParsedArgs, run: RunSummary, stage: "merge
 
 function timestamp(value: string | undefined): number {
   return value ? Date.parse(value) || 0 : 0;
+}
+
+function ceoNotifyPeriodStart(now: Date): string {
+  const period = new Date(now);
+  period.setUTCMinutes(0, 0, 0);
+  return period.toISOString();
+}
+
+function isCeoNotifyDeliveryStateRisk(risk: string): boolean {
+  const normalized = risk.toLowerCase();
+  return (
+    normalized.includes("telegram reply state") ||
+    normalized.includes("telegram reply failure") ||
+    normalized.includes("unsent remote outbox")
+  );
+}
+
+function ceoNotificationIdentity(snapshot: CeoStatusSnapshot): string {
+  return JSON.stringify({
+    overall: snapshot.overall,
+    nextAction: {
+      kind: snapshot.nextAction.kind,
+      targetId: snapshot.nextAction.targetId,
+      reason: snapshot.nextAction.reason,
+    },
+    needsDecision: snapshot.needsDecision.map((item) => ({
+      kind: item.kind,
+      title: item.title,
+      status: item.status,
+      reason: item.reason,
+      subject: item.subject,
+    })),
+    active: snapshot.active.map((item) => ({ kind: item.kind, id: item.id, status: item.status, title: item.title })),
+    blocked: snapshot.blocked.map((item) => ({ kind: item.kind, id: item.id, status: item.status, title: item.title })),
+    historicalFailures: snapshot.historicalFailures.map((item) => ({
+      kind: item.kind,
+      id: item.id,
+      status: item.status,
+      title: item.title,
+    })),
+    risks: snapshot.risks.filter((risk) => !isCeoNotifyDeliveryStateRisk(risk)),
+  });
 }
 
 function latestRunNeedingIntegration(runs: RunSummary[], lifecycles: RunLifecycleRecord[]): RunSummary | undefined {
@@ -1535,6 +1648,13 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
   }
   if (command.type === "decisions:approve-latest") {
     return approveLatestRemoteDecision(args, String(command.args?.receivedAt ?? new Date().toISOString()));
+  }
+  if (command.type === "decisions:reject-latest") {
+    return resolveLatestRemotePlanApprovalDecision(
+      args,
+      String(command.args?.receivedAt ?? new Date().toISOString()),
+      "rejected",
+    );
   }
   if (command.type === "orchestrator:revise-latest") {
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
@@ -1971,13 +2091,39 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "decisions:approve-latest" || args.command === "decisions:reject-latest") {
+    const resolution: "approved" | "rejected" = args.command === "decisions:approve-latest" ? "approved" : "rejected";
+    const resolved = await resolveLatestDecision({
+      args,
+      receivedAt: flag(args, "resolved-at", new Date().toISOString()),
+      resolution,
+      note:
+        flag(args, "note", "") ||
+        (resolution === "approved" ? "Approved via decisions:approve-latest." : "Rejected via decisions:reject-latest."),
+    });
+    printJson(
+      resolved
+        ? { ok: true, decision: resolved }
+        : { ok: true, decision: null, reason: "no current pending decision" },
+    );
+    return;
+  }
+
   if (args.command === "decisions:resolve") {
     const id = args.positionals[0];
     if (!id) throw new Error("usage: decisions:resolve <decision-id> --resolution=<approved|rejected|needs_revision|answered|canceled>");
+    const resolvedAt = flag(args, "resolved-at", new Date().toISOString());
+    const note = flag(args, "note", "") || undefined;
     const resolved = await new DecisionStore(decisionsPath(args)).resolve(id, {
-      resolvedAt: flag(args, "resolved-at", new Date().toISOString()),
+      resolvedAt,
       resolution: decisionResolution(flag(args, "resolution", "")),
-      note: flag(args, "note", "") || undefined,
+      note,
+    });
+    await cancelRejectedApprovalPlan({
+      planStore: new OrchestratorPlanStore(orchestratorPlansPath(args)),
+      decision: resolved,
+      canceledAt: resolvedAt,
+      cancelReason: note ?? "Rejected via decisions:resolve.",
     });
     printJson(resolved);
     return;
@@ -2034,7 +2180,8 @@ async function main(): Promise<void> {
   }
 
   if (args.command === "ceo:notify") {
-    const createdAt = flag(args, "created-at", new Date().toISOString());
+    const now = new Date(flag(args, "now", new Date().toISOString()));
+    const createdAt = flag(args, "created-at", ceoNotifyPeriodStart(now));
     const snapshot = await loadCeoStatusSnapshot(args);
     printJson(await writeCeoNotificationOutbox(args, snapshot, createdAt));
     return;
@@ -2764,6 +2911,8 @@ async function main(): Promise<void> {
       "  ceo:notify",
       "  decisions:create --title=<text> --prompt=<text>",
       "  decisions:list [--pending]",
+      "  decisions:approve-latest [--note=<text>]",
+      "  decisions:reject-latest [--note=<text>]",
       "  decisions:resolve <decision-id> --resolution=<approved|rejected|needs_revision|answered|canceled>",
       "  decisions:archive <decision-id> --reason=<text>",
       "  orchestrator:question-draft --blocker=<text> [--context=<text>]",

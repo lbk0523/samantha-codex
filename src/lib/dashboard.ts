@@ -1,9 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { CeoDecisionSummary, CeoStatusItem, CeoStatusSnapshot } from "./ceo-status";
+import type { CeoStatusSnapshot } from "./ceo-status";
 import type { TaskSpec } from "./contracts";
 import type { DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
+import { buildOperatingSurfaceView, type OperatingSurfaceItem } from "./operating-surface";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import type { ProposalRecord } from "./proposal-store";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
@@ -134,13 +135,8 @@ function attentionList(items: string[]): string {
   return values.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
 }
 
-function ceoDecisionText(decision: CeoDecisionSummary): string {
-  const subject = decision.subject ? ` subject=${decision.subject}` : "";
-  return `${decision.title} (${decision.status}${subject}) - ${decision.reason}`;
-}
-
-function ceoItemText(item: CeoStatusItem): string {
-  return `${item.title} (${item.kind}:${item.id}, ${item.status})${item.detail ? ` - ${item.detail}` : ""}`;
+function surfaceItemText(item: OperatingSurfaceItem): string {
+  return item.text;
 }
 
 function ceoList<T>(items: T[], render: (item: T) => string, empty = "none", limit = 6): string {
@@ -806,7 +802,7 @@ ${rows || '<tr><td colspan="6">No run summaries found.</td></tr>'}
 function renderCeoStatus(status: CeoStatusSnapshot | undefined): string {
   if (!status) {
     return `<section class="panel">
-  <h2>CEO Status</h2>
+  <h2>Daily Review</h2>
   <div class="body facts">
     <div class="fact"><span>Overall</span><span>${badge("unknown", "neutral")}</span></div>
     <div class="fact"><span>Next safe action</span><span><code>unknown</code></span></div>
@@ -814,42 +810,53 @@ function renderCeoStatus(status: CeoStatusSnapshot | undefined): string {
 </section>`;
   }
 
-  const next = status.nextAction.command
-    ? `${status.nextAction.label}: ${status.nextAction.command}`
-    : status.nextAction.label;
+  const operating = buildOperatingSurfaceView(status);
+  const telegram = operating.primaryAction.telegramCommand ? `Telegram: ${operating.primaryAction.telegramCommand}` : "";
+  const local = operating.primaryAction.localCommand ? `Local fallback: ${operating.primaryAction.localCommand}` : "";
 
   return `<section class="panel" aria-label="CEO status review">
-  <h2>CEO Status</h2>
+  <h2>Daily Review</h2>
   <div class="body">
+    <div class="ceo-next">
+      <div><strong>${escapeHtml(operating.headline)}</strong></div>
+      <div class="muted">${escapeHtml(operating.summary)}</div>
+    </div>
     <div class="facts">
       <div class="fact"><span>Overall</span><span>${badge(status.overall, ceoOverallTone(status.overall))}</span></div>
       <div class="fact"><span>BK decisions</span><span><code>${String(status.needsDecision.length)}</code></span></div>
       <div class="fact"><span>Active work</span><span><code>${String(status.active.length)}</code></span></div>
       <div class="fact"><span>Blocked / recovery</span><span><code>${String(status.blocked.length)}</code></span></div>
+      <div class="fact"><span>Historical failures</span><span><code>${String(status.historicalFailures.length)}</code></span></div>
       <div class="fact"><span>Risks</span><span><code>${String(status.risks.length)}</code></span></div>
     </div>
     <div class="ceo-grid">
       <div class="ceo-block">
         <h3>BK Decisions</h3>
-        <ul class="ceo-list">${ceoList(status.needsDecision, ceoDecisionText)}</ul>
+        <ul class="ceo-list">${ceoList(operating.sections.needsDecision, surfaceItemText)}</ul>
       </div>
       <div class="ceo-block">
         <h3>Active Work</h3>
-        <ul class="ceo-list">${ceoList(status.active, ceoItemText)}</ul>
+        <ul class="ceo-list">${ceoList(operating.sections.active, surfaceItemText)}</ul>
       </div>
       <div class="ceo-block">
         <h3>Blockers</h3>
-        <ul class="ceo-list">${ceoList(status.blocked, ceoItemText)}</ul>
+        <ul class="ceo-list">${ceoList(operating.sections.blocked, surfaceItemText)}</ul>
+      </div>
+      <div class="ceo-block">
+        <h3>Historical Failures</h3>
+        <ul class="ceo-list">${ceoList(operating.sections.historicalFailures, surfaceItemText)}</ul>
       </div>
       <div class="ceo-block">
         <h3>Risks</h3>
-        <ul class="ceo-list">${ceoList(status.risks, (risk) => risk)}</ul>
+        <ul class="ceo-list">${ceoList(operating.sections.risks, (risk) => risk)}</ul>
       </div>
       <div class="ceo-block">
         <h3>Next Safe Action</h3>
         <div class="ceo-next">
-          <div>${escapeHtml(next)}</div>
-          <div class="muted">${escapeHtml(status.nextAction.reason)}</div>
+          <div>${escapeHtml(operating.primaryAction.label)}</div>
+          ${telegram ? `<div><code>${escapeHtml(telegram)}</code></div>` : ""}
+          ${local ? `<div><code>${escapeHtml(local)}</code></div>` : ""}
+          <div class="muted">${escapeHtml(operating.primaryAction.reason)}</div>
         </div>
       </div>
     </div>

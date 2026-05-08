@@ -12,6 +12,55 @@ async function makeRoot(): Promise<string> {
   return root;
 }
 
+async function processInbox(input: {
+  state: string;
+  inbox: string;
+  outbox: string;
+  archive: string;
+}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const proc = Bun.spawn(
+    [
+      "bun",
+      "run",
+      "src/samantha.ts",
+      "inbox:process",
+      `--state-dir=${input.state}`,
+      `--inbox-dir=${input.inbox}`,
+      `--outbox-dir=${input.outbox}`,
+      `--archive-dir=${input.archive}`,
+    ],
+    { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+  );
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { stdout, stderr, exitCode };
+}
+
+function planRecord(id: string, status = "planned"): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    id,
+    requestId: `request-${id}`,
+    status,
+    createdAt: "2026-05-07T10:59:00.000Z",
+    completedAt: "2026-05-07T10:59:30.000Z",
+    payload: {
+      summary: `Plan ${id}`,
+      assumptions: [],
+      questions: [],
+      scope: ["dispatch"],
+      nonScope: [],
+      risks: [],
+      tasks: [],
+      batches: [],
+      userMessage: "Plan ready.",
+    },
+  };
+}
+
 afterEach(async () => {
   await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
   tmpRoots = [];
@@ -35,6 +84,7 @@ describe("remote approval inbox flow", () => {
       createdAt: "2026-05-07T11:00:00.000Z",
     });
     await writeFile(join(state, "decisions.jsonl"), `${JSON.stringify(decision)}\n`, "utf8");
+    await writeFile(join(state, "orchestrator-plans.jsonl"), `${JSON.stringify(planRecord("plan-mobile-approval"))}\n`, "utf8");
     await writeFile(
       join(inbox, "remote-approve.json"),
       JSON.stringify({
@@ -80,7 +130,7 @@ describe("remote approval inbox flow", () => {
     });
   });
 
-  test("redirects Telegram approval when more than one decision is pending", async () => {
+  test("redirects Telegram approval when more than one current plan decision is pending", async () => {
     const root = await makeRoot();
     const state = join(root, "state");
     const inbox = join(root, "inbox");
@@ -99,6 +149,11 @@ describe("remote approval inbox flow", () => {
       }),
     );
     await writeFile(join(state, "decisions.jsonl"), decisions.map((decision) => JSON.stringify(decision)).join("\n") + "\n", "utf8");
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      [planRecord("plan-0"), planRecord("plan-1")].map((item) => JSON.stringify(item)).join("\n") + "\n",
+      "utf8",
+    );
     await writeFile(
       join(inbox, "remote-approve.json"),
       JSON.stringify({ id: "remote-approve", type: "decisions:approve-latest", args: { source: "remote" } }),
@@ -121,10 +176,157 @@ describe("remote approval inbox flow", () => {
     await proc.exited;
 
     const report = await readFile(join(outbox, "remote-approve.md"), "utf8");
-    expect(report).toContain("Telegram approval is only allowed when exactly one plan approval decision is pending.");
+    expect(report).toContain("Telegram approval is only allowed when exactly one current plan approval decision is pending.");
     expect(report).toContain("CLI 또는 dashboard");
     expect(report).not.toContain("decision-");
-    const raw = await readFile(join(state, "decisions.jsonl"), "utf8");
-    expect(raw).not.toContain('"status":"resolved"');
+    const records = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { id: string; status: string; resolution?: string });
+    expect(records).toEqual([
+      expect.objectContaining({ id: decisions[0]?.id, status: "pending" }),
+      expect.objectContaining({ id: decisions[1]?.id, status: "pending" }),
+    ]);
+  });
+
+  test("rejects the latest current pending plan decision and closes the plan", async () => {
+    const root = await makeRoot();
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    await mkdir(state, { recursive: true });
+    await mkdir(inbox, { recursive: true });
+    const decision = createDecisionItem({
+      title: "Review plan: Reject me",
+      prompt: "Approve, revise, or cancel before dispatch.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-reject-me" },
+      createdAt: "2026-05-07T11:00:00.000Z",
+    });
+    await writeFile(join(state, "decisions.jsonl"), `${JSON.stringify(decision)}\n`, "utf8");
+    await writeFile(join(state, "orchestrator-plans.jsonl"), `${JSON.stringify(planRecord("plan-reject-me"))}\n`, "utf8");
+    await writeFile(
+      join(inbox, "remote-reject.json"),
+      JSON.stringify({
+        id: "remote-reject",
+        type: "decisions:reject-latest",
+        args: { source: "remote", receivedAt: "2026-05-07T11:03:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    expect(await processInbox({ state, inbox, outbox, archive })).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "remote-reject.md"), "utf8");
+    expect(report).toContain("# reject");
+    expect(report).toContain("텔레그램: `/now`");
+    expect(report).not.toContain(decision.id);
+    const records = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { status: string; resolution?: string; resolutionNote?: string });
+    expect(records[0]).toMatchObject({
+      status: "resolved",
+      resolution: "rejected",
+      resolutionNote: "Rejected via latest decision command.",
+    });
+    const plans = (await readFile(join(state, "orchestrator-plans.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { status: string; canceledAt?: string; cancelReason?: string });
+    expect(plans[0]).toMatchObject({
+      status: "canceled",
+      canceledAt: "2026-05-07T11:03:00.000Z",
+      cancelReason: "Rejected via latest decision command.",
+    });
+
+    await writeFile(
+      join(inbox, "remote-go.json"),
+      JSON.stringify({
+        id: "remote-go",
+        type: "actions:go",
+        args: { source: "remote", receivedAt: "2026-05-07T11:04:00.000Z" },
+      }),
+      "utf8",
+    );
+    expect(await processInbox({ state, inbox, outbox, archive })).toMatchObject({ exitCode: 0 });
+    const goReport = await readFile(join(outbox, "remote-go.md"), "utf8");
+    expect(goReport).toContain("# go");
+    expect(goReport).toContain("승인할 오케스트레이터 계획이나 진행할 통합 gate가 없습니다.");
+    expect(goReport).not.toContain("decision-required");
+    expect(goReport).not.toContain("/approve");
+    expect(goReport).not.toContain("오케스트레이터 계획이 생성되어 검토를 기다리고 있습니다.");
+  });
+
+  test("no-ops when no current pending decision exists", async () => {
+    const root = await makeRoot();
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    await mkdir(state, { recursive: true });
+    await mkdir(inbox, { recursive: true });
+    const stale = createDecisionItem({
+      title: "Review plan: Stale approval",
+      prompt: "Approve, revise, or cancel before dispatch.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-stale" },
+      createdAt: "2026-05-07T11:00:00.000Z",
+    });
+    const resolved = {
+      ...createDecisionItem({
+        title: "Review plan: Already approved",
+        prompt: "Approve, revise, or cancel before dispatch.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: "plan-resolved" },
+        createdAt: "2026-05-07T11:01:00.000Z",
+      }),
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedAt: "2026-05-07T11:02:00.000Z",
+      resolvedBy: "bk" as const,
+    };
+    await writeFile(join(state, "decisions.jsonl"), [stale, resolved].map((item) => JSON.stringify(item)).join("\n") + "\n", "utf8");
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      [planRecord("plan-stale", "canceled"), planRecord("plan-resolved", "planned")].map((item) => JSON.stringify(item)).join("\n") + "\n",
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "remote-approve.json"),
+      JSON.stringify({ id: "remote-approve", type: "decisions:approve-latest", args: { source: "remote" } }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    await proc.exited;
+
+    const report = await readFile(join(outbox, "remote-approve.md"), "utf8");
+    expect(report).toContain("승인할 현재 pending 계획 결정이 없습니다.");
+    expect(report).not.toContain("decision-");
+    const records = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { id: string; status: string; resolution?: string });
+    expect(records).toEqual([
+      expect.objectContaining({ id: stale.id, status: "pending" }),
+      expect.objectContaining({ id: resolved.id, status: "resolved", resolution: "approved" }),
+    ]);
   });
 });

@@ -1,11 +1,17 @@
 import type { TaskSpec } from "./contracts";
-import type { DecisionItem } from "./decision-store";
+import {
+  decisionAllowsOrchestratorMaterialization,
+  decisionHasCurrentPlanSubject,
+  decisionLifecycleStatus,
+  type DecisionItem,
+} from "./decision-store";
 import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "./orchestrator-store";
 import type { RemoteActionRecord } from "./remote-action-store";
 import { recoveryResolvedPlanIds } from "./recovery-continuity";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
+import { buildOperatingSurfaceView } from "./operating-surface";
 
 export type CeoOverall = "idle" | "active" | "needs_decision" | "blocked" | "failed" | "needs_recovery";
 
@@ -34,6 +40,7 @@ export interface CeoDecisionSummary {
   reason: string;
   updatedAt?: string;
   subject?: string;
+  options?: string[];
 }
 
 export type CeoNextActionKind =
@@ -65,6 +72,7 @@ export interface CeoStatusSnapshot {
   completed: CeoStatusItem[];
   active: CeoStatusItem[];
   blocked: CeoStatusItem[];
+  historicalFailures: CeoStatusItem[];
   needsDecision: CeoDecisionSummary[];
   risks: string[];
   nextAction: CeoNextAction;
@@ -161,6 +169,20 @@ function decisionSubjectText(decision: DecisionItem): string | undefined {
   return decision.subject ? `${decision.subject.type}:${decision.subject.id}` : undefined;
 }
 
+function decisionSubjectKey(decision: DecisionItem): string | undefined {
+  return decisionSubjectText(decision);
+}
+
+function latestDecisionBySubject(decisions: DecisionItem[]): Map<string, DecisionItem> {
+  const bySubject = new Map<string, DecisionItem>();
+  for (const decision of decisions) {
+    const subject = decisionSubjectKey(decision);
+    if (!subject || decision.status === "archived") continue;
+    bySubject.set(subject, decision);
+  }
+  return bySubject;
+}
+
 function taskItem(task: TaskSpec): CeoStatusItem {
   return {
     kind: "task",
@@ -222,7 +244,9 @@ function nextActionForIntegration(input: {
 function chooseNextAction(input: {
   active: CeoStatusItem[];
   blocked: CeoStatusItem[];
+  historicalFailures: CeoStatusItem[];
   needsDecision: CeoDecisionSummary[];
+  approvedPlans: CeoStatusItem[];
   actions: RemoteActionRecord[];
   tasks: TaskSpec[];
   orchestrationRequests: OrchestrationRequestRecord[];
@@ -231,10 +255,13 @@ function chooseNextAction(input: {
 }): CeoNextAction {
   const latestDecision = input.needsDecision[0];
   if (latestDecision?.kind === "decision") {
+    const command = latestDecision.options?.includes("approve")
+      ? "bun run samantha decisions:approve-latest"
+      : "bun run samantha decisions:list --pending";
     return {
       kind: "resolve_decision",
-      label: "Resolve the pending BK decision",
-      command: `bun run samantha decisions:resolve ${latestDecision.id} --resolution=approved --note=<note>`,
+      label: "Resolve the latest pending BK decision",
+      command,
       targetId: latestDecision.id,
       reason: latestDecision.reason,
     };
@@ -255,6 +282,17 @@ function chooseNextAction(input: {
       command: "/go or /revise <feedback>",
       targetId: latestDecision.id,
       reason: latestDecision.reason,
+    };
+  }
+
+  const approvedPlan = input.approvedPlans[0];
+  if (approvedPlan) {
+    return {
+      kind: "review_plan",
+      label: "Materialize the approved orchestrator plan",
+      command: "/go",
+      targetId: approvedPlan.id,
+      reason: "BK approved the plan decision; Samantha can now create gated worker actions.",
     };
   }
 
@@ -329,6 +367,16 @@ function chooseNextAction(input: {
     };
   }
 
+  if (input.historicalFailures.length > 0) {
+    return {
+      kind: "recover",
+      label: "Review unresolved historical failure",
+      command: "/problems",
+      targetId: input.historicalFailures[0]?.id,
+      reason: input.historicalFailures[0]?.detail ?? "Historical failed work remains unresolved.",
+    };
+  }
+
   return {
     kind: "none",
     label: "No safe action required",
@@ -339,15 +387,17 @@ function chooseNextAction(input: {
 function chooseOverall(input: {
   active: CeoStatusItem[];
   blocked: CeoStatusItem[];
+  historicalFailures: CeoStatusItem[];
   needsDecision: CeoDecisionSummary[];
-  needsRecovery: boolean;
+  currentNeedsRecovery: boolean;
   ops?: OpsSnapshot;
 }): CeoOverall {
-  if (input.needsRecovery) return "needs_recovery";
+  if (input.currentNeedsRecovery) return "needs_recovery";
   if (input.needsDecision.length > 0) return "needs_decision";
   if (input.ops?.failures.length) return "failed";
   if (input.blocked.length > 0) return "blocked";
   if (input.active.length > 0) return "active";
+  if (input.historicalFailures.length > 0) return "needs_recovery";
   return "idle";
 }
 
@@ -375,6 +425,25 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
       .flatMap((plan) => plan.taskIds ?? []),
   );
   const actionTaskIds = new Set(actions.map((action) => action.taskId));
+  const decisionsBySubject = latestDecisionBySubject(decisions);
+  const activePendingDecisions = decisions.filter(
+    (decision) => decision.status === "pending" && decisionHasCurrentPlanSubject(decision, orchestratorPlans),
+  );
+  const decisionSubjectKeys = new Set(decisionsBySubject.keys());
+
+  const approvedPlans = sortRecent(
+    orchestratorPlans
+      .filter((plan) => plan.status === "planned")
+      .filter((plan) => decisionAllowsOrchestratorMaterialization(decisionsBySubject.get(`orchestrator_plan:${plan.id}`)))
+      .map((plan) => ({
+        kind: "orchestrator_plan" as const,
+        id: plan.id,
+        title: oneLine(plan.payload?.summary ?? plan.requestId),
+        status: plan.status,
+        updatedAt: planUpdatedAt(plan),
+        detail: "approved; waiting for materialization",
+      })),
+  );
 
   const active: CeoStatusItem[] = [
     ...actions
@@ -400,30 +469,31 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
         updatedAt: request.createdAt,
         detail: "waiting for plan",
       })),
+    ...approvedPlans,
   ];
 
   const pendingDecisionSubjectKeys = new Set(
-    decisions
-      .filter((decision) => decision.status === "pending")
+    activePendingDecisions
       .map((decision) => decisionSubjectText(decision))
       .filter((value): value is string => Boolean(value)),
   );
 
   const needsDecision: CeoDecisionSummary[] = sortRecent([
-    ...decisions
-      .filter((decision) => decision.status === "pending")
+    ...activePendingDecisions
       .map((decision) => ({
         kind: "decision" as const,
         id: decision.id,
         title: decision.title,
-        status: decision.status,
+        status: decisionLifecycleStatus(decision),
         reason: decision.prompt,
         updatedAt: decisionUpdatedAt(decision),
         subject: decisionSubjectText(decision),
+        options: decision.options,
       })),
     ...orchestratorPlans
       .filter((plan) => plan.status === "planned" || plan.status === "questions")
       .filter((plan) => !pendingDecisionSubjectKeys.has(`orchestrator_plan:${plan.id}`))
+      .filter((plan) => !decisionSubjectKeys.has(`orchestrator_plan:${plan.id}`))
       .map((plan) => ({
         kind: "orchestrator_plan" as const,
         id: plan.id,
@@ -438,7 +508,10 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
   ]);
 
   const failedActions = actions.filter((action) => actionNeedsRecovery(action) && !resolvedActionIds.has(action.id));
-  const failedRuns = runs.filter((run) => !run.pass && !resolvedTaskIds.has(run.taskId));
+  const archivedTaskIds = new Set(tasks.filter((task) => task.status === "archived").map((task) => task.id));
+  const failedRuns = runs.filter(
+    (run) => !run.pass && !resolvedTaskIds.has(run.taskId) && !archivedTaskIds.has(run.taskId),
+  );
   const failedPlans = orchestratorPlans.filter((plan) => planNeedsRecovery(plan) && !resolvedPlanIds.has(plan.id));
   const blockedTasks = tasks.filter((task) => task.status === "blocked" || task.status === "failed");
 
@@ -459,9 +532,10 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
       updatedAt: planUpdatedAt(plan),
       detail: blockedPlanDetail(plan),
     })),
-    ...failedRuns.map(runItem),
     ...blockedTasks.map(taskItem),
   ];
+
+  const historicalFailures = failedRuns.map(runItem);
 
   const completed = sortRecent([
     ...actions
@@ -481,7 +555,6 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
   const integration = latestRunNeedingIntegration(runs, lifecycles);
   const risks = unique([
     ...failedActions.map((action) => `Failed action ${action.id}: ${action.result?.failure ?? action.result?.outcome ?? action.status}`),
-    ...failedRuns.map((run) => `Failed run ${run.runId}: ${run.failureReason ?? run.outcome}`),
     ...failedPlans.map((plan) => `Plan needs recovery ${plan.id}: ${blockedPlanDetail(plan)}`),
     ...orchestratorPlans
       .filter((plan) => plan.status === "planned" || plan.status === "questions")
@@ -489,14 +562,18 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     ...decisions.filter((decision) => decision.status === "pending").map((decision) => decision.risk ?? ""),
     ...(input.ops?.failures ?? []),
     ...(input.ops?.warnings ?? []),
+    ...failedRuns.map((run) => `Historical failed run ${run.runId}: ${run.failureReason ?? run.outcome}`),
   ]);
 
   const sortedActive = sortRecent(active);
   const sortedBlocked = sortRecent(blocked);
+  const sortedHistoricalFailures = sortRecent(historicalFailures);
   const nextAction = chooseNextAction({
     active: sortedActive,
     blocked: sortedBlocked,
+    historicalFailures: sortedHistoricalFailures,
     needsDecision,
+    approvedPlans,
     actions,
     tasks,
     orchestrationRequests,
@@ -509,13 +586,15 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     overall: chooseOverall({
       active: sortedActive,
       blocked: sortedBlocked,
+      historicalFailures: sortedHistoricalFailures,
       needsDecision,
-      needsRecovery: failedActions.length > 0 || failedRuns.length > 0 || failedPlans.length > 0,
+      currentNeedsRecovery: failedActions.length > 0 || failedPlans.length > 0,
       ops: input.ops,
     }),
     completed,
     active: sortedActive,
     blocked: sortedBlocked,
+    historicalFailures: sortedHistoricalFailures,
     needsDecision,
     risks,
     nextAction,
@@ -528,9 +607,9 @@ function formatItem(item: CeoStatusItem): string {
 }
 
 function formatDecision(item: CeoDecisionSummary): string {
-  const subject = item.subject ? ` subject=${item.subject}` : "";
   const prefix = item.kind === "decision" ? "Decision" : "Plan";
-  return `- ${prefix}: ${item.title} (${item.id}, ${item.status}${subject}) - ${item.reason}`;
+  const options = item.options?.length ? ` options=${item.options.join("/")}` : "";
+  return `- ${prefix}: ${item.title} (${item.status}${options}) - ${item.reason}`;
 }
 
 function formatSection<T>(items: T[], render: (item: T) => string, empty: string): string[] {
@@ -541,19 +620,24 @@ export function formatCeoStatusReport(
   snapshot: CeoStatusSnapshot,
   options: FormatCeoStatusReportOptions = {},
 ): string {
+  const view = buildOperatingSurfaceView(snapshot);
   const completed = snapshot.completed.slice(0, options.completedLimit ?? snapshot.completed.length);
-  const next = snapshot.nextAction.command
-    ? `${snapshot.nextAction.label}: ${snapshot.nextAction.command}`
-    : snapshot.nextAction.label;
 
   return [
     "# ceo:status",
     "",
     `Generated: ${snapshot.generatedAt}`,
     `Overall: ${snapshot.overall}`,
-    `Summary: decisions=${snapshot.needsDecision.length} active=${snapshot.active.length} blocked=${snapshot.blocked.length} completed=${snapshot.completed.length} risks=${snapshot.risks.length}`,
+    `Summary: ${view.summary}`,
+    `Headline: ${view.headline}`,
     "",
-    "BK decisions:",
+    "Next safe action:",
+    `- ${view.primaryAction.label}`,
+    view.primaryAction.telegramCommand ? `- Telegram: ${view.primaryAction.telegramCommand}` : "",
+    view.primaryAction.localCommand ? `- Local fallback: ${view.primaryAction.localCommand}` : "",
+    `- Reason: ${view.primaryAction.reason}`,
+    "",
+    "Needs BK:",
     ...formatSection(snapshot.needsDecision, formatDecision, "none"),
     "",
     "Active work:",
@@ -562,14 +646,13 @@ export function formatCeoStatusReport(
     "Blocked / recovery:",
     ...formatSection(snapshot.blocked, formatItem, "none"),
     "",
+    "Historical failures:",
+    ...formatSection(snapshot.historicalFailures, formatItem, "none"),
+    "",
     "Completed work:",
     ...formatSection(completed, formatItem, "none"),
     "",
     "Risks:",
     ...(snapshot.risks.length ? snapshot.risks.map((risk) => `- ${risk}`) : ["- none"]),
-    "",
-    "Next safe action:",
-    `- ${next}`,
-    `- Reason: ${snapshot.nextAction.reason}`,
-  ].join("\n");
+  ].filter((line) => line !== "").join("\n");
 }

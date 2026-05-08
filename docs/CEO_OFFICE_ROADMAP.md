@@ -1,8 +1,26 @@
 # CEO Office Roadmap
 
-Last updated: 2026-05-07
+Last updated: 2026-05-08
 
-## Ultimate Goal
+## Purpose
+
+This document is the long-range roadmap for Samantha's Deterministic CEO
+Office. It should answer:
+
+- where Samantha is going
+- which product phase is current
+- what must be true before moving to the next phase
+- where detailed execution stages live
+
+Detailed implementation stages do not belong in this roadmap. Each roadmap
+phase gets its own execution document when that phase is reached.
+
+Terminology:
+
+- Roadmap phase: a major product maturity step toward the north star.
+- Execution stage: the concrete stage list inside a phase-specific document.
+
+## North Star
 
 Build Samantha into BK's personal development operations control plane.
 
@@ -13,10 +31,12 @@ BK
   = founder, final decision maker
 
 Deterministic CEO Office
-  = durable operating system for work state, reporting, queues, approvals, schedules, safety gates, dispatch, and audit
+  = durable operating system for work state, reporting, queues, approvals,
+    schedules, safety gates, dispatch, recovery, and audit
 
 Bounded LLM Agents
-  = planners, synthesizers, reviewers, evaluators, researchers, content agents, operations agents, and coding agents called only for bounded work
+  = planners, synthesizers, reviewers, evaluators, researchers, content agents,
+    operations agents, and coding agents called only for bounded work
 ```
 
 Samantha should let BK periodically receive a clear company-style report:
@@ -28,300 +48,270 @@ Samantha should let BK periodically receive a clear company-style report:
 - what risks exist
 - what Samantha recommends next
 
-Samantha should then execute only the approved, safe next steps through deterministic gates. LLMs may propose and summarize, but durable state and operational authority stay in TypeScript code.
+Samantha should then execute only approved, safe next steps through
+deterministic gates. LLMs may propose and summarize, but durable state and
+operational authority stay in TypeScript code.
 
-## Success Shape
+North-star criteria are tracked in [NORTH_STAR.md](NORTH_STAR.md).
 
-Samantha is successful when BK can run real product work through one operating surface without personally tracking every worker, task id, run id, branch, and recovery path.
+## Phase Documents
 
-The stable product should support:
+- Phase 1 execution spec: [MVP_IMPLEMENTATION.md](MVP_IMPLEMENTATION.md)
+- Phase 2 execution spec: [MVP_HARDENING.md](MVP_HARDENING.md)
+- Phase 3 execution spec:
+  [OPERATING_SURFACE_CONSOLIDATION.md](OPERATING_SURFACE_CONSOLIDATION.md)
+- North-star criteria: [NORTH_STAR.md](NORTH_STAR.md)
 
-- periodic and on-demand CEO reports
-- structured task, run, action, and decision state
-- approval gates for risky or ambiguous work
-- bounded LLM planning and synthesis
-- role-aware specialist agents
-- one safe writer at first, with parallel non-writers
-- audit logs that explain what happened after the fact
-- CLI and dashboard as the primary review surfaces
-- Telegram as a compact notification and approval adapter
+Future phase execution specs should be added only when Samantha reaches that
+phase. Until then, this roadmap should keep those phases at objective and exit
+criteria level.
 
-## Work Stages
+## Roadmap
 
-### Stage 1: CEO Status Snapshot And Report
+### 1. MVP Implementation
 
-Goal: create the first useful CEO report from existing stores.
+Status: implemented as the first Stage 1-9 MVP slice.
 
-This stage should aggregate current state from task, run, action, orchestration, lifecycle, daemon, and diagnostics stores into one deterministic status snapshot. The report should make BK's next decision obvious without requiring internal ids.
+Objective: prove that a deterministic CEO Office can aggregate state, create
+BK-facing reports, hold decisions, run bounded orchestration, dispatch safe
+worker tasks, and notify BK without making Telegram the primary workspace.
 
-Deliverables:
+Exit criteria:
 
-- canonical status snapshot type
-- deterministic report formatter
-- CLI command for the CEO report
-- tests with empty, active, blocked, failed, and decision-needed states
-- no new remote commands required
+- CEO status snapshot and report exist.
+- BK decision queue exists.
+- CLI and dashboard can show current operating state.
+- Bounded orchestrator calls are validated before state mutation.
+- Specialist report-only roles can be represented.
+- Recovery context exists for failed plans and failed runs.
+- Telegram is a compact notification and approval adapter.
+- Ubuntu host automation can generate scheduled CEO reports.
+- Writer cap remains `1`; non-writer parallelism has initial evidence.
 
-### Stage 2: BK Decision Queue
+Detailed stages: [MVP_IMPLEMENTATION.md](MVP_IMPLEMENTATION.md).
 
-Goal: make "BK must decide" a first-class state instead of burying it in prose reports.
+### 2. MVP Hardening
 
-Deliverables:
+Status: implemented.
 
-- file-backed decision queue
-- decision item contract
-- create, list, resolve, and archive operations
-- report section ordered before optional details
-- deterministic rule that risky or unclear actions wait for a decision
+Objective: make the implemented MVP reliable enough for real daily dogfood.
+This phase should reduce report noise, harden decision behavior, make
+notifications idempotent, improve recovery clarity, and verify Ubuntu host
+operation.
 
-### Stage 3: Dashboard And CLI Operating Surface
+Exit criteria:
 
-Goal: make the local/Tailscale operating surface useful for long review.
+- CEO reports distinguish current actionable blockers from historical failures.
+- Pending BK decisions are impossible to miss and safe to resolve remotely.
+- Periodic notifications are idempotent and auditable.
+- CLI and dashboard are useful for long review sessions.
+- Recovery reports make the next safe action obvious.
+- Ubuntu host automation diagnostics cover the CEO notification loop.
+- Writer cap remains `1`; any parallelism expansion remains evidence-gated.
 
-Deliverables:
+Detailed stages: [MVP_HARDENING.md](MVP_HARDENING.md).
 
-- dashboard section for active work, blockers, decisions, and next action
-- CLI report command suitable for daily use
-- compact text output reusable by adapters
-- no write controls in dashboard yet
+### 3. Operating Surface Consolidation
 
-### Stage 4: Bounded Orchestrator Calls
+Status: implemented.
 
-Goal: use LLMs only where judgment or language synthesis helps.
+Objective: make one operating surface feel like the real "CEO office" instead
+of a collection of commands, files, dashboard pages, and Telegram messages.
 
-Deliverables:
+Likely scope:
 
-- bounded planning calls for requests that need decomposition
-- bounded synthesis calls for completed plans
-- bounded question-drafting calls for ambiguous blockers
-- deterministic validation before any output mutates state
+- unified daily review flow
+- dashboard-first long review
+- Telegram-first compact approval
+- CLI as precise operator fallback
+- consistent wording across report, dashboard, and Telegram adapters
+- reduced reliance on raw ids for normal operation
 
-### Stage 5: Role-Aware Specialist Agents
+Exit criteria:
 
-Goal: let Samantha choose specialist non-writer agents before or alongside a single writer.
+- BK can understand current work from one surface in under a minute.
+- Every displayed next action maps to a deterministic command or approval.
+- Dashboard and Telegram present the same core state with different density.
+- Internal ids remain available for audit, but are not required for routine use.
 
-Deliverables:
+Detailed stages:
+[OPERATING_SURFACE_CONSOLIDATION.md](OPERATING_SURFACE_CONSOLIDATION.md).
 
-- codex-reviewer, codex-evaluator, and codex-spec report-only tasks
-- writer tasks still serialized under writer cap `1`
-- plan reports that explain role outcomes without raw ids
-- no multi-writer execution until dogfood evidence supports it
+### 4. Planning And Delegation Maturity
 
-### Stage 6: Recovery And Continuity
+Status: planned.
 
-Goal: make failures recoverable without blind retries or state confusion.
+Objective: improve bounded planning quality while keeping the deterministic CEO
+Office in control of durable state and safety gates.
 
-Deliverables:
+Likely scope:
 
-- failed-plan recovery context
-- canonical repo-root recovery tasks
-- stale task/archive rules
-- reports that say whether recovery fixed the original problem
+- better request classification
+- explicit plan alternatives and tradeoffs
+- better worker task decomposition
+- clearer prerequisite and dependency handling
+- bounded synthesis of completed work
+- bounded ambiguity-question drafting
+- role-specific reviewer, evaluator, spec, research, content, operations, and
+  coding profiles
 
-### Stage 7: Remote Notification And Approval Adapters
+Exit criteria:
 
-Goal: let BK receive and approve compact updates from mobile without turning mobile into the workspace.
+- Samantha can create useful plans for ambiguous work without immediately
+  dispatching unsafe tasks.
+- Plan materialization remains deterministic and validated.
+- Worker prompts are role-aware and narrow.
+- Failed or incomplete plans produce actionable recovery paths.
 
-Deliverables:
+Execution stages: write a phase-specific document when this phase begins.
 
-- Telegram report notification
-- Telegram decision approval or redirect
-- compact status checks
-- no arbitrary shell commands, repo paths, or internal id workflows
+### 5. Safety, Audit, And Governance
 
-### Stage 8: Host Automation And Periodic Reports
+Status: planned.
 
-Goal: make the Ubuntu Samantha host operate continuously.
+Objective: make Samantha trustworthy for larger and riskier work by improving
+traceability, policy enforcement, and post-fact review.
 
-Deliverables:
+Likely scope:
 
-- scheduled CEO report generation
-- daemon health checks
-- outbox delivery policy
-- audit trail for generated reports and delivered notifications
+- stronger safety policy contracts
+- explicit risk classification
+- richer audit trails for decisions, actions, runs, merges, pushes, and cleanup
+- immutable event views
+- operator review reports
+- policy tests for dangerous transitions
+- rollback and recovery drills
 
-### Stage 9: Parallelism Expansion By Evidence
+Exit criteria:
 
-Goal: expand only after the safety model proves itself.
+- A completed work item can be reconstructed from request to final state.
+- Unsafe transitions are blocked before execution.
+- BK can see who or what approved each risky transition.
+- Recovery and rollback paths are documented and dogfooded.
 
-Deliverables:
+Execution stages: write a phase-specific document when this phase begins.
 
-- parallel non-writer confidence
-- explicit dogfood evidence before writer cap > 1
-- merge and cleanup gates that remain deterministic
-- documented rollback/recovery path
+### 6. Multi-Project Operations
 
-Evidence policy: `docs/PARALLELISM_EVIDENCE.md`. Stage 9 currently keeps the
-writer cap at `1`; no multi-writer behavior is enabled.
+Status: planned.
 
-## Stage 1 Implementation Plan
+Objective: let Samantha manage multiple active projects without path drift,
+state confusion, or cross-project safety leaks.
 
-Stage 1 should be implemented first. It is the smallest slice that directly advances the ultimate goal without expanding Telegram.
+Likely scope:
 
-### Assumptions
+- stronger project profile resolution
+- project-level queues and reporting
+- cross-project prioritization
+- per-project safety policies
+- shared host runtime without hard-coded local paths
+- project-specific dashboards or filters
 
-- Existing stores remain the source of truth: `state/tasks.jsonl`, `state/runs.jsonl`, `state/remote-actions.jsonl`, `state/orchestration-requests.jsonl`, `state/orchestrator-plans.jsonl`, `state/run-lifecycle.jsonl`, heartbeat, inbox, outbox, and diagnostics state.
-- The first CEO report is read-only. It should not dispatch, approve, merge, push, cleanup, or mutate state.
-- The first report can be deterministic. LLM synthesis can be added later after the structure is proven.
-- Telegram can reuse the compact report later, but Stage 1 should target CLI and dashboard first.
+Exit criteria:
 
-### Proposed Files
+- BK can ask what matters across projects and get one ranked answer.
+- Project state is isolated where needed and aggregated where useful.
+- Remote commands cannot accidentally operate on the wrong project.
+- Host runtime remains portable between Mac client and Ubuntu automation host.
 
-Add:
+Execution stages: write a phase-specific document when this phase begins.
 
-- `src/lib/ceo-status.ts`
-- `tests/ceo-status.test.ts`
+### 7. Evidence-Based Parallelism Expansion
 
-Update:
+Status: planned.
 
-- `src/samantha.ts`
-- `src/lib/operator-reports.ts`
-- `src/lib/dashboard.ts`
-- `tests/operator-reports.test.ts`
-- `tests/operations.test.ts`
-- `docs/NEXT_PLAN.md`
+Objective: expand parallel execution only when dogfood evidence proves that the
+safety model can handle it.
 
-### Data Model
+Likely scope:
 
-Create a `CeoStatusSnapshot` type with at least:
+- stronger non-writer parallel reports
+- evidence ledger for successful parallel runs
+- conflict detection before considering writer cap changes
+- merge queue and cleanup reliability
+- explicit rollback plans
+- possible writer cap increase only after evidence review
 
-```ts
-interface CeoStatusSnapshot {
-  generatedAt: string;
-  overall: "idle" | "active" | "needs_decision" | "blocked" | "failed" | "needs_recovery";
-  completed: CeoStatusItem[];
-  active: CeoStatusItem[];
-  blocked: CeoStatusItem[];
-  needsDecision: CeoDecisionSummary[];
-  risks: string[];
-  nextAction: CeoNextAction;
-}
-```
+Exit criteria:
 
-Keep this model derived from existing records. Do not duplicate task or run data into another state file in Stage 1.
+- Parallel non-writer work is routine and auditable.
+- Writer cap changes have explicit evidence and BK approval.
+- Merge and cleanup gates remain deterministic under higher load.
+- Rollback behavior has been tested before any multi-writer enablement.
 
-### Aggregation Rules
+Evidence policy: [PARALLELISM_EVIDENCE.md](PARALLELISM_EVIDENCE.md).
 
-Build a pure function that accepts already-loaded records and returns `CeoStatusSnapshot`.
+Execution stages: write a phase-specific document when this phase begins.
 
-Initial rules:
+### 8. Context And Knowledge Memory
 
-- running, approved, waiting, and pending actions count as active work
-- failed actions or failed plan synthesis create blocked or needs-recovery entries
-- planned or question-status orchestrator plans create decision-needed entries
-- pending orchestration requests create next action `/plan`
-- passed runs with unmerged commits create next action for merge gate
-- failed runs surface risk and recovery context
-- no active work and no decisions means `overall: "idle"`
+Status: planned.
 
-### Report Formatter
+Objective: give Samantha durable project memory so BK does not have to restate
+strategic context, product decisions, recurring preferences, or known risks.
 
-Add a deterministic formatter that prints:
+Likely scope:
 
-```text
-# ceo:status
+- durable project briefs
+- decision history summaries
+- recurring preference capture
+- product strategy context
+- searchable reports and artifacts
+- bounded memory synthesis with deterministic write gates
 
-Overall: needs_decision
+Exit criteria:
 
-Needs BK:
-- ...
+- Samantha can cite prior decisions when planning new work.
+- Memory updates are explicit, reviewable, and reversible.
+- LLM-generated summaries cannot silently overwrite source-of-truth state.
+- BK can ask why a recommendation was made and trace it to stored context.
 
-Active:
-- ...
+Execution stages: write a phase-specific document when this phase begins.
 
-Blocked:
-- ...
+### 9. Continuous 24/7 Operations
 
-Completed:
-- ...
+Status: planned.
 
-Risks:
-- ...
+Objective: make Samantha operate continuously with minimal manual host care.
 
-Next:
-- ...
-```
+Likely scope:
 
-Order must be stable:
+- robust host service installation and upgrades
+- watchdog and self-diagnostics
+- queue backpressure
+- notification throttling
+- backup and restore
+- host migration notes
+- failure-mode drills
 
-1. overall
-2. BK decisions
-3. active work
-4. blockers/recovery
-5. recent completed work
-6. risks
-7. next safe action
+Exit criteria:
 
-### CLI Command
+- Samantha can run for long periods on the Ubuntu host without manual babysitting.
+- Host failures produce actionable reports instead of silent stalls.
+- State can be backed up, restored, and audited.
+- BK can recover the system from another machine with documented steps.
 
-Add:
+Execution stages: write a phase-specific document when this phase begins.
 
-```bash
-bun run samantha ceo:status
-```
+### 10. North Star Achieved
 
-The command should read existing stores and print the deterministic CEO report.
+Status: target.
 
-Optional flags:
+Objective: Samantha functions as BK's personal development operations control
+plane across planning, execution, reporting, recovery, and audit.
 
-- `--json` prints the raw `CeoStatusSnapshot`
-- `--limit=<n>` limits completed/recent items
+Exit criteria:
 
-Do not add a Telegram command in this stage.
+- BK can run real product work through Samantha without tracking worker ids,
+  branches, run logs, or recovery paths manually.
+- Samantha gives periodic company-style reports and asks for BK decisions only
+  when needed.
+- Deterministic gates own all durable state transitions.
+- Bounded LLM agents improve judgment and communication without becoming the
+  permanent orchestrator.
+- Remote mobile use is practical because it is limited to reports, approvals,
+  and compact checks.
+- The system is safe enough to expand deliberately, and honest enough to stop
+  when it cannot proceed safely.
 
-### Dashboard Integration
-
-Add one read-only dashboard section for the same CEO status summary.
-
-The dashboard should show:
-
-- overall status
-- BK decision count
-- active work count
-- blocked/recovery count
-- next safe action
-
-Keep dashboard write controls out of scope.
-
-### Tests
-
-Add focused tests for:
-
-- empty state reports `idle`
-- pending orchestration request recommends planning
-- planned/questions orchestrator plan appears under `needsDecision`
-- running/approved/waiting action appears under `active`
-- failed action or failed synthesis appears under `blocked` or `needsRecovery`
-- passed run with missing lifecycle merge appears as next integration action
-- CLI command prints `# ceo:status`
-
-Use existing portable test profile. Stage 1 should pass:
-
-```bash
-bun typecheck
-bun run test:portable
-bun run verify:docs
-```
-
-### Non-Goals
-
-Do not build in Stage 1:
-
-- new Telegram commands
-- new dashboard write controls
-- new worker dispatch behavior
-- LLM-generated report prose
-- multi-agent team construction
-- writer concurrency changes
-- a new database or framework
-
-### Acceptance Criteria
-
-Stage 1 is done when:
-
-- `bun run samantha ceo:status` gives BK a useful report from real state files
-- the report clearly separates active work, blocked work, completed work, BK decisions, risks, and next action
-- tests cover the aggregation rules
-- the implementation is read-only
-- existing `/now`, `/check`, Telegram, dispatch, merge, and dashboard flows still work
-- `bun typecheck`, `bun run test:portable`, and `bun run verify:docs` pass on Mac
+Detailed criteria: [NORTH_STAR.md](NORTH_STAR.md).

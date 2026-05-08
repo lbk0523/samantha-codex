@@ -309,6 +309,38 @@ describe("sendOutboxReplies", () => {
     expect(text).not.toContain("decision-");
   });
 
+  test("skips already-sent CEO notifications from delivery state", async () => {
+    const root = await makeRoot();
+    const outbox = join(root, "outbox");
+    const statePath = join(root, "state", "telegram-replies.json");
+    const file = "remote-20260507-110100-ceo-notify-needs-decision-abc12345.md";
+    await mkdir(outbox, { recursive: true });
+    await mkdir(join(root, "state"), { recursive: true });
+    await writeFile(join(outbox, file), "# ceo-notify\n\n다음 액션:\n- 텔레그램: `/approve`\n", "utf8");
+    await writeFile(
+      statePath,
+      `${JSON.stringify({ schemaVersion: 1, sentFiles: [file], failures: [], updatedAt: "2026-05-07T11:02:00.000Z" })}\n`,
+      "utf8",
+    );
+
+    const result = await sendOutboxReplies({
+      token: "token",
+      chatId: "12345",
+      outboxDir: outbox,
+      statePath,
+      minAgeMs: 0,
+      now: new Date(Date.now() + 1000),
+      fetchImpl: (async () => {
+        throw new Error("already-sent CEO notification should not be resent");
+      }) as unknown as typeof fetch,
+    });
+
+    expect(result.sent).toEqual([]);
+    expect(result.failed).toEqual([]);
+    expect(result.skipped).toContainEqual({ file, reason: "already sent" });
+    expect(await readFile(statePath, "utf8")).toContain(file);
+  });
+
   test("does not send id-only Telegram messages after reports that return ids", () => {
     const messages = telegramReplyMessages(
       "remote-propose.md",

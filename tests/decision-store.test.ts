@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   createDecisionItem,
   decisionAllowsOrchestratorMaterialization,
+  decisionLifecycleStatus,
   decisionFromQuestionDraft,
   decisionFromOrchestratorPlan,
   DecisionStore,
@@ -83,6 +84,7 @@ describe("DecisionStore", () => {
       resolvedAt: "2026-05-07T10:06:00.000Z",
       resolution: "approved",
     })).rejects.toThrow("decision must be pending");
+    expect(decisionLifecycleStatus(resolved)).toBe("approved");
 
     const archived = await store.archive(decision.id, {
       archivedAt: "2026-05-07T10:07:00.000Z",
@@ -94,6 +96,45 @@ describe("DecisionStore", () => {
       updatedAt: "2026-05-07T10:07:00.000Z",
     });
     expect(await store.latestForSubject({ type: "orchestrator_plan", id: "plan-1" })).toBeUndefined();
+    await expect(
+      store.archive(decision.id, {
+        archivedAt: "2026-05-07T10:08:00.000Z",
+        reason: "Already archived.",
+      }),
+    ).rejects.toThrow("decision already archived");
+  });
+
+  test("approves and rejects the latest pending decision deterministically", async () => {
+    const store = await makeStore();
+    const older = createDecisionItem({
+      ...decision,
+      title: "Review older plan",
+      subject: { type: "orchestrator_plan", id: "plan-older" },
+      createdAt: "2026-05-07T10:01:00.000Z",
+    });
+    const newer = createDecisionItem({
+      ...decision,
+      title: "Review newer plan",
+      subject: { type: "orchestrator_plan", id: "plan-newer" },
+      createdAt: "2026-05-07T10:02:00.000Z",
+    });
+
+    await store.append(older);
+    await store.append(newer);
+
+    const approved = await store.resolveLatestPending({
+      resolvedAt: "2026-05-07T10:03:00.000Z",
+      resolution: "approved",
+    });
+    expect(approved).toMatchObject({ id: newer.id, status: "resolved", resolution: "approved" });
+    expect((await store.listPending()).map((item) => item.id)).toEqual([older.id]);
+
+    const rejected = await store.resolveLatestPending({
+      resolvedAt: "2026-05-07T10:04:00.000Z",
+      resolution: "rejected",
+    });
+    expect(rejected).toMatchObject({ id: older.id, status: "resolved", resolution: "rejected" });
+    expect(await store.resolveLatestPending({ resolvedAt: "2026-05-07T10:05:00.000Z", resolution: "approved" })).toBeUndefined();
   });
 
   test("derives deterministic pending decisions from planned and question orchestrator plans", () => {
