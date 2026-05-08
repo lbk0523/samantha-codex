@@ -90,4 +90,40 @@ describe("operating surface view", () => {
 
     expect(view.primaryAction.telegramCommand).toBe("/now");
   });
+
+  test("uses id-free Telegram guidance for blocker clarifications", () => {
+    const snapshot: CeoStatusSnapshot = {
+      ...decisionStatus,
+      needsDecision: [
+        {
+          kind: "decision",
+          id: "decision-20260508-blocker-abc12345",
+          title: "Clarify run blocker",
+          status: "pending",
+          reason: "Should Samantha recover or wait?",
+          decisionKind: "blocker_clarification",
+          options: ["recover", "wait", "cancel"],
+          subject: "run:run-20260508-failed-def67890",
+        },
+      ],
+      nextAction: {
+        kind: "resolve_decision",
+        label: "Answer the latest blocker clarification",
+        command: "bun run samantha decisions:resolve decision-20260508-blocker-abc12345 --resolution=answered --note=<answer>",
+        targetId: "decision-20260508-blocker-abc12345",
+        reason: "Should Samantha recover or wait?",
+      },
+    };
+
+    const view = buildOperatingSurfaceView(snapshot);
+    const report = ceoNotificationReport(snapshot);
+
+    expect(view.primaryAction.telegramCommand).toBe("/revise <답변>");
+    expect(view.primaryAction.localCommand).toContain("decisions:resolve decision-20260508-blocker-abc12345");
+    expect(report).toContain("텔레그램: `/revise <답변>`");
+    expect(report).toContain("수정 요청도: `/revise <피드백>`");
+    expect(report).toContain("취소: `/cancel`");
+    expect(report).not.toContain("decision-20260508");
+    expect(report).not.toContain("bun run");
+  });
 });

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import type { DaemonHeartbeat } from "../src/lib/daemon";
 import { renderDashboard, renderLaneViewDashboard, writeDashboard } from "../src/lib/dashboard";
+import { createDecisionItem, DecisionStore } from "../src/lib/decision-store";
 import { git, gitHead } from "../src/lib/git";
 import { processInbox } from "../src/lib/inbox";
 import type { RunSummary } from "../src/lib/ledger";
@@ -1198,6 +1199,273 @@ describe("inbox and remote commands", () => {
         tasks: [{ id: "telegram-orchestration-plan" }],
       },
     });
+  });
+
+  test("blocks plan materialization while current blocker clarification is pending", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-blocker-gate-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const agents = join(root, "agents");
+    const projects = join(root, "projects");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      `${JSON.stringify(
+        {
+          ...writer,
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(projects, "omht.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "omht",
+          repoRoot: "/repo/omht",
+          setupCommands: [],
+          verifyCommands: [],
+          forbiddenChanges: ["state/**"],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    const payloadFor = (proposalId: string): OrchestratorPlanPayload => ({
+      summary: `Clarification-gated plan ${proposalId}`,
+      assumptions: [],
+      questions: [],
+      scope: ["safe implementation"],
+      nonScope: [],
+      risks: [],
+      tasks: [
+        {
+          id: proposalId,
+          title: `Implement ${proposalId}`,
+          targetAgent: "codex-worker",
+          projectId: "omht",
+          repoRoot: "/repo/omht",
+          resultMode: "write",
+          targetFiles: ["src/safe.ts"],
+          forbiddenChanges: ["state/**"],
+          setupCommands: [],
+          verifyCommands: ["bun test tests/operations.test.ts"],
+          instructions: "Implement the approved selected path.",
+          dependencies: [],
+        },
+      ],
+      batches: [[proposalId]],
+      userMessage: "Plan ready.",
+    });
+    const approved = {
+      ...createDecisionItem({
+        title: "Review clarification-gated plan",
+        prompt: "Approve before materialization.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: "plan-blocker-gated" },
+        options: ["approve", "revise", "cancel"],
+        createdAt: "2026-05-06T10:00:00.000Z",
+      }),
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedAt: "2026-05-06T10:01:00.000Z",
+      resolvedBy: "bk" as const,
+    };
+    const blocker = createDecisionItem({
+      title: "Clarify failed run recovery",
+      prompt: "Should Samantha recover the failed run before materializing new work?",
+      kind: "blocker_clarification",
+      source: "system",
+      subject: { type: "run", id: "run-failed-before-plan" },
+      options: ["recover", "wait", "cancel"],
+      risk: "Materializing before BK answers can dispatch the wrong work.",
+      createdAt: "2026-05-06T10:02:00.000Z",
+    });
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "plan-blocker-gated",
+        requestId: "request-blocker-gated",
+        status: "planned",
+        createdAt: "2026-05-06T10:00:00.000Z",
+        payload: payloadFor("blocker-gated"),
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(join(state, "decisions.jsonl"), `${JSON.stringify(approved)}\n${JSON.stringify(blocker)}\n`, "utf8");
+    await writeFile(
+      join(inbox, "001-go.json"),
+      JSON.stringify({ id: "remote-go-blocked-by-clarification", type: "actions:go", args: { receivedAt: "2026-05-06T10:03:00.000Z" } }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "002-now.json"),
+      JSON.stringify({ id: "remote-now-blocked-by-clarification", type: "ops:now", args: { receivedAt: "2026-05-06T10:04:00.000Z" } }),
+      "utf8",
+    );
+
+    const blockedProcess = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect({
+      stdout: await new Response(blockedProcess.stdout).text(),
+      stderr: await new Response(blockedProcess.stderr).text(),
+      exitCode: await blockedProcess.exited,
+    }).toMatchObject({ exitCode: 0 });
+
+    const blockedGo = await readFile(join(outbox, "001-go.md"), "utf8");
+    expect(blockedGo).toContain("# decision-required");
+    expect(blockedGo).toContain("BK clarification required before Samantha materializes worker tasks.");
+    expect(blockedGo).toContain("답변: `/revise <답변>`");
+    expect(blockedGo).not.toContain("/approve");
+    const blockedNow = await readFile(join(outbox, "002-now.md"), "utf8");
+    expect(blockedNow).toContain("BK 확인이 필요한 blocker clarification이 있습니다.");
+    expect(blockedNow).toContain("답변: `/revise <답변>`");
+    expect(blockedNow).not.toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
+    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    expect(await new RemoteActionStore(join(state, "remote-actions.jsonl")).list()).toEqual([]);
+    expect(await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).find("plan-blocker-gated")).toMatchObject({
+      status: "planned",
+    });
+
+    await new DecisionStore(join(state, "decisions.jsonl")).resolve(blocker.id, {
+      resolvedAt: "2026-05-06T10:05:00.000Z",
+      resolution: "answered",
+      note: "Recover later; continue with this approved plan.",
+    });
+    await writeFile(
+      join(inbox, "003-go-after-answer.json"),
+      JSON.stringify({ id: "remote-go-after-answer", type: "actions:go", args: { receivedAt: "2026-05-06T10:06:00.000Z" } }),
+      "utf8",
+    );
+
+    const resolvedProcess = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect({
+      stdout: await new Response(resolvedProcess.stdout).text(),
+      stderr: await new Response(resolvedProcess.stderr).text(),
+      exitCode: await resolvedProcess.exited,
+    }).toMatchObject({ exitCode: 0 });
+    expect(await readFile(join(outbox, "003-go-after-answer.md"), "utf8")).toContain("오케스트레이터 계획을 승인했고 worker 실행 큐에 등록했습니다.");
+    expect(await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).find("plan-blocker-gated")).toMatchObject({
+      status: "materialized",
+    });
+
+    const planStore = new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl"));
+    await planStore.append({
+      schemaVersion: 1,
+      id: "plan-archived-blocker",
+      requestId: "request-archived-blocker",
+      status: "planned",
+      createdAt: "2026-05-06T10:07:00.000Z",
+      payload: payloadFor("archived-blocker"),
+    });
+    const decisionStore = new DecisionStore(join(state, "decisions.jsonl"));
+    await decisionStore.append({
+      ...createDecisionItem({
+        title: "Review archived-blocker plan",
+        prompt: "Approve before materialization.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: "plan-archived-blocker" },
+        options: ["approve", "revise", "cancel"],
+        createdAt: "2026-05-06T10:07:00.000Z",
+      }),
+      status: "resolved",
+      resolution: "approved",
+      resolvedAt: "2026-05-06T10:08:00.000Z",
+      resolvedBy: "bk",
+    });
+    await decisionStore.append({
+      ...createDecisionItem({
+        title: "Archived blocker clarification",
+        prompt: "This blocker is no longer active.",
+        kind: "blocker_clarification",
+        source: "system",
+        subject: { type: "task", id: "task-old-blocker" },
+        options: ["answer", "revise", "cancel"],
+        risk: "None; archived.",
+        createdAt: "2026-05-06T10:09:00.000Z",
+      }),
+      status: "archived",
+      archivedAt: "2026-05-06T10:10:00.000Z",
+      archiveReason: "No longer current.",
+    });
+    await writeFile(
+      join(inbox, "004-go-after-archived-blocker.json"),
+      JSON.stringify({ id: "remote-go-after-archived-blocker", type: "actions:go", args: { receivedAt: "2026-05-06T10:11:00.000Z" } }),
+      "utf8",
+    );
+
+    const archivedProcess = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect({
+      stdout: await new Response(archivedProcess.stdout).text(),
+      stderr: await new Response(archivedProcess.stderr).text(),
+      exitCode: await archivedProcess.exited,
+    }).toMatchObject({ exitCode: 0 });
+    expect(await readFile(join(outbox, "004-go-after-archived-blocker.md"), "utf8")).toContain(
+      "오케스트레이터 계획을 승인했고 worker 실행 큐에 등록했습니다.",
+    );
+    expect(await planStore.find("plan-archived-blocker")).toMatchObject({ status: "materialized" });
   });
 
   test("blocks unsafe orchestrator plan materialization before creating tasks or actions", async () => {

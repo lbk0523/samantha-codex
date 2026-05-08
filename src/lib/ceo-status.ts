@@ -2,6 +2,7 @@ import type { TaskSpec } from "./contracts";
 import {
   decisionAllowsOrchestratorMaterialization,
   decisionHasCurrentPlanSubject,
+  decisionIsCurrentBlockerClarification,
   decisionLifecycleStatus,
   type DecisionItem,
   type DecisionKind,
@@ -462,11 +463,15 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
   );
   const actionTaskIds = new Set(actions.map((action) => action.taskId));
   const decisionsBySubject = latestDecisionBySubject(decisions);
+  const currentBlockerClarifications = decisions.filter((decision) =>
+    decisionIsCurrentBlockerClarification(decision, orchestratorPlans),
+  );
+  const hasCurrentBlockerClarification = currentBlockerClarifications.length > 0;
   const activePendingDecisions = decisions.filter(
     (decision) =>
       decision.status === "pending" &&
       decisionHasCurrentPlanSubject(decision, orchestratorPlans) &&
-      !(decision.subject?.type === "orchestrator_plan" && blockedPlanIds.has(decision.subject.id)),
+      !(decision.kind !== "blocker_clarification" && decision.subject?.type === "orchestrator_plan" && blockedPlanIds.has(decision.subject.id)),
   );
   const decisionSubjectKeys = new Set(decisionsBySubject.keys());
 
@@ -474,6 +479,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     orchestratorPlans
       .filter((plan) => plan.status === "planned")
       .filter((plan) => !blockedPlanIds.has(plan.id))
+      .filter(() => !hasCurrentBlockerClarification)
       .filter((plan) => decisionAllowsOrchestratorMaterialization(decisionsBySubject.get(`orchestrator_plan:${plan.id}`)))
       .map((plan) => ({
         kind: "orchestrator_plan" as const,
@@ -518,36 +524,38 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
       .filter((value): value is string => Boolean(value)),
   );
 
-  const needsDecision: CeoDecisionSummary[] = sortRecent([
-    ...activePendingDecisions
-      .map((decision) => ({
-        kind: "decision" as const,
-        id: decision.id,
-        title: decision.title,
-        status: decisionLifecycleStatus(decision),
-        reason: decision.prompt,
-        decisionKind: decision.kind,
-        updatedAt: decisionUpdatedAt(decision),
-        subject: decisionSubjectText(decision),
-        options: decision.options,
-      })),
-    ...orchestratorPlans
-      .filter((plan) => plan.status === "planned" || plan.status === "questions")
-      .filter((plan) => !blockedPlanIds.has(plan.id))
-      .filter((plan) => !pendingDecisionSubjectKeys.has(`orchestrator_plan:${plan.id}`))
-      .filter((plan) => !decisionSubjectKeys.has(`orchestrator_plan:${plan.id}`))
-      .map((plan) => ({
-        kind: "orchestrator_plan" as const,
-        id: plan.id,
-        title: oneLine(plan.payload?.summary ?? plan.requestId),
-        status: plan.status as "planned" | "questions",
-        reason:
-          plan.status === "questions"
-            ? `${plan.payload?.questions.length ?? 0} question(s) need BK input.`
-            : "Plan needs BK approval, revision, or cancellation.",
-        updatedAt: planUpdatedAt(plan),
-      })),
-  ]);
+  const decisionNeeds = activePendingDecisions.map((decision) => ({
+    kind: "decision" as const,
+    id: decision.id,
+    title: decision.title,
+    status: decisionLifecycleStatus(decision),
+    reason: decision.prompt,
+    decisionKind: decision.kind,
+    updatedAt: decisionUpdatedAt(decision),
+    subject: decisionSubjectText(decision),
+    options: decision.options,
+  }));
+  const derivedPlanNeeds = orchestratorPlans
+    .filter((plan) => plan.status === "planned" || plan.status === "questions")
+    .filter((plan) => !blockedPlanIds.has(plan.id))
+    .filter((plan) => !pendingDecisionSubjectKeys.has(`orchestrator_plan:${plan.id}`))
+    .filter((plan) => !decisionSubjectKeys.has(`orchestrator_plan:${plan.id}`))
+    .map((plan) => ({
+      kind: "orchestrator_plan" as const,
+      id: plan.id,
+      title: oneLine(plan.payload?.summary ?? plan.requestId),
+      status: plan.status as "planned" | "questions",
+      reason:
+        plan.status === "questions"
+          ? `${plan.payload?.questions.length ?? 0} question(s) need BK input.`
+          : "Plan needs BK approval, revision, or cancellation.",
+      updatedAt: planUpdatedAt(plan),
+    }));
+  const needsDecision: CeoDecisionSummary[] = [
+    ...sortRecent(decisionNeeds.filter((decision) => decision.decisionKind === "blocker_clarification")),
+    ...sortRecent(decisionNeeds.filter((decision) => decision.decisionKind !== "blocker_clarification")),
+    ...sortRecent(derivedPlanNeeds),
+  ];
 
   const failedActions = actions.filter((action) => actionNeedsRecovery(action) && !resolvedActionIds.has(action.id));
   const archivedTaskIds = new Set(tasks.filter((task) => task.status === "archived").map((task) => task.id));

@@ -351,6 +351,56 @@ describe("CEO status snapshot", () => {
     expect(snapshot.nextAction.command).not.toBe("/go");
   });
 
+  test("non-plan blocker clarification outranks approved plan and action progress", () => {
+    const approved = {
+      ...createDecisionItem({
+        title: "Review approved plan",
+        prompt: "Approve, revise, or cancel.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: "plan-approved" },
+        createdAt: "2026-05-07T09:11:00.000Z",
+      }),
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedAt: "2026-05-07T09:12:00.000Z",
+      resolvedBy: "bk" as const,
+    };
+    const blocker = createDecisionItem({
+      title: "Clarify run blocker",
+      prompt: "Should Samantha recover the failed run or wait?",
+      kind: "blocker_clarification",
+      source: "system",
+      subject: { type: "run", id: "run-failed" },
+      options: ["recover", "wait", "cancel"],
+      risk: "Wrong recovery can waste a worker run.",
+      createdAt: "2026-05-07T09:13:00.000Z",
+    });
+
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      decisions: [approved, blocker],
+      orchestratorPlans: [{ ...plan, id: "plan-approved", status: "planned" }],
+      actions: [{ ...action, id: "action-running", status: "running" }],
+    });
+    const report = formatCeoStatusReport(snapshot);
+
+    expect(snapshot.overall).toBe("needs_decision");
+    expect(snapshot.needsDecision[0]).toMatchObject({
+      id: blocker.id,
+      decisionKind: "blocker_clarification",
+      subject: "run:run-failed",
+    });
+    expect(snapshot.active).not.toContainEqual(expect.objectContaining({ kind: "orchestrator_plan", id: "plan-approved" }));
+    expect(snapshot.nextAction).toMatchObject({
+      kind: "resolve_decision",
+      command: `bun run samantha decisions:resolve ${blocker.id} --resolution=answered --note=<answer>`,
+      targetId: blocker.id,
+    });
+    expect(report).toContain("Next safe action:\n- Answer the latest blocker clarification\n- Telegram: /revise <답변>");
+    expect(report).not.toContain("Telegram: /go");
+  });
+
   test("blocked orchestrator plans surface one deterministic revision action", () => {
     const blockedPlan = { ...plan, id: "plan-blocked", status: "planned" as const };
     const snapshot = buildCeoStatusSnapshot({

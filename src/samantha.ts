@@ -10,6 +10,7 @@ import {
   decisionIsCurrentPlanApproval,
   decisionFromQuestionDraft,
   decisionFromOrchestratorPlan,
+  latestCurrentPendingBlockerClarification,
   DecisionStore,
   type DecisionItem,
   type DecisionKind,
@@ -1143,7 +1144,7 @@ async function orchestratorPlanBlockersForReport(
 }
 
 async function nowReportForInbox(args: ParsedArgs): Promise<string> {
-  const [runs, tasks, actions, proposals, drafts, orchestrationRequests, orchestratorPlans, ops, lifecycles] = await Promise.all([
+  const [runs, tasks, actions, proposals, drafts, orchestrationRequests, orchestratorPlans, decisions, ops, lifecycles] = await Promise.all([
     new RunIndex(runsPath(args)).list(),
     new TaskStore(tasksPath(args)).listActive(),
     new RemoteActionStore(remoteActionsPath(args)).list(),
@@ -1151,6 +1152,7 @@ async function nowReportForInbox(args: ParsedArgs): Promise<string> {
     new TaskDraftStore(taskDraftsPath(args)).list(),
     new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
     new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
+    new DecisionStore(decisionsPath(args)).list(),
     collectOps(args),
     new RunLifecycleStore(runLifecyclePath(args)).list(),
   ]);
@@ -1162,6 +1164,7 @@ async function nowReportForInbox(args: ParsedArgs): Promise<string> {
     drafts,
     orchestrationRequests,
     orchestratorPlans,
+    decisions,
     orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(args, orchestratorPlans),
     ops: withoutActiveInboxCommand(ops),
     lifecycles,
@@ -1220,18 +1223,35 @@ function decisionGateReport(decision: DecisionItem | undefined): string {
     return ["# decision-required", "", "BK decision required, but no decision item could be created."].join("\n");
   }
 
+  const nextActionLines =
+    decision.kind === "blocker_clarification"
+      ? [
+          `- 답변: ${"`/revise <답변>`"}`,
+          `- 수정 요청: ${"`/revise <피드백>`"}`,
+          `- 취소: ${"`/cancel`"}`,
+        ]
+      : [
+          `- 계획 승인: ${"`/approve`"}`,
+          `- 계획 수정: ${"`/revise <피드백>`"}`,
+          `- 계획 취소: ${"`/cancel`"}`,
+        ];
+
   return [
     "# decision-required",
     "",
-    "BK decision required before Samantha materializes worker tasks.",
+    decision.kind === "blocker_clarification"
+      ? "BK clarification required before Samantha materializes worker tasks."
+      : "BK decision required before Samantha materializes worker tasks.",
     `Status: ${decision.status}`,
     `Title: ${decision.title}`,
     `Prompt: ${decision.prompt}`,
     decision.risk ? `Risk: ${decision.risk}` : "",
+    decision.kind === "blocker_clarification" && decision.options.length
+      ? `Options: ${decision.options.join(" / ")}`
+      : "",
     "",
     "다음 액션:",
-    `- 텔레그램: ${decision.kind === "orchestrator_plan_approval" ? "`/approve`" : "`/revise <피드백>`"}`,
-    `- 텔레그램: ${"`/cancel`"}`,
+    ...nextActionLines,
     "",
     "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
   ]
@@ -2060,6 +2080,15 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     if (orchestratorPlan) {
       if (orchestratorPlan.status !== "planned") {
         return orchestratorGoBlockedReport({ plan: orchestratorPlan });
+      }
+
+      const decisionStore = new DecisionStore(decisionsPath(args));
+      const currentBlockerClarification = latestCurrentPendingBlockerClarification(
+        await decisionStore.list(),
+        await orchestratorPlanStore.list(),
+      );
+      if (currentBlockerClarification) {
+        return decisionGateReport(currentBlockerClarification);
       }
 
       const materialized = await previewOrchestratorPlanMaterialization({

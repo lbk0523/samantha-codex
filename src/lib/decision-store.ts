@@ -205,6 +205,20 @@ export function decisionHasCurrentPlanSubject(decision: DecisionItem, plans: Orc
   return Boolean(plan && (plan.status === "planned" || plan.status === "questions"));
 }
 
+export function decisionIsCurrentBlockerClarification(decision: DecisionItem, plans: OrchestratorPlanRecord[]): boolean {
+  return decision.status === "pending" && decision.kind === "blocker_clarification" && decisionHasCurrentPlanSubject(decision, plans);
+}
+
+export function latestCurrentPendingBlockerClarification(
+  decisions: DecisionItem[],
+  plans: OrchestratorPlanRecord[],
+): DecisionItem | undefined {
+  return decisions
+    .slice()
+    .reverse()
+    .find((decision) => decisionIsCurrentBlockerClarification(decision, plans));
+}
+
 export function decisionIsCurrentPlanApproval(decision: DecisionItem, plans: OrchestratorPlanRecord[]): boolean {
   if (decision.status !== "pending") return false;
   if (decision.kind !== "orchestrator_plan_approval") return false;

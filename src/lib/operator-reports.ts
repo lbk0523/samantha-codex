@@ -1,6 +1,7 @@
 import type { TaskSpec } from "./contracts";
 import type { CeoStatusSnapshot } from "./ceo-status";
 import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
+import { latestCurrentPendingBlockerClarification, type DecisionItem } from "./decision-store";
 import type { RunSummary } from "./ledger";
 import { buildOperatingSurfaceView } from "./operating-surface";
 import type { OpsSnapshot } from "./ops-diagnostics";
@@ -390,6 +391,25 @@ function orchestratorPlanNextLines(plan: OrchestratorPlanRecord, blocker?: Orche
   }
   if (plan.status === "materialized") return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
   return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
+}
+
+function blockerClarificationNowReport(decision: DecisionItem): string {
+  return [
+    "# now",
+    "",
+    "BK 확인이 필요한 blocker clarification이 있습니다.",
+    `제목: ${telegramSafeLine(decision.title)}`,
+    `질문: ${telegramSafeLine(decision.prompt)}`,
+    decision.options.length ? `선택지: ${decision.options.map(telegramSafeLine).join(" / ")}` : "",
+    decision.risk ? `리스크: ${telegramSafeLine(decision.risk)}` : "",
+    "",
+    "다음 액션:",
+    `- 답변: ${code("/revise <답변>")}`,
+    `- 수정 요청: ${code("/revise <피드백>")}`,
+    `- 취소: ${code("/cancel")}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function recoveryPlanVerdictLine(request: OrchestrationRequestRecord, plan: OrchestratorPlanRecord): string | undefined {
@@ -873,6 +893,7 @@ export function nowReport(input: {
   runs: RunSummary[];
   tasks: TaskSpec[];
   actions: RemoteActionRecord[];
+  decisions?: DecisionItem[];
   proposals?: ProposalRecord[];
   drafts?: TaskDraftRecord[];
   orchestrationRequests?: OrchestrationRequestRecord[];
@@ -881,6 +902,12 @@ export function nowReport(input: {
   ops?: OpsSnapshot;
   lifecycles?: RunLifecycleRecord[];
 }): string {
+  const blockerClarification = latestCurrentPendingBlockerClarification(
+    input.decisions ?? [],
+    input.orchestratorPlans ?? [],
+  );
+  if (blockerClarification) return blockerClarificationNowReport(blockerClarification);
+
   const latestByStatus = (status: RemoteActionRecord["status"]) =>
     input.actions.slice().reverse().find((action) => action.status === status);
   const running = latestByStatus("running");
@@ -1092,6 +1119,7 @@ export function ceoNotificationReport(snapshot: CeoStatusSnapshot): string {
   const decision = snapshot.needsDecision[0];
   const nextCommand = view.primaryAction.telegramCommand ?? "/check";
   const canApproveDecision = nextCommand === "/approve";
+  const isBlockerClarification = decision?.decisionKind === "blocker_clarification";
   const risks = snapshot.risks.slice(0, 3).map(remoteNotificationText);
   const lines = [
     "# ceo-notify",
@@ -1105,6 +1133,7 @@ export function ceoNotificationReport(snapshot: CeoStatusSnapshot): string {
     "다음 액션:",
     `- 텔레그램: ${code(nextCommand)}`,
     decision && canApproveDecision ? `- 수정 필요 시: ${code("/revise <피드백>")}` : "",
+    decision && isBlockerClarification ? `- 수정 요청도: ${code("/revise <피드백>")}` : "",
     decision ? `- 취소: ${code("/cancel")}` : "",
     snapshot.blocked.length ? `- 현재 블로커: ${remoteNotificationText(snapshot.blocked[0]?.title ?? "확인 필요")}` : "",
     snapshot.historicalFailures.length ? `- 히스토리 실패: ${snapshot.historicalFailures.length}건은 CLI 또는 dashboard에서 확인` : "",

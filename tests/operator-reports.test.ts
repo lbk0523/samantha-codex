@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import type { DaemonHealthResult, DaemonHeartbeat } from "../src/lib/daemon";
+import { createDecisionItem } from "../src/lib/decision-store";
 import type { RunSummary } from "../src/lib/ledger";
 import {
   ceoNotificationReport,
@@ -656,6 +657,32 @@ describe("operator reports", () => {
       source: "remote",
       commandId: "remote-prepare",
     });
+    const blockerClarification = createDecisionItem({
+      title: "Clarify recovery blocker",
+      prompt: "Should Samantha recover the failed run or wait?",
+      kind: "blocker_clarification",
+      source: "system",
+      subject: { type: "run", id: "run-fail" },
+      options: ["recover", "wait", "cancel"],
+      risk: "Wrong recovery path can waste a worker run.",
+      createdAt: "2026-05-03T10:08:00.000Z",
+    });
+
+    const blockerNow = nowReport({
+      runs: [],
+      tasks: [],
+      actions: [{ ...pendingAction, status: "running" }],
+      decisions: [blockerClarification],
+      orchestratorPlans: [orchestratorPlan],
+    });
+    expect(blockerNow).toContain("BK 확인이 필요한 blocker clarification이 있습니다.");
+    expect(blockerNow).toContain("질문: Should Samantha recover the failed run or wait?");
+    expect(blockerNow).toContain("답변: `/revise <답변>`");
+    expect(blockerNow).toContain("수정 요청: `/revise <피드백>`");
+    expect(blockerNow).toContain("취소: `/cancel`");
+    expect(blockerNow).not.toContain(blockerClarification.id);
+    expect(blockerNow).not.toContain("worker가 실행 중입니다.");
+    expect(blockerNow).not.toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
 
     expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).toContain("텔레그램: `/problems`");
     expect(nowReport({ runs: [], tasks: [], actions: [pendingAction] })).not.toContain("텔레그램: `/go`");
