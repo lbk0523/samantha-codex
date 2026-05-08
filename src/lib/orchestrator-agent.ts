@@ -381,33 +381,52 @@ function buildOrchestratorSynthesisPrompt(input: {
   actions: RemoteActionRecord[];
   runLogs: WorkerRunLog[];
 }): string {
+  const runLogForAction = (action: RemoteActionRecord) =>
+    input.runLogs.find((log) => log.runId === action.result?.runId || log.task.id === action.taskId);
+  const evidenceLines = input.actions.flatMap((action) => {
+    const runLog = runLogForAction(action);
+    const changedFiles = runLog?.result.evaluation?.changedFiles ?? runLog?.result.commit?.files ?? [];
+    const reportArtifacts = runLog?.task.resultMode === "report" ? changedFiles : [];
+    const failedVerify = runLog?.result.evaluation?.verifyResults
+      .filter((result) => result.exitCode !== 0)
+      .map((result) => `${result.command} exited ${result.exitCode}${result.stderr ? ` stderr=${result.stderr.replace(/\s+/g, " ").trim()}` : ""}`) ?? [];
+    const harnessNote = runLog?.result.evaluation?.harness?.note ?? "";
+    return [
+      `- ${action.taskId}: status=${action.status} pass=${String(action.result?.pass ?? false)} outcome=${action.result?.outcome ?? "unknown"} failure=${action.result?.failure ?? ""}`,
+      `  agent=${action.targetAgent} mode=${runLog?.task.resultMode ?? "unknown"} canonicalRepoRoot=${action.repoRoot}`,
+      action.result?.runLogPath ? `  runLog=${action.result.runLogPath}` : "  runLog=none",
+      harnessNote ? `  harnessNote=${harnessNote}` : "",
+      changedFiles.length ? `  changedFiles=${changedFiles.join(",")}` : "  changedFiles=none",
+      reportArtifacts.length ? `  reportArtifacts=${reportArtifacts.join(",")}` : "  reportArtifacts=none",
+      failedVerify.length ? `  failedVerify=${failedVerify.join(" | ")}` : "  failedVerify=none",
+    ].filter(Boolean);
+  });
+
   return [
     "You are the Samantha Orchestrator Agent in final synthesis mode.",
     "Do not edit files. Do not dispatch workers. Do not run merge, push, or cleanup commands.",
     "Do not claim that you changed durable state. Summarize only the evidence provided by Samantha.",
-    "Summarize the completed worker team result for BK in Korean and recommend the next action.",
+    "Summarize the completed worker team result for BK in Korean and recommend the next action from Samantha evidence only.",
+    "Do not invent changed files, report artifacts, verification results, run logs, commits, decisions, or statuses not listed below.",
     "",
     `Request: ${input.request?.text ?? input.plan.requestId}`,
     `Plan: ${input.plan.id}`,
     input.plan.payload ? `Original plan summary: ${input.plan.payload.summary}` : "Original plan summary: missing",
     "",
-    "Action results:",
-    ...input.actions.map((action) => {
-      const runLog = input.runLogs.find((log) => log.runId === action.result?.runId || log.task.id === action.taskId);
-      const changedFiles = runLog?.result.evaluation?.changedFiles ?? runLog?.result.commit?.files ?? [];
-      const harnessNote = runLog?.result.evaluation?.harness?.note ?? "";
-      return `- ${action.taskId}: status=${action.status} pass=${String(action.result?.pass ?? false)} outcome=${action.result?.outcome ?? "unknown"} failure=${action.result?.failure ?? ""} note=${harnessNote} changed=${changedFiles.join(",") || "none"}`;
-    }),
+    "Samantha-provided evidence:",
+    ...(evidenceLines.length ? evidenceLines : ["- none"]),
     "",
     "Return a concise Korean synthesis, then include exactly one machine-readable payload.",
     "The payload must start with `ORCHESTRATOR_SYNTHESIS:` followed by a strict JSON object.",
+    "Set `outcome` to exactly one of `pass`, `mixed`, `failed`, `blocked`, or `needs-BK`.",
+    "`nextActions` must contain exactly one supported safe Telegram command, such as `/now`, `/recover`, `/check`, or `/problems`.",
     "",
     "Payload shape:",
     JSON.stringify(
       {
-        outcome: "pass|failed|mixed",
+        outcome: "pass|mixed|failed|blocked|needs-BK",
         summary: "short Korean summary",
-        nextActions: ["next action"],
+        nextActions: ["텔레그램: /recover"],
         risks: ["risk or follow-up"],
         userMessage: "Korean Telegram message to show BK",
       },
@@ -504,16 +523,39 @@ function validateSynthesisPayload(raw: unknown): OrchestratorSynthesisPayload {
   }
   const value = raw as Record<string, unknown>;
   const outcome = requiredString(value.outcome, "outcome");
-  if (outcome !== "pass" && outcome !== "failed" && outcome !== "mixed") {
-    throw new Error("outcome must be pass, failed, or mixed");
+  if (outcome !== "pass" && outcome !== "mixed" && outcome !== "failed" && outcome !== "blocked" && outcome !== "needs-BK") {
+    throw new Error("outcome must be pass, mixed, failed, blocked, or needs-BK");
   }
+  const nextActions = stringArray(value.nextActions, "nextActions");
+  validateSynthesisNextActions(nextActions);
   return {
     outcome,
     summary: requiredString(value.summary, "summary"),
-    nextActions: stringArray(value.nextActions, "nextActions"),
+    nextActions,
     risks: stringArray(value.risks, "risks"),
     userMessage: requiredString(value.userMessage, "userMessage"),
   };
+}
+
+const safeSynthesisTelegramCommands = new Set([
+  "/now",
+  "/plan",
+  "/plan_current",
+  "/go",
+  "/recover",
+  "/check",
+  "/problems",
+  "/approve",
+  "/cancel",
+]);
+
+function validateSynthesisNextActions(nextActions: string[]): void {
+  if (nextActions.length !== 1) throw new Error("nextActions must contain exactly one safe Telegram command");
+  const commands = nextActions[0]?.match(/\/[A-Za-z0-9_-]+/g) ?? [];
+  const uniqueCommands = Array.from(new Set(commands));
+  if (uniqueCommands.length !== 1 || !safeSynthesisTelegramCommands.has(uniqueCommands[0])) {
+    throw new Error("nextActions must contain exactly one safe Telegram command");
+  }
 }
 
 function validateQuestionDraftPayload(raw: unknown): OrchestratorQuestionDraftPayload {

@@ -287,11 +287,27 @@ function workTypeLine(input: { mode?: string; pass?: boolean; commit?: string })
 
 function planWorkTypeLine(input: { runLogs: WorkerRunLog[]; mergeCommands: string[]; needsRecovery: boolean }): string {
   if (input.runLogs.length > 0 && input.runLogs.every((runLog) => runLog.task.resultMode === "report")) {
-    return "작업 유형: 계획/보고 - 커밋 없음 정상";
+    return input.needsRecovery ? "작업 유형: 계획/보고 - 복구 필요" : "작업 유형: 계획/보고 - 커밋 없음 정상";
   }
-  if (input.mergeCommands.length > 0) return "작업 유형: 구현/수정 - merge 필요";
   if (input.needsRecovery) return "작업 유형: 구현/수정 - 복구 필요";
+  if (input.mergeCommands.length > 0) return "작업 유형: 구현/수정 - merge 필요";
   return "작업 유형: 구현/수정";
+}
+
+function planResultOutcomeLabel(input: {
+  needsRecovery: boolean;
+  verificationFailed: boolean;
+  reportOnly: boolean;
+  synthesisOutcome?: OrchestratorSynthesisPayload["outcome"];
+}): string {
+  if (input.needsRecovery) {
+    if (input.verificationFailed) return "검증 실패 - 복구 필요";
+    if (input.synthesisOutcome === "mixed") return "부분 완료 - 복구 필요";
+    if (input.synthesisOutcome === "blocked") return "차단됨 - 복구 필요";
+    if (input.synthesisOutcome === "needs-BK") return "BK 확인 필요 - 복구 필요";
+    return "복구 필요";
+  }
+  return input.reportOnly ? "보고 완료" : "구현 통과";
 }
 
 function draftNextLines(draft: TaskDraftRecord): string[] {
@@ -1388,6 +1404,7 @@ export function orchestratorPlanResultReport(input: {
   synthesis?: OrchestratorSynthesisPayload;
   synthesisFailure?: string;
   sourcePlan?: OrchestratorPlanRecord;
+  artifactPreviews?: RemoteActionArtifactPreview[];
 }): string {
   const failed = input.actions.filter((action) => action.status !== "completed" || action.result?.pass === false);
   const runLogForAction = (action: RemoteActionRecord) =>
@@ -1404,14 +1421,31 @@ export function orchestratorPlanResultReport(input: {
   const changedFiles = Array.from(
     new Set(input.runLogs.flatMap((runLog) => runLog.result.evaluation?.changedFiles ?? runLog.result.commit?.files ?? [])),
   );
+  const reportArtifactFiles = Array.from(
+    new Set([
+      ...(input.artifactPreviews ?? []).map((preview) => preview.file),
+      ...input.runLogs
+        .filter((runLog) => runLog.task.resultMode === "report")
+        .flatMap((runLog) => runLog.result.evaluation?.changedFiles ?? runLog.result.commit?.files ?? []),
+    ]),
+  );
+  const failedVerifyDetails = input.runLogs.flatMap((runLog) =>
+    runLog.result.evaluation?.verifyResults
+      .filter((result) => result.exitCode !== 0)
+      .map((result) =>
+        `${oneLine(runLog.task.title)}: ${result.command} exited ${result.exitCode}${result.stderr ? ` stderr=${oneLine(result.stderr).slice(0, 180)}` : ""}`
+      ) ?? [],
+  );
+  const runLogPaths = Array.from(
+    new Set(input.actions.flatMap((action) => action.result?.runLogPath ? [action.result.runLogPath] : [])),
+  );
   const reportOnly = input.runLogs.length > 0 && input.runLogs.every((runLog) => runLog.task.resultMode === "report");
-  const outcome = needsRecovery
-    ? verificationFailed
-      ? "검증 실패 - 복구 필요"
-      : "복구 필요"
-    : reportOnly
-      ? "보고 완료"
-      : "구현 통과";
+  const outcome = planResultOutcomeLabel({
+    needsRecovery,
+    verificationFailed,
+    reportOnly,
+    synthesisOutcome: input.synthesis?.outcome,
+  });
   const riskLines = [
     ...(input.synthesis?.risks ?? []),
     input.synthesis && input.synthesis.outcome !== "pass" ? `종합 결과: ${telegramSafeLine(input.synthesis.summary)}` : "",
@@ -1468,6 +1502,20 @@ export function orchestratorPlanResultReport(input: {
     "산출/변경:",
     ...(changedFiles.length ? changedFiles.slice(0, 8).map((file) => `- ${code(displayFilePath(file))}`) : ["- 없음"]),
     changedFiles.length > 8 ? `- 외 ${changedFiles.length - 8}개` : "",
+    "",
+    "증거:",
+    ...(reportArtifactFiles.length
+      ? ["- 보고 산출물:", ...reportArtifactFiles.slice(0, 5).map((file) => `  - ${code(file)}`)]
+      : ["- 보고 산출물: 없음"]),
+    reportArtifactFiles.length > 5 ? `  - 외 ${reportArtifactFiles.length - 5}개` : "",
+    ...(failedVerifyDetails.length
+      ? ["- 실패 검증:", ...failedVerifyDetails.slice(0, 5).map((detail) => `  - ${telegramSafeLine(detail)}`)]
+      : ["- 실패 검증: 없음"]),
+    failedVerifyDetails.length > 5 ? `  - 외 ${failedVerifyDetails.length - 5}개` : "",
+    ...(runLogPaths.length
+      ? ["- Run log:", ...runLogPaths.slice(0, 5).map((path) => `  - ${code(path)}`)]
+      : ["- Run log: 없음"]),
+    runLogPaths.length > 5 ? `  - 외 ${runLogPaths.length - 5}개` : "",
     "",
     "남은 리스크:",
     ...(riskLines.length ? riskLines.slice(0, 5).map((risk) => `- ${remoteSafeSuggestion(risk)}`) : ["- 없음"]),

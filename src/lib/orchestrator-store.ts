@@ -59,7 +59,7 @@ export interface OrchestratorPlanPayload {
 }
 
 export interface OrchestratorSynthesisPayload {
-  outcome: "pass" | "failed" | "mixed";
+  outcome: "pass" | "mixed" | "failed" | "blocked" | "needs-BK";
   summary: string;
   nextActions: string[];
   risks: string[];

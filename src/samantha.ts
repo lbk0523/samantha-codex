@@ -768,6 +768,7 @@ async function writeOrchestratorPlanResultOutbox(args: ParsedArgs, plan: Orchest
       return { rawOutput: "", payload: undefined, failure: errorMessage(err) };
     }
   })();
+  const artifactPreviews = (await Promise.all(runLogs.map((runLog) => collectReportArtifactPreviews(runLog)))).flat();
   const reportedAt = new Date().toISOString();
   const file = compactOutboxFileName({
     createdAt: reportedAt,
@@ -785,6 +786,7 @@ async function writeOrchestratorPlanResultOutbox(args: ParsedArgs, plan: Orchest
       synthesis: synthesis.payload,
       synthesisFailure: synthesis.failure,
       sourcePlan,
+      artifactPreviews,
     })}\n`,
     "utf8",
   );

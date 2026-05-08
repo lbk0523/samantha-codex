@@ -2675,7 +2675,7 @@ describe("inbox and remote commands", () => {
       item: {
         type: "agent_message",
         text:
-          "최종 종합 완료\n\nORCHESTRATOR_SYNTHESIS: {\"outcome\":\"pass\",\"summary\":\"계획 완료\",\"nextActions\":[\"텔레그램: /run_latest\"],\"risks\":[],\"userMessage\":\"오케스트레이터 최종 종합입니다.\"}",
+          "최종 종합 완료\n\nORCHESTRATOR_SYNTHESIS: {\"outcome\":\"pass\",\"summary\":\"계획 완료\",\"nextActions\":[\"텔레그램: /now\"],\"risks\":[],\"userMessage\":\"오케스트레이터 최종 종합입니다.\"}",
       },
     });
     await writeFile(

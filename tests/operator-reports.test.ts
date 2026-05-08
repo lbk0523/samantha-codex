@@ -1145,22 +1145,82 @@ describe("operator reports", () => {
           }),
           id: "action-failed",
           status: "failed",
-          result: { pass: false, outcome: "fail", failure: "verify failed" },
+          result: { runId: "run-failed", runLogPath: "/runs/run-failed.json", pass: false, outcome: "fail", failure: "verify failed" },
         },
       ],
-      runLogs: [],
-      synthesis: {
-        outcome: "failed",
-        summary: "검증 실패",
-        nextActions: ["검증 실패 원인을 반영해 복구 계획을 만들기"],
-        risks: [],
-        userMessage: "복구가 필요합니다.",
-      },
+      runLogs: [
+        {
+          schemaVersion: 1,
+          runId: "run-failed",
+          startedAt: "2026-05-05T10:02:00.000Z",
+          finishedAt: "2026-05-05T10:03:00.000Z",
+          task,
+          agent,
+          input: { repoRoot: "/repo", allocate: true, execute: true },
+          result: {
+            preparation: {
+              taskId: task.id,
+              agentId: agent.id,
+              worktreePath: "/worktree",
+              codex: { prompt: "prompt", command: ["codex", "exec"] },
+            },
+            setupResults: [],
+            command: { command: ["codex", "exec"], exitCode: 0, stdout: "", stderr: "" },
+            evaluation: {
+              pass: false,
+              harness: { status: "rework", note: "verify failed", commit: "" },
+              changedFiles: ["src/lib/failure.ts"],
+              scopeViolations: [],
+              verifyResults: [{ command: "bun typecheck", exitCode: 1, stdout: "", stderr: "TS2322" }],
+            },
+            pass: false,
+          },
+        },
+      ],
+      synthesisFailure: "invalid synthesis JSON",
+      artifactPreviews: [{ file: "docs/failure-report.md", text: "# Failure report" }],
     });
     expect(failedPlanResult).toContain("계획 결과: 검증 실패 - 복구 필요");
     expect(failedPlanResult).toContain("작업 유형: 구현/수정 - 복구 필요");
     expect(failedPlanResult).toContain("텔레그램: `/recover`");
     expect(failedPlanResult).toContain("verify failed");
+    expect(failedPlanResult).toContain("오케스트레이터 종합 실패: invalid synthesis JSON");
+    expect(failedPlanResult).toContain("`src > lib > failure.ts`");
+    expect(failedPlanResult).toContain("보고 산출물:");
+    expect(failedPlanResult).toContain("`docs/failure-report.md`");
+    expect(failedPlanResult).toContain("bun typecheck exited 1");
+    expect(failedPlanResult).toContain("`/runs/run-failed.json`");
+
+    const blockedPlanResult = orchestratorPlanResultReport({
+      plan: { ...orchestratorPlan, status: "materialized", actionIds: [passedPlanAction.id] },
+      actions: [passedPlanAction],
+      runLogs: [],
+      synthesis: {
+        outcome: "blocked",
+        summary: "host-only verification blocked",
+        nextActions: ["텔레그램: /recover"],
+        risks: ["host-only verification remains"],
+        userMessage: "검증이 host-only 조건에 막혔습니다.",
+      },
+    });
+    expect(blockedPlanResult).toContain("계획 결과: 차단됨 - 복구 필요");
+    expect(blockedPlanResult).toContain("종합 결과: `blocked`");
+    expect(blockedPlanResult).toContain("텔레그램: `/recover`");
+
+    const needsBkPlanResult = orchestratorPlanResultReport({
+      plan: { ...orchestratorPlan, status: "materialized", actionIds: [passedPlanAction.id] },
+      actions: [passedPlanAction],
+      runLogs: [],
+      synthesis: {
+        outcome: "needs-BK",
+        summary: "BK decision still needed",
+        nextActions: ["텔레그램: /now"],
+        risks: ["BK must choose the next scope"],
+        userMessage: "BK 결정이 남았습니다.",
+      },
+    });
+    expect(needsBkPlanResult).toContain("계획 결과: BK 확인 필요 - 복구 필요");
+    expect(needsBkPlanResult).toContain("종합 결과: `needs-BK`");
 
     const fixedRecoveryResult = orchestratorPlanResultReport({
       plan: { ...orchestratorPlan, id: "plan-recovery", requestId: "request-recovery", status: "materialized", actionIds: [passedPlanAction.id] },

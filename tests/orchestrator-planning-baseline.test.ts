@@ -213,13 +213,30 @@ describe("Phase 4 P1 orchestrator planning baseline fixtures", () => {
     const synthesis = {
       outcome: "mixed",
       summary: "일부 task는 통과했고 하나는 실패했습니다.",
-      nextActions: ["실패한 task를 복구 계획으로 전환"],
+      nextActions: ["텔레그램: /recover"],
       risks: ["재시도 전에 실패 원인 확인 필요"],
       userMessage: "결과 요약입니다.",
     };
     expect(parseOrchestratorSynthesisPayload(agentEvent("ORCHESTRATOR_SYNTHESIS:", synthesis))).toMatchObject({ outcome: "mixed" });
-    expect(() => parseOrchestratorSynthesisPayload(raw("ORCHESTRATOR_SYNTHESIS:", { ...synthesis, outcome: "blocked" }))).toThrow(
-      "outcome must be pass, failed, or mixed",
+    expect(parseOrchestratorSynthesisPayload(raw("ORCHESTRATOR_SYNTHESIS:", { ...synthesis, outcome: "blocked" }))).toMatchObject({
+      outcome: "blocked",
+    });
+    expect(parseOrchestratorSynthesisPayload(raw("ORCHESTRATOR_SYNTHESIS:", { ...synthesis, outcome: "needs-BK", nextActions: ["텔레그램: /now"] }))).toMatchObject({
+      outcome: "needs-BK",
+    });
+    expect(() => parseOrchestratorSynthesisPayload(raw("ORCHESTRATOR_SYNTHESIS:", { ...synthesis, outcome: "unknown" }))).toThrow(
+      "outcome must be pass, mixed, failed, blocked, or needs-BK",
+    );
+    expect(() => parseOrchestratorSynthesisPayload(raw("ORCHESTRATOR_SYNTHESIS:", { ...synthesis, nextActions: [] }))).toThrow(
+      "nextActions must contain exactly one safe Telegram command",
+    );
+    expect(() =>
+      parseOrchestratorSynthesisPayload(raw("ORCHESTRATOR_SYNTHESIS:", { ...synthesis, nextActions: ["텔레그램: /recover 또는 /problems"] })),
+    ).toThrow(
+      "nextActions must contain exactly one safe Telegram command",
+    );
+    expect(() => parseOrchestratorSynthesisPayload(raw("ORCHESTRATOR_SYNTHESIS:", { ...synthesis, nextActions: ["텔레그램: /run_latest"] }))).toThrow(
+      "nextActions must contain exactly one safe Telegram command",
     );
   });
 

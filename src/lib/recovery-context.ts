@@ -29,18 +29,20 @@ function bulletLines(title: string, values: string[], empty: string): string[] {
 export function buildRecoveryRequestText(input: RecoveryContextInput): string {
   const plan = input.plan;
   const failedActions = input.failedActions.length ? input.failedActions : input.actions.filter((action) => action.status === "failed" || action.result?.pass === false);
+  const evidenceActions = failedActions.length ? failedActions : input.actions;
   const runLogForAction = (action: RemoteActionRecord) =>
     input.runLogs.find((log) => log.runId === action.result?.runId || log.task.id === action.taskId);
+  const canonicalRepoRoots = Array.from(new Set(evidenceActions.map((action) => action.repoRoot).filter(Boolean)));
   const changedFiles = Array.from(
     new Set(
-      failedActions.flatMap((action) => {
+      evidenceActions.flatMap((action) => {
         const runLog = runLogForAction(action);
         return runLog?.result.evaluation?.changedFiles ?? runLog?.result.commit?.files ?? [];
       }),
     ),
   );
-  const runLogPaths = Array.from(new Set(failedActions.flatMap((action) => action.result?.runLogPath ? [action.result.runLogPath] : [])));
-  const verifyFailures = failedActions.flatMap((action) => {
+  const runLogPaths = Array.from(new Set(evidenceActions.flatMap((action) => action.result?.runLogPath ? [action.result.runLogPath] : [])));
+  const verifyFailures = evidenceActions.flatMap((action) => {
     const runLog = runLogForAction(action);
     return runLog?.result.evaluation?.verifyResults
       .filter((result) => result.exitCode !== 0)
@@ -62,6 +64,8 @@ export function buildRecoveryRequestText(input: RecoveryContextInput): string {
     ...bulletLines("원 계획 제외 범위:", plan.payload?.nonScope ?? [], "없음"),
     ...bulletLines("원 계획 리스크:", plan.payload?.risks ?? [], "없음"),
     "",
+    ...bulletLines("Canonical recovery repo roots:", canonicalRepoRoots, "action에서 canonical repoRoot를 찾지 못했습니다. project profile 기본값을 사용하세요."),
+    "",
     "원 계획 작업:",
     ...(planTasks.length
       ? planTasks.map((task) =>
@@ -77,7 +81,7 @@ export function buildRecoveryRequestText(input: RecoveryContextInput): string {
           return [
             `- ${action.taskTitle}: status=${action.status} outcome=${action.result?.outcome ?? "unknown"} agent=${action.targetAgent}`,
             `  canonical action repoRoot: ${action.repoRoot}`,
-            runLog?.input.repoRoot ? `  run input repoRoot: ${runLog.input.repoRoot}` : "",
+            runLog?.input.repoRoot ? `  run input repoRoot evidence: ${runLog.input.repoRoot}` : "",
             runLog?.result.preparation.worktreePath ? `  worker worktree evidence path: ${runLog.result.preparation.worktreePath}` : "",
             action.result?.failure ? `  실패 이유: ${compactLine(action.result.failure)}` : "",
             runLog?.result.evaluation?.harness?.note ? `  harness note: ${compactLine(runLog.result.evaluation.harness.note)}` : "",
@@ -112,7 +116,7 @@ export function buildRecoveryRequestText(input: RecoveryContextInput): string {
     "",
     "요청:",
     "위 실패 원인을 먼저 재검토하고, 무작정 retry하지 말고 복구 계획을 제안하세요.",
-    "복구 task는 project profile의 canonical repoRoot에서 시작해야 합니다.",
+    "복구 task repoRoot는 위 canonical recovery repo roots 또는 project profile의 canonical repoRoot만 사용해야 합니다.",
     "실패 run log나 worker worktree path를 repoRoot로 복사하지 마세요.",
     "repoRoot가 불확실하면 비워 두고 projectId를 맞춰 materializer가 profile 기본값을 쓰게 하세요.",
     "필요하면 원인 확인용 report task를 먼저 두고, 수정/검증 task는 의존 관계로 분리하세요.",
