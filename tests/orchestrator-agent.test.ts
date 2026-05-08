@@ -37,6 +37,10 @@ describe("orchestrator agent prompt", () => {
     expect(prompt).toContain("Dependent tasks do not see unmerged file changes from earlier worker tasks.");
     expect(prompt).toContain("Do not create a separate verify-only task that depends on files written by an earlier write task.");
     expect(prompt).toContain("Put verification for a write task in that same task's verifyCommands.");
+    expect(prompt).toContain("Batches are execution waves");
+    expect(prompt).toContain("later batch wait until all earlier batch actions pass before promotion");
+    expect(prompt).toContain("report-only risk reducers before or in the same batch as the single writer task");
+    expect(prompt).toContain("Every write task must include its own non-empty `verifyCommands`");
     expect(prompt).toContain("For recovery requests, treat run logs, changed files, and worker worktree paths as evidence only.");
     expect(prompt).toContain("Recovery tasks must use the selected project profile's canonical repoRoot.");
     expect(prompt).toContain("leave `repoRoot` empty and set `projectId`");
@@ -49,6 +53,16 @@ describe("orchestrator agent prompt", () => {
     expect(prompt).toContain("Use `codex-evaluator` for report-only validation planning");
     expect(prompt).toContain("Use `codex-worker` only for implementation/write tasks");
     expect(prompt).toContain("Non-writer tasks must use `resultMode: \"report\"`");
+    expect(prompt).toContain("Deterministic request classification:");
+    expect(prompt).toContain("- intent: evaluation");
+    expect(prompt).toContain("- safe handling: report_only");
+    expect(prompt).toContain("Use this classification as an explainable safety hint only.");
+    expect(prompt).toContain("It is not permission to dispatch workers or mutate state.");
+    expect(prompt).toContain("If classification is `ambiguity_heavy`, prefer blocking questions");
+    expect(prompt).toContain("Prefer the simplest safe approach first");
+    expect(prompt).toContain("Put rejected paths in `rejectedAlternatives` as advisory context only");
+    expect(prompt).toContain("Only `tasks` and `batches` represent the selected executable plan path.");
+    expect(prompt).toContain("`/go` materializes only that selected task set.");
   });
 
   test("rejects unsafe or ambiguous plan payloads before state mutation", () => {
@@ -70,12 +84,28 @@ describe("orchestrator agent prompt", () => {
       scope: [],
       nonScope: [],
       risks: [],
+      selectedApproach: "한 writer task에 구현과 검증을 함께 둔다.",
+      rejectedAlternatives: [
+        {
+          title: "대안 task를 별도로 실행",
+          reason: "선택 경로가 아니며 materialization 대상이 아니다.",
+          tradeoffs: ["검토 흔적은 남지만 실행 큐에는 들어가지 않는다."],
+        },
+      ],
+      tradeoffs: ["작지만 보수적인 변경을 우선한다."],
       tasks: [task],
       batches: [["write"]],
       userMessage: "계획",
     };
 
-    expect(parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify(payload)}`).tasks).toHaveLength(1);
+    const parsed = parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify(payload)}`);
+    expect(parsed.tasks).toHaveLength(1);
+    expect(parsed.selectedApproach).toBe("한 writer task에 구현과 검증을 함께 둔다.");
+    expect(parsed.rejectedAlternatives?.[0]).toMatchObject({
+      title: "대안 task를 별도로 실행",
+      reason: "선택 경로가 아니며 materialization 대상이 아니다.",
+    });
+    expect(parsed.tradeoffs).toEqual(["작지만 보수적인 변경을 우선한다."]);
     expect(() => parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify({
       ...payload,
       questions: ["BK 결정 필요"],
@@ -89,6 +119,25 @@ describe("orchestrator agent prompt", () => {
       ...payload,
       batches: [["missing"]],
     })}`)).toThrow("references unknown task proposal");
+    expect(() => parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify({
+      ...payload,
+      rejectedAlternatives: [{ title: "대안", reason: "실행 후보처럼 보이면 안 됨", tasks: [task] }],
+    })}`)).toThrow("must be advisory only");
+    expect(() => parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify({
+      ...payload,
+      questions: ["어떤 범위로 진행할까요?"],
+      tasks: [],
+      batches: [["write"]],
+    })}`)).toThrow("plans with questions must not include batches");
+    const questionOnly = parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify({
+      ...payload,
+      questions: ["어떤 범위로 진행할까요?"],
+      tasks: [],
+      batches: [],
+    })}`);
+    expect(questionOnly.tasks).toEqual([]);
+    expect(questionOnly.batches).toEqual([]);
+    expect(questionOnly.rejectedAlternatives?.[0]?.title).toBe("대안 task를 별도로 실행");
   });
 
   test("builds and validates bounded question draft payloads", () => {

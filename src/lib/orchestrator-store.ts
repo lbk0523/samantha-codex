@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { CommandRunResult } from "./worker-dispatch";
 import { compactEntityId } from "./ids";
+import type { RemoteRequestClassification } from "./project-profile";
 
 export type OrchestrationRequestStatus = "pending_plan" | "planned" | "discarded";
 export type OrchestratorPlanStatus = "planned" | "questions" | "failed" | "approved" | "materialized" | "superseded" | "canceled";
@@ -34,6 +35,12 @@ export interface OrchestratorTaskProposal {
   dependencies?: string[];
 }
 
+export interface OrchestratorRejectedAlternative {
+  title: string;
+  reason: string;
+  tradeoffs?: string[];
+}
+
 export interface OrchestratorPlanPayload {
   summary: string;
   assumptions: string[];
@@ -41,6 +48,9 @@ export interface OrchestratorPlanPayload {
   scope: string[];
   nonScope: string[];
   risks: string[];
+  selectedApproach?: string;
+  rejectedAlternatives?: OrchestratorRejectedAlternative[];
+  tradeoffs?: string[];
   tasks: OrchestratorTaskProposal[];
   batches: string[][];
   userMessage: string;
@@ -84,6 +94,7 @@ export interface OrchestratorPlanRecord {
   command?: CommandRunResult;
   rawOutput?: string;
   payload?: OrchestratorPlanPayload;
+  classification?: RemoteRequestClassification;
   failure?: string;
 }
 

@@ -1729,6 +1729,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       command: result.command,
       rawOutput: result.rawOutput,
       payload: result.payload,
+      classification: result.classification,
       failure: result.failure,
     };
     await new OrchestratorPlanStore(orchestratorPlansPath(args)).append(plan);

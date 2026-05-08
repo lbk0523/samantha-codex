@@ -835,14 +835,44 @@ describe("operator reports", () => {
       plan: orchestratorPlan,
     });
     expect(planReport).toContain("오케스트레이터 계획을 만들었습니다.");
+    expect(planReport).toContain("요청 분류: `implementation`");
+    expect(planReport).toContain("handling=`implementation plan`");
+    expect(planReport).toContain("profile=`codex-worker`");
     expect(planReport).toContain("작업 후보:");
     expect(planReport).toContain("`task-proposal-1`");
+    expect(planReport).toContain("files=`1` setup=`0` verify=`1`");
+    expect(planReport).toContain("Batch/dependency 흐름:");
+    expect(planReport).toContain("batch 1: Implement planning flow (Writer, 구현/수정) - 즉시 후보");
     expect(planReport).toContain("역할 흐름:");
     expect(planReport).toContain("Writer: Implement planning flow: 구현 산출 (구현/수정)");
     expect(planReport).toContain("계획 다시 보기: `/plan_current`");
     expect(planReport).toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
     expect(planReport).toContain("계획 수정: `/revise <피드백>`");
     expect(planReport).toContain("계획 취소: `/cancel`");
+
+    const advisoryPlan = {
+      ...orchestratorPlan,
+      payload: {
+        ...orchestratorPlan.payload!,
+        selectedApproach: "한 writer task에서 구현과 검증을 함께 처리합니다.",
+        rejectedAlternatives: [
+          {
+            title: "대안 task set을 병렬 실행",
+            reason: "writer cap 1을 넘길 수 있고 선택 경로가 아닙니다.",
+            tradeoffs: ["빠를 수 있지만 안전 gate가 약해집니다."],
+          },
+        ],
+        tradeoffs: ["더 느리지만 deterministic materialization을 유지합니다."],
+      },
+    };
+    const advisoryReport = orchestratorPlanReport({
+      request: { ...orchestrationRequest, status: "planned", plannedAt: "2026-05-05T10:01:00.000Z" },
+      plan: advisoryPlan,
+    });
+    expect(advisoryReport).toContain("선택/대안 (advisory, /go 제외):");
+    expect(advisoryReport).toContain("선택 접근: 한 writer task에서 구현과 검증을 함께 처리합니다.");
+    expect(advisoryReport).toContain("거절한 대안: 대안 task set을 병렬 실행 - writer cap 1을 넘길 수 있고 선택 경로가 아닙니다.");
+    expect(advisoryReport).toContain("대안/트레이드오프는 advisory이며 `/go` materialization 대상이 아닙니다.");
 
     const recoveryQuestions = orchestratorPlanReport({
       request: { ...orchestrationRequest, id: "request-recovery", recoveryOfPlanId: "plan-original-failed", status: "planned" },
@@ -863,6 +893,27 @@ describe("operator reports", () => {
     expect(recoveryQuestions).toContain("복구 판단: 원 문제는 BK 확인 필요 - Recovery needs BK context");
     expect(recoveryQuestions).toContain("답변/수정 요청: `/revise <피드백>`");
 
+    const ambiguousQuestions = orchestratorPlanReport({
+      request: { ...orchestrationRequest, id: "request-ambiguous", text: "대충 알아서 수정해줘", status: "planned" },
+      plan: {
+        ...orchestratorPlan,
+        id: "plan-ambiguous",
+        status: "questions",
+        payload: {
+          ...orchestratorPlan.payload!,
+          summary: "Ambiguous implementation request",
+          questions: ["어떤 프로젝트와 파일 범위를 대상으로 할까요?"],
+          tasks: [],
+          batches: [],
+          userMessage: "범위 확인이 필요합니다.",
+        },
+      },
+    });
+    expect(ambiguousQuestions).toContain("요청 분류: `ambiguity-heavy`");
+    expect(ambiguousQuestions).toContain("handling=`questions-first`");
+    expect(ambiguousQuestions).toContain("답변/수정 요청: `/revise <피드백>`");
+    expect(ambiguousQuestions).not.toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
+
     const recoveryReady = orchestratorPlanReport({
       request: { ...orchestrationRequest, id: "request-recovery-ready", recoveryOfPlanId: "plan-original-failed", status: "planned" },
       plan: { ...orchestratorPlan, id: "plan-recovery-ready" },
@@ -879,7 +930,7 @@ describe("operator reports", () => {
     expect(blocked).toContain("답변/수정 요청: `/revise <피드백>`");
 
     const materialized = orchestratorGoMaterializedReport({
-      plan: { ...orchestratorPlan, status: "materialized" },
+      plan: { ...advisoryPlan, status: "materialized" },
       tasks: [task],
       actions: [
         createRemoteDispatchAction({
@@ -892,7 +943,36 @@ describe("operator reports", () => {
       ],
     });
     expect(materialized).toContain("오케스트레이터 계획을 승인했고 worker 실행 큐에 등록했습니다.");
+    expect(materialized).toContain("선택된 작업 경로만 task/action으로 등록했습니다. 대안은 advisory로 남깁니다.");
+    expect(materialized).toContain("실행 순서:");
+    expect(materialized).toContain("Pass task status=`pending` (즉시 승인 후보)");
     expect(materialized).toContain("텔레그램: `/now`");
+
+    const prerequisiteTask = { ...task, id: "task-review-risk", title: "Review risk", resultMode: "report" as const };
+    const dependentTask = { ...task, id: "task-apply-change", title: "Apply change" };
+    const prerequisiteAction = createRemoteDispatchAction({
+      task: prerequisiteTask,
+      repoRoot: "/repo",
+      createdAt: "2026-05-05T10:01:00.000Z",
+      source: "remote",
+      commandId: "review-risk",
+    });
+    const dependentAction = createRemoteDispatchAction({
+      task: dependentTask,
+      repoRoot: "/repo",
+      createdAt: "2026-05-05T10:01:00.000Z",
+      source: "remote",
+      commandId: "apply-change",
+      status: "waiting",
+      dependsOnActionIds: [prerequisiteAction.id],
+    });
+    const dependentMaterialized = orchestratorGoMaterializedReport({
+      plan: { ...orchestratorPlan, status: "materialized" },
+      tasks: [prerequisiteTask, dependentTask],
+      actions: [prerequisiteAction, dependentAction],
+    });
+    expect(dependentMaterialized).toContain("status=`waiting` prerequisites=`1`");
+    expect(dependentMaterialized).toContain("Apply change status=`waiting` (prerequisites=1 통과 후 자동 승인)");
     expect(remoteGoNoActionablePlanReport()).toContain("통합 gate가 없습니다.");
     expect(remoteGoNoActionablePlanReport()).toContain("텔레그램: `/now`");
 
@@ -1205,7 +1285,40 @@ describe("operator reports", () => {
         inferredProject: true,
         inferredScope: true,
       }),
-    ).toContain("실행 모드: `report`");
+    ).toContain("요청 분류: `planning/report`");
+    expect(
+      taskDraftPlanReport({
+        draft: {
+          ...draft,
+          instructions: "대충 알아서 수정해줘",
+          targetFiles: ["docs/report.md"],
+          forbiddenChanges: ["state/**"],
+          verifyCommands: ["bun typecheck"],
+          resultMode: "report",
+        },
+        project: {
+          schemaVersion: 1,
+          id: "omht",
+          repoRoot: "/repo/omht",
+          setupCommands: ["bun install"],
+          verifyCommands: ["bun typecheck"],
+          forbiddenChanges: ["state/**"],
+        },
+        scope: {
+          id: "planning_report",
+          label: "Planning report",
+          description: "Document work.",
+          risk: "low",
+          resultMode: "report",
+          targetFiles: ["docs/**"],
+          planSteps: ["Read context.", "Write report."],
+          successCriteria: ["Report is actionable."],
+        },
+        violations: [],
+        inferredProject: true,
+        inferredScope: true,
+      }),
+    ).toContain("handling=`questions-first`");
     expect(taskDraftPreparedReport({ draft, projectId: "omht", violations: ["targetFiles must not be empty"] })).toContain(
       "준비된 드래프트: `draft-1`",
     );

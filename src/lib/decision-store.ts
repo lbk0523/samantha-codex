@@ -65,6 +65,22 @@ function nonEmptyOptions(options: string[] | undefined): string[] {
   return values;
 }
 
+function planApprovalPrompt(plan: OrchestratorPlanRecord): string {
+  const base = "Approve, request revision, or cancel before Samantha materializes worker tasks.";
+  const payload = plan.payload;
+  if (!payload) return base;
+
+  const advisory = [
+    payload.selectedApproach ? `Selected approach: ${oneLine(payload.selectedApproach)}` : "",
+    payload.rejectedAlternatives?.length
+      ? `Rejected alternatives are advisory only: ${payload.rejectedAlternatives.map((item) => oneLine(item.title)).filter(Boolean).join(" / ")}`
+      : "",
+    payload.tradeoffs?.length ? `Tradeoffs: ${payload.tradeoffs.map(oneLine).filter(Boolean).join(" / ")}` : "",
+  ].filter(Boolean);
+
+  return advisory.length ? `${base} ${advisory.join(" ")}` : base;
+}
+
 export function buildDecisionItemId(input: {
   createdAt: string;
   title: string;
@@ -128,7 +144,7 @@ export function decisionFromOrchestratorPlan(input: {
     return createDecisionItem({
       kind: "orchestrator_plan_approval",
       title: `Review plan: ${summary}`,
-      prompt: "Approve, request revision, or cancel before Samantha materializes worker tasks.",
+      prompt: planApprovalPrompt(input.plan),
       options: ["approve", "revise", "cancel"],
       risk: risks.join(" / ") || undefined,
       subject: { type: "orchestrator_plan", id: input.plan.id },

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   applyProjectDefaults,
   applyProjectRemoteScopeDefaults,
+  classifyRemoteRequest,
   classifyRemoteRequestIntent,
   inferProjectProfile,
   selectProjectRemoteScope,
@@ -87,8 +88,9 @@ describe("project profiles", () => {
     });
   });
 
-  test("uses the default remote scope when no keyword matches", () => {
-    expect(selectProjectRemoteScope(profile, { requestText: "unknown request" })?.id).toBe("implementation");
+  test("falls back to report scope when no deterministic write intent matches", () => {
+    expect(selectProjectRemoteScope(profile, { requestText: "unknown request" })?.id).toBe("planning_report");
+    expect(selectProjectRemoteScope(profile, { requestText: "대충 알아서 수정해줘" })?.id).toBe("planning_report");
   });
 
   test("matches Korean planning and report keywords", () => {
@@ -101,6 +103,32 @@ describe("project profiles", () => {
     expect(classifyRemoteRequestIntent("다음 작업 구현")).toBe("implementation");
     expect(classifyRemoteRequestIntent("계획대로 구현 시작")).toBe("implementation");
     expect(selectProjectRemoteScope(profile, { requestText: "다음 작업 구현" })?.id).toBe("implementation");
+  });
+
+  test("classifies mixed Korean and English request intents deterministically", () => {
+    expect(classifyRemoteRequest("classifier 구현해줘").intent).toBe("implementation");
+    expect(classifyRemoteRequest("수정하지 말고 planning report만 작성해줘").intent).toBe("planning_report");
+    expect(classifyRemoteRequest("Review 리스크만 검토해줘 no code changes").intent).toBe("review");
+    expect(classifyRemoteRequest("요구사항 spec acceptance criteria 정리해줘").intent).toBe("spec");
+    expect(classifyRemoteRequest("테스트 전략 evaluate 해줘 without editing").intent).toBe("evaluation");
+    expect(classifyRemoteRequest("failed plan 복구해줘").intent).toBe("recovery");
+    expect(classifyRemoteRequest("대충 알아서 수정해줘").intent).toBe("ambiguity_heavy");
+    expect(classifyRemoteRequest("unknown request")).toMatchObject({
+      intent: "ambiguity_heavy",
+      resultMode: "report",
+      safeHandling: "questions_first",
+    });
+  });
+
+  test("does not fall back to unsafe implementation when only write scopes exist", () => {
+    const writeOnly: ProjectProfile = {
+      ...profile,
+      remoteScopes: [profile.remoteScopes![0]],
+    };
+
+    expect(selectProjectRemoteScope(writeOnly, { requestText: "unknown request" })).toBeUndefined();
+    expect(selectProjectRemoteScope(writeOnly, { requestText: "리뷰만 해줘" })).toBeUndefined();
+    expect(selectProjectRemoteScope(writeOnly, { requestText: "버그 수정해줘" })?.id).toBe("implementation");
   });
 
   test("infers project profiles from project keywords", () => {

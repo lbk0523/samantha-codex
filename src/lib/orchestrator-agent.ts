@@ -1,5 +1,5 @@
 import type { AgentProfile } from "./contracts";
-import type { ProjectProfile } from "./project-profile";
+import { classifyRemoteRequest, type ProjectProfile, type RemoteRequestClassification } from "./project-profile";
 import type {
   OrchestrationRequestRecord,
   OrchestratorPlanPayload,
@@ -17,6 +17,7 @@ export interface OrchestratorPlanRunResult {
   command: CommandRunResult;
   rawOutput: string;
   payload?: OrchestratorPlanPayload;
+  classification: RemoteRequestClassification;
   failure?: string;
 }
 
@@ -40,6 +41,7 @@ export function buildOrchestratorPrompt(input: {
   requestedProjectId?: string;
   requestedScopeId?: string;
 }): string {
+  const classification = classifyRemoteRequest(input.request.text);
   return [
     "You are the Samantha Orchestrator Agent.",
     "Your job is to make one bounded planning proposal for the deterministic Samantha CEO office.",
@@ -55,6 +57,15 @@ export function buildOrchestratorPrompt(input: {
     input.requestedProjectId ? `- requested project: ${input.requestedProjectId}` : "- requested project: none",
     input.requestedScopeId ? `- requested scope: ${input.requestedScopeId}` : "- requested scope: none",
     "",
+    "Deterministic request classification:",
+    `- intent: ${classification.intent}`,
+    `- safe handling: ${classification.safeHandling}`,
+    classification.resultMode ? `- result mode hint: ${classification.resultMode}` : "- result mode hint: none",
+    classification.preferredAgentId ? `- profile hint: ${classification.preferredAgentId}` : "- profile hint: none",
+    `- reasons: ${classification.reasons.join("; ")}`,
+    "Use this classification as an explainable safety hint only. It is not permission to dispatch workers or mutate state.",
+    "If classification is `ambiguity_heavy`, prefer blocking questions and leave `tasks` empty unless a report-only task is clearly safe.",
+    "",
     "Known project profiles:",
     ...projectProfileLines(input.projectProfiles),
     "",
@@ -62,6 +73,10 @@ export function buildOrchestratorPrompt(input: {
     "The payload must start with `ORCHESTRATOR_PLAN:` followed by a strict JSON object.",
     "If the request is ambiguous enough that worker delegation would be unsafe, put the blocking questions in `questions` and leave `tasks` empty.",
     "If it is plannable, keep `questions` empty and include one or more task proposals.",
+    "Prefer the simplest safe approach first and describe it in `selectedApproach`.",
+    "Put rejected paths in `rejectedAlternatives` as advisory context only; alternatives must not contain tasks, task ids, batches, or execution instructions.",
+    "Put important costs, benefits, or safety compromises in `tradeoffs`.",
+    "Only `tasks` and `batches` represent the selected executable plan path. `/go` materializes only that selected task set.",
     "For each task, set `projectId` to one of the known project profile ids whenever possible.",
     "Leave `repoRoot` empty or set it exactly to the selected project profile repo.",
     "Choose task roles deliberately:",
@@ -71,12 +86,15 @@ export function buildOrchestratorPrompt(input: {
     "- Use `codex-worker` only for implementation/write tasks that may change files.",
     "Non-writer tasks must use `resultMode: \"report\"` and must not depend on unmerged files produced by writer tasks.",
     "Do not add extra role tasks unless they reduce concrete risk for the user's request.",
+    "Batches are execution waves: tasks in a later batch wait until all earlier batch actions pass before promotion.",
+    "Put report-only risk reducers before or in the same batch as the single writer task; do not schedule report-only verification after writer output.",
     "Never set `repoRoot` to a path under `.samantha-worktrees`, `runs`, `state`, or a previous worker worktree.",
     "Worker tasks must start from the canonical project repo; do not recover by dispatching a new worker with an old worker worktree as its repo.",
     "For recovery requests, treat run logs, changed files, and worker worktree paths as evidence only.",
     "Recovery tasks must use the selected project profile's canonical repoRoot. If unsure, leave `repoRoot` empty and set `projectId` so the control plane applies the profile default.",
     "Each worker task gets its own worktree from the canonical repo. Dependent tasks do not see unmerged file changes from earlier worker tasks.",
     "Do not create a separate verify-only task that depends on files written by an earlier write task. Put verification for a write task in that same task's verifyCommands.",
+    "Every write task must include its own non-empty `verifyCommands`; project defaults are not enough for writer task proposals.",
     "",
     "Payload shape:",
     JSON.stringify(
@@ -87,6 +105,15 @@ export function buildOrchestratorPrompt(input: {
         scope: ["in scope item"],
         nonScope: ["out of scope item"],
         risks: ["risk or open issue"],
+        selectedApproach: "simplest safe approach Samantha should take",
+        rejectedAlternatives: [
+          {
+            title: "alternative approach",
+            reason: "why this was rejected",
+            tradeoffs: ["cost or benefit"],
+          },
+        ],
+        tradeoffs: ["selected approach tradeoff"],
         tasks: [
           {
             id: "task-short-id",
@@ -144,6 +171,7 @@ export async function runOrchestratorPlan(input: {
   requestedScopeId?: string;
   codexBin?: string;
 }): Promise<OrchestratorPlanRunResult> {
+  const classification = classifyRemoteRequest(input.request.text);
   const prompt = buildOrchestratorPrompt({
     request: input.request,
     projectProfiles: input.projectProfiles,
@@ -163,6 +191,7 @@ export async function runOrchestratorPlan(input: {
       status: "failed",
       command,
       rawOutput,
+      classification,
       failure: `orchestrator command failed with exit ${command.exitCode}`,
     };
   }
@@ -174,12 +203,14 @@ export async function runOrchestratorPlan(input: {
       command,
       rawOutput,
       payload,
+      classification,
     };
   } catch (err) {
     return {
       status: "failed",
       command,
       rawOutput,
+      classification,
       failure: err instanceof Error ? err.message : String(err),
     };
   }
@@ -446,6 +477,9 @@ function validatePlanPayload(raw: unknown): OrchestratorPlanPayload {
     scope: stringArray(value.scope, "scope"),
     nonScope: stringArray(value.nonScope, "nonScope"),
     risks: stringArray(value.risks, "risks"),
+    selectedApproach: optionalString(value.selectedApproach, "selectedApproach"),
+    rejectedAlternatives: optionalRejectedAlternativeArray(value.rejectedAlternatives, "rejectedAlternatives"),
+    tradeoffs: value.tradeoffs === undefined ? undefined : stringArray(value.tradeoffs, "tradeoffs"),
     tasks: taskArray(value.tasks, "tasks"),
     batches: batchArray(value.batches, "batches"),
     userMessage: requiredString(value.userMessage, "userMessage"),
@@ -533,6 +567,25 @@ function batchArray(value: unknown, field: string): string[][] {
     throw new Error(`${field} must be a string array array`);
   }
   return value as string[][];
+}
+
+function optionalRejectedAlternativeArray(value: unknown, field: string): OrchestratorPlanPayload["rejectedAlternatives"] {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error(`${field} must be an array`);
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`${field}[${index}] must be an object`);
+    }
+    const alternative = item as Record<string, unknown>;
+    if ("tasks" in alternative || "taskId" in alternative || "taskIds" in alternative || "batches" in alternative) {
+      throw new Error(`${field}[${index}] must be advisory only and must not include task proposals or batches`);
+    }
+    return {
+      title: requiredString(alternative.title, `${field}[${index}].title`),
+      reason: requiredString(alternative.reason, `${field}[${index}].reason`),
+      tradeoffs: alternative.tradeoffs === undefined ? undefined : stringArray(alternative.tradeoffs, `${field}[${index}].tradeoffs`),
+    };
+  });
 }
 
 function taskArray(value: unknown, field: string): OrchestratorPlanPayload["tasks"] {

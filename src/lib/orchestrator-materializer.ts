@@ -55,8 +55,7 @@ export function materializeOrchestratorPlan(input: {
   for (const [batchIndex, batch] of payload.batches.entries()) {
     const writerTaskIds = batch.filter((id) => {
       const proposal = payload.tasks.find((task) => task.id === id);
-      if (!proposal || proposal.resultMode === "report") return false;
-      return input.agents.find((agent) => agent.id === proposal.targetAgent)?.writerClass === "writer";
+      return proposal ? isWriteProducingProposal(proposal, input.agents) : false;
     });
     if (writerTaskIds.length > 1) {
       violations.push(
@@ -65,8 +64,12 @@ export function materializeOrchestratorPlan(input: {
     }
     for (const id of batch) {
       if (!proposalIds.has(id)) violations.push(`batches[${batchIndex}] references unknown task proposal: ${id}`);
+      if (proposalBatchIndex.has(id)) violations.push(`task proposal ${id}: appears in multiple batches`);
       proposalBatchIndex.set(id, batchIndex);
     }
+  }
+  for (const proposal of payload.tasks) {
+    if (!proposalBatchIndex.has(proposal.id)) violations.push(`task proposal ${proposal.id}: missing from batches`);
   }
   for (const proposal of payload.tasks) {
     const taskId = taskIdFromOrchestratorProposal(proposal.id);
@@ -82,7 +85,8 @@ export function materializeOrchestratorPlan(input: {
       }).id,
     );
   }
-  violations.push(...validateDependencyGraph(payload.tasks, proposalIds));
+  violations.push(...validateDependencyGraph(payload.tasks, proposalIds, proposalBatchIndex));
+  violations.push(...validateUnmergedWriterDependencies(payload.tasks, input.agents, proposalBatchIndex));
 
   for (const proposal of payload.tasks) {
     const task = taskFromProposal(proposal, input.projects);
@@ -92,7 +96,7 @@ export function materializeOrchestratorPlan(input: {
     plannedTaskIds.add(task.id);
 
     violations.push(...validateProposalRepoRoot(taskPrefix, proposal, projectsById, canonicalProjectRoots));
-    const fieldViolations = validateTaskProposal(taskPrefix, task, input.agents);
+    const fieldViolations = validateTaskProposal(taskPrefix, proposal, task, input.agents);
     violations.push(...fieldViolations);
 
     const dependsOnActionIds = dependencyProposalIds(proposal, payload.tasks, proposalBatchIndex)
@@ -118,6 +122,11 @@ export function materializeOrchestratorPlan(input: {
   }
 
   return { ok: violations.length === 0, violations, tasks, actions };
+}
+
+function isWriteProducingProposal(proposal: OrchestratorTaskProposal, agents: AgentProfile[]): boolean {
+  if (proposal.resultMode === "report") return false;
+  return agents.find((agent) => agent.id === proposal.targetAgent)?.writerClass === "writer";
 }
 
 function normalizePath(path: string): string {
@@ -171,7 +180,11 @@ function dependencyProposalIds(
   return [...dependencies].sort();
 }
 
-function validateDependencyGraph(proposals: OrchestratorTaskProposal[], proposalIds: Set<string>): string[] {
+function validateDependencyGraph(
+  proposals: OrchestratorTaskProposal[],
+  proposalIds: Set<string>,
+  batchIndexByProposalId: Map<string, number>,
+): string[] {
   const violations: string[] = [];
   for (const proposal of proposals) {
     for (const dependency of proposal.dependencies ?? []) {
@@ -180,7 +193,12 @@ function validateDependencyGraph(proposals: OrchestratorTaskProposal[], proposal
     }
   }
 
-  const dependenciesById = new Map(proposals.map((proposal) => [proposal.id, proposal.dependencies ?? []]));
+  const dependenciesById = new Map(
+    proposals.map((proposal) => [
+      proposal.id,
+      dependencyProposalIds(proposal, proposals, batchIndexByProposalId),
+    ]),
+  );
   const visiting = new Set<string>();
   const visited = new Set<string>();
   const visit = (id: string, path: string[]): void => {
@@ -197,6 +215,36 @@ function validateDependencyGraph(proposals: OrchestratorTaskProposal[], proposal
     visited.add(id);
   };
   for (const proposal of proposals) visit(proposal.id, []);
+  return violations;
+}
+
+function validateUnmergedWriterDependencies(
+  proposals: OrchestratorTaskProposal[],
+  agents: AgentProfile[],
+  batchIndexByProposalId: Map<string, number>,
+): string[] {
+  const violations: string[] = [];
+  const writeProducingProposalIds = new Set(
+    proposals.filter((proposal) => isWriteProducingProposal(proposal, agents)).map((proposal) => proposal.id),
+  );
+
+  for (const proposal of proposals) {
+    const writeDependencies = dependencyProposalIds(proposal, proposals, batchIndexByProposalId).filter((dependency) =>
+      writeProducingProposalIds.has(dependency),
+    );
+    for (const dependency of writeDependencies) {
+      if (proposal.resultMode === "report") {
+        violations.push(
+          `task proposal ${proposal.id}: report-only tasks must not depend on unmerged writer output from ${dependency}; put verification in the writer task's verifyCommands`,
+        );
+      } else {
+        violations.push(
+          `task proposal ${proposal.id}: writer tasks must not depend on unmerged writer output from ${dependency}; combine dependent writes into one writer task or wait for merge`,
+        );
+      }
+    }
+  }
+
   return violations;
 }
 
@@ -218,7 +266,7 @@ function taskFromProposal(proposal: OrchestratorTaskProposal, projects: ProjectP
   };
 }
 
-function validateTaskProposal(prefix: string, task: TaskSpec, agents: AgentProfile[]): string[] {
+function validateTaskProposal(prefix: string, proposal: OrchestratorTaskProposal, task: TaskSpec, agents: AgentProfile[]): string[] {
   const violations: string[] = [];
   const agent = agents.find((item) => item.id === task.targetAgent);
 
@@ -232,6 +280,10 @@ function validateTaskProposal(prefix: string, task: TaskSpec, agents: AgentProfi
   if (!agent) {
     violations.push(`${prefix}: targetAgent is unknown: ${task.targetAgent || "(empty)"}`);
     return violations;
+  }
+
+  if (agent.writerClass === "writer" && task.resultMode !== "report" && proposal.verifyCommands.length === 0) {
+    violations.push(`${prefix}: writer task proposals must include their own verifyCommands`);
   }
 
   const dispatch = validateDispatch(task, agent);

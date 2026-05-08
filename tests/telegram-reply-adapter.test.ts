@@ -238,6 +238,37 @@ describe("sendOutboxReplies", () => {
     expect(report).not.toContain("merge:check");
   });
 
+  test("keeps compact plan alternatives advisory and separate from go materialization", () => {
+    const report = compactTelegramReport(
+      [
+        "# plan",
+        "",
+        "요청: `request-20260508-work-abc12345`",
+        "계획: `plan-20260508-work-def67890`",
+        "요약: Plan alternatives",
+        "선택/대안 (advisory, /go 제외):",
+        "- 선택 접근: 한 writer task에서 구현과 검증을 함께 처리합니다.",
+        "- 거절한 대안: 대안 task set 병렬 실행 - writer cap 1을 넘길 수 있습니다.",
+        "- 트레이드오프:",
+        "  - 더 느리지만 deterministic materialization을 유지합니다.",
+        "작업 후보:",
+        "- `selected-write` Selected write path agent=`codex-worker` mode=`write`",
+        "안전장치:",
+        "- `/go` 전까지 task/action은 만들지 않습니다.",
+        "- 대안/트레이드오프는 advisory이며 `/go` materialization 대상이 아닙니다.",
+        "다음 액션:",
+        "- 계획 승인 및 worker 실행 큐 등록: `/go`",
+      ].join("\n"),
+    );
+
+    expect(report).toContain("선택/대안 (advisory, /go 제외):");
+    expect(report).toContain("선택 접근: 한 writer task에서 구현과 검증을 함께 처리합니다.");
+    expect(report).toContain("거절한 대안: 대안 task set 병렬 실행");
+    expect(report).toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
+    expect(report).not.toContain("plan-20260508-work-def67890");
+    expect(report).not.toContain("request-20260508-work-abc12345");
+  });
+
   test("normalizes deprecated commands before Telegram display", () => {
     const report = compactTelegramReport(
       [

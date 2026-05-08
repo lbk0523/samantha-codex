@@ -161,6 +161,21 @@ describe("DecisionStore", () => {
       subject: { type: "orchestrator_plan", id: "plan-1" },
       risk: "Dispatch behavior could change.",
     });
+    const advisory = decisionFromOrchestratorPlan({
+      plan: {
+        ...plan,
+        payload: {
+          ...plan.payload!,
+          selectedApproach: "Use the smallest selected task set.",
+          rejectedAlternatives: [{ title: "Parallel writer path", reason: "Writer cap remains one." }],
+          tradeoffs: ["Less parallel, safer materialization."],
+        },
+      },
+      createdAt: "2026-05-07T09:04:00.000Z",
+    });
+    expect(advisory?.prompt).toContain("Selected approach: Use the smallest selected task set.");
+    expect(advisory?.prompt).toContain("Rejected alternatives are advisory only: Parallel writer path");
+    expect(advisory?.prompt).toContain("Tradeoffs: Less parallel, safer materialization.");
     expect(questions).toMatchObject({
       kind: "orchestrator_questions",
       prompt: "Which files are in scope?",

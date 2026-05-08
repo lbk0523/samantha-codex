@@ -125,6 +125,45 @@ describe("materializeOrchestratorPlan role-aware specialist contract", () => {
     ]);
   });
 
+  test("materializes only the selected task proposals and keeps alternatives advisory", () => {
+    const selected = proposal({
+      id: "selected-write",
+      title: "Selected write path",
+      targetAgent: "codex-worker",
+      resultMode: "write",
+      targetFiles: ["src/lib/orchestrator-materializer.ts", "tests/orchestrator-materializer.test.ts"],
+      instructions: "Apply the selected implementation path and verify it.",
+    });
+    const selectedPlan = plan([selected], [["selected-write"]]);
+
+    const result = materializeOrchestratorPlan({
+      plan: {
+        ...selectedPlan,
+        payload: {
+          ...selectedPlan.payload!,
+          selectedApproach: "Use one writer task with its own verification.",
+          rejectedAlternatives: [
+            {
+              title: "shadow-task alternative",
+              reason: "This is not the selected path and must not create task-shadow-task.",
+              tradeoffs: ["Useful context, no execution authority."],
+            },
+          ],
+          tradeoffs: ["Slightly less parallel, keeps writer cap at one."],
+        },
+      },
+      agents: [worker],
+      projects: [project],
+      createdAt: "2026-05-07T00:01:30.000Z",
+      commandId: "remote-go-advisory-alternatives",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.tasks.map((task) => task.id)).toEqual(["task-selected-write"]);
+    expect(result.actions.map((action) => action.orchestratorTaskId)).toEqual(["selected-write"]);
+    expect(result.tasks.map((task) => task.id)).not.toContain("task-shadow-task");
+  });
+
   test("blocks non-writer proposals that request write behavior", () => {
     const result = materializeOrchestratorPlan({
       plan: plan([
@@ -175,6 +214,136 @@ describe("materializeOrchestratorPlan role-aware specialist contract", () => {
 
     expect(result.ok).toBe(false);
     expect(result.violations).toContain("batches[0] exceeds writer cap 1: write-a, write-b");
+  });
+
+  test("rejects unknown dependencies and effective dependency cycles", () => {
+    const unknown = materializeOrchestratorPlan({
+      plan: plan([
+        proposal({
+          id: "use-missing",
+          title: "Use missing prerequisite",
+          targetAgent: "codex-spec",
+          dependencies: ["missing-context"],
+        }),
+      ], [["use-missing"]]),
+      agents: [spec],
+      projects: [project],
+      createdAt: "2026-05-07T00:03:30.000Z",
+      commandId: "remote-go-unknown-dependency",
+    });
+
+    expect(unknown.ok).toBe(false);
+    expect(unknown.violations).toContain("task proposal use-missing: dependency references unknown task proposal: missing-context");
+
+    const cycle = materializeOrchestratorPlan({
+      plan: plan([
+        proposal({
+          id: "cycle-a",
+          title: "Cycle A",
+          targetAgent: "codex-spec",
+          dependencies: ["cycle-b"],
+        }),
+        proposal({
+          id: "cycle-b",
+          title: "Cycle B",
+          targetAgent: "codex-reviewer",
+        }),
+      ], [["cycle-a"], ["cycle-b"]]),
+      agents: [spec, reviewer],
+      projects: [project],
+      createdAt: "2026-05-07T00:03:40.000Z",
+      commandId: "remote-go-dependency-cycle",
+    });
+
+    expect(cycle.ok).toBe(false);
+    expect(cycle.violations).toContain("task proposal dependency cycle: cycle-a -> cycle-b -> cycle-a");
+  });
+
+  test("blocks report-only verification after unmerged writer output", () => {
+    const result = materializeOrchestratorPlan({
+      plan: plan([
+        proposal({
+          id: "apply-change",
+          title: "Apply focused change",
+          targetAgent: "codex-worker",
+          resultMode: "write",
+          targetFiles: ["src/lib/orchestrator-materializer.ts"],
+          instructions: "Apply the focused change and run verification inside this task.",
+        }),
+        proposal({
+          id: "verify-output",
+          title: "Verify unmerged output",
+          targetAgent: "codex-evaluator",
+          instructions: "Verify the previous writer output. Do not edit files.",
+        }),
+      ], [["apply-change"], ["verify-output"]]),
+      agents: [worker, evaluator],
+      projects: [project],
+      createdAt: "2026-05-07T00:03:50.000Z",
+      commandId: "remote-go-post-writer-verify",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.violations).toContain(
+      "task proposal verify-output: report-only tasks must not depend on unmerged writer output from apply-change; put verification in the writer task's verifyCommands",
+    );
+  });
+
+  test("requires write proposals to carry their own verify commands", () => {
+    const result = materializeOrchestratorPlan({
+      plan: plan([
+        proposal({
+          id: "write-with-default-verify-only",
+          title: "Write with project default verify only",
+          targetAgent: "codex-worker",
+          resultMode: "write",
+          targetFiles: ["src/lib/orchestrator-materializer.ts"],
+          verifyCommands: [],
+          instructions: "Apply the change.",
+        }),
+      ], [["write-with-default-verify-only"]]),
+      agents: [worker],
+      projects: [project],
+      createdAt: "2026-05-07T00:03:55.000Z",
+      commandId: "remote-go-missing-writer-verify",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.violations).toContain(
+      "task proposal write-with-default-verify-only: writer task proposals must include their own verifyCommands",
+    );
+  });
+
+  test("keeps dependent writer actions waiting for report-only prerequisites", () => {
+    const result = materializeOrchestratorPlan({
+      plan: plan([
+        proposal({
+          id: "review-risk",
+          title: "Review implementation risk",
+          targetAgent: "codex-reviewer",
+        }),
+        proposal({
+          id: "apply-change",
+          title: "Apply focused change",
+          targetAgent: "codex-worker",
+          resultMode: "write",
+          targetFiles: ["src/lib/orchestrator-materializer.ts"],
+          instructions: "Apply the focused change after the risk report passes.",
+          dependencies: ["review-risk"],
+        }),
+      ], [["review-risk"], ["apply-change"]]),
+      agents: [worker, reviewer],
+      projects: [project],
+      createdAt: "2026-05-07T00:03:58.000Z",
+      commandId: "remote-go-dependent-writer",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.actions.map((action) => [action.orchestratorTaskId, action.status])).toEqual([
+      ["review-risk", "pending"],
+      ["apply-change", "waiting"],
+    ]);
+    expect(result.actions[1]?.dependsOnActionIds).toEqual([result.actions[0]?.id]);
   });
 
   test("materializes recovery tasks from canonical project roots and rejects old worker worktrees", () => {

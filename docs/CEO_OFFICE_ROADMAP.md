@@ -60,6 +60,8 @@ North-star criteria are tracked in [NORTH_STAR.md](NORTH_STAR.md).
 - Phase 2 execution spec: [MVP_HARDENING.md](MVP_HARDENING.md)
 - Phase 3 execution spec:
   [OPERATING_SURFACE_CONSOLIDATION.md](OPERATING_SURFACE_CONSOLIDATION.md)
+- Phase 4 execution spec:
+  [PLANNING_AND_DELEGATION_MATURITY.md](PLANNING_AND_DELEGATION_MATURITY.md)
 - North-star criteria: [NORTH_STAR.md](NORTH_STAR.md)
 
 Future phase execution specs should be added only when Samantha reaches that
@@ -139,7 +141,7 @@ Detailed stages:
 
 ### 4. Planning And Delegation Maturity
 
-Status: planned.
+Status: active.
 
 Objective: improve bounded planning quality while keeping the deterministic CEO
 Office in control of durable state and safety gates.
@@ -163,7 +165,8 @@ Exit criteria:
 - Worker prompts are role-aware and narrow.
 - Failed or incomplete plans produce actionable recovery paths.
 
-Execution stages: write a phase-specific document when this phase begins.
+Detailed stages:
+[PLANNING_AND_DELEGATION_MATURITY.md](PLANNING_AND_DELEGATION_MATURITY.md).
 
 ### 5. Safety, Audit, And Governance
 

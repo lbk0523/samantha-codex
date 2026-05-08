@@ -5,7 +5,7 @@ import type { RunSummary } from "./ledger";
 import { buildOperatingSurfaceView } from "./operating-surface";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord, OrchestratorSynthesisPayload } from "./orchestrator-store";
-import type { ProjectProfile, ProjectRemoteScope } from "./project-profile";
+import { classifyRemoteRequest, type ProjectProfile, type ProjectRemoteScope, type RemoteRequestClassification } from "./project-profile";
 import type { ProposalRecord } from "./proposal-store";
 import { remoteActionCommand, type RemoteActionRecord } from "./remote-action-store";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
@@ -151,6 +151,39 @@ function resultModeLabel(mode: string | undefined): string {
   return mode === "report" ? "계획/보고" : "구현/수정";
 }
 
+function requestIntentLabel(intent: RemoteRequestClassification["intent"]): string {
+  const labels: Record<RemoteRequestClassification["intent"], string> = {
+    implementation: "implementation",
+    planning_report: "planning/report",
+    review: "review",
+    spec: "spec",
+    evaluation: "evaluation",
+    recovery: "recovery",
+    ambiguity_heavy: "ambiguity-heavy",
+  };
+  return labels[intent];
+}
+
+function safeHandlingLabel(handling: RemoteRequestClassification["safeHandling"]): string {
+  const labels: Record<RemoteRequestClassification["safeHandling"], string> = {
+    implementation_plan: "implementation plan",
+    report_only: "report-only",
+    questions_first: "questions-first",
+    recovery_plan: "recovery plan",
+  };
+  return labels[handling];
+}
+
+function requestClassificationLine(classification: RemoteRequestClassification): string {
+  const agent = classification.preferredAgentId ? ` profile=${code(classification.preferredAgentId)}` : "";
+  const mode = classification.resultMode ? ` mode=${code(classification.resultMode)}` : "";
+  return `요청 분류: ${code(requestIntentLabel(classification.intent))} handling=${code(safeHandlingLabel(classification.safeHandling))}${mode}${agent}`;
+}
+
+function requestClassificationReasonLine(classification: RemoteRequestClassification): string {
+  return `분류 근거: ${telegramSafeLine(classification.reasons.join("; "))}`;
+}
+
 function agentRoleLabel(agentId: string | undefined): string {
   if (agentId === "codex-reviewer") return "Reviewer";
   if (agentId === "codex-evaluator") return "Evaluator";
@@ -161,6 +194,75 @@ function agentRoleLabel(agentId: string | undefined): string {
 
 function roleOutcomeLine(input: { agentId?: string; title: string; mode?: string; outcome: string }): string {
   return `- ${agentRoleLabel(input.agentId)}: ${oneLine(input.title)}: ${input.outcome} (${resultModeLabel(input.mode)})`;
+}
+
+function taskProposalLine(task: NonNullable<OrchestratorPlanRecord["payload"]>["tasks"][number]): string {
+  const dependencies = task.dependencies?.length ? ` deps=${code(String(task.dependencies.length))}` : "";
+  const setup = task.setupCommands?.length ?? 0;
+  return `- ${code(task.id)} ${telegramSafeLine(task.title)} agent=${code(task.targetAgent)} mode=${code(task.resultMode ?? "write")} files=${code(String(task.targetFiles.length))} setup=${code(String(setup))} verify=${code(String(task.verifyCommands.length))}${dependencies}`;
+}
+
+function planBatchDependencyLines(plan: OrchestratorPlanRecord): string[] {
+  const payload = plan.payload;
+  if (!payload?.batches.length) return [];
+
+  const tasksById = new Map(payload.tasks.map((task) => [task.id, task]));
+  const explicitDependencies = payload.tasks.filter((task) => task.dependencies?.length);
+  return [
+    "",
+    "Batch/dependency 흐름:",
+    ...payload.batches.map((batch, index) => {
+      const labels = batch.map((id) => {
+        const task = tasksById.get(id);
+        return task ? `${oneLine(task.title)} (${agentRoleLabel(task.targetAgent)}, ${resultModeLabel(task.resultMode)})` : id;
+      });
+      return `- batch ${index + 1}: ${labels.join(", ")} - ${index === 0 ? "즉시 후보" : "이전 batch 통과 후"}`;
+    }),
+    ...(explicitDependencies.length
+      ? explicitDependencies.map((task) => {
+          const dependencies = (task.dependencies ?? []).map((id) => oneLine(tasksById.get(id)?.title ?? id)).join(", ");
+          return `- ${oneLine(task.title)} 명시 의존: ${dependencies}`;
+        })
+      : []),
+  ];
+}
+
+function actionDependencyLine(action: RemoteActionRecord, tasks: TaskSpec[]): string {
+  const task = tasks.find((candidate) => candidate.id === action.taskId);
+  const waitCount = action.dependsOnActionIds?.length ?? 0;
+  const readiness = waitCount > 0 ? `prerequisites=${waitCount} 통과 후 자동 승인` : "즉시 승인 후보";
+  return `- ${oneLine(task?.title ?? action.taskTitle)} status=${code(action.status)} (${readiness})`;
+}
+
+function planHasAdvisory(plan: OrchestratorPlanRecord): boolean {
+  const payload = plan.payload;
+  return Boolean(
+    payload?.selectedApproach?.trim() ||
+    payload?.rejectedAlternatives?.length ||
+    payload?.tradeoffs?.length,
+  );
+}
+
+function planAdvisoryLines(plan: OrchestratorPlanRecord): string[] {
+  const payload = plan.payload;
+  if (!payload || !planHasAdvisory(plan)) return [];
+
+  const lines = [
+    "",
+    "선택/대안 (advisory, /go 제외):",
+    payload.selectedApproach?.trim() ? `- 선택 접근: ${telegramSafeLine(payload.selectedApproach)}` : "",
+    ...(payload.rejectedAlternatives ?? []).map((alternative) => {
+      const tradeoffs = alternative.tradeoffs?.length
+        ? ` tradeoffs=${alternative.tradeoffs.map(telegramSafeLine).join(" / ")}`
+        : "";
+      return `- 거절한 대안: ${telegramSafeLine(alternative.title)} - ${telegramSafeLine(alternative.reason)}${tradeoffs}`;
+    }),
+    ...(payload.tradeoffs?.length
+      ? ["- 트레이드오프:", ...payload.tradeoffs.map((tradeoff) => `  - ${telegramSafeLine(tradeoff)}`)]
+      : []),
+  ];
+
+  return lines.filter((line) => line !== "");
 }
 
 function repoName(repoRoot: string | undefined): string {
@@ -1122,6 +1224,7 @@ export function orchestratorPlanReport(input: {
   plan: OrchestratorPlanRecord;
 }): string {
   const { request, plan } = input;
+  const classification = plan.classification ?? classifyRemoteRequest(request.text);
   if (plan.status === "failed") {
     return [
       "# plan",
@@ -1129,6 +1232,8 @@ export function orchestratorPlanReport(input: {
       "오케스트레이터 계획 생성에 실패했습니다.",
       `요청: ${code(request.id)}`,
       `계획: ${code(plan.id)}`,
+      requestClassificationLine(classification),
+      requestClassificationReasonLine(classification),
       recoveryPlanVerdictLine(request, plan),
       plan.failure ? `실패 이유: ${oneLine(plan.failure)}` : "",
       plan.command ? `exit: ${code(String(plan.command.exitCode))}` : "",
@@ -1148,11 +1253,14 @@ export function orchestratorPlanReport(input: {
     `요청: ${code(request.id)}`,
     `계획: ${code(plan.id)}`,
     `상태: ${code(plan.status)}`,
+    requestClassificationLine(classification),
+    requestClassificationReasonLine(classification),
     recoveryPlanVerdictLine(request, plan),
     "",
     payload?.userMessage ? telegramSafeClipText(payload.userMessage, 1400) : "오케스트레이터가 표시할 메시지를 반환하지 않았습니다.",
     "",
     payload?.summary ? `요약: ${telegramSafeLine(payload.summary)}` : "",
+    ...planAdvisoryLines(plan),
     payload?.questions.length ? "" : "",
     ...(payload?.questions.length ? ["확인 질문:", ...payload.questions.map((question) => `- ${telegramSafeLine(question)}`)] : []),
     payload?.scope.length ? "" : "",
@@ -1161,9 +1269,8 @@ export function orchestratorPlanReport(input: {
     ...(payload?.tasks.length
       ? [
           "작업 후보:",
-          ...payload.tasks.map((task) =>
-            `- ${code(task.id)} ${telegramSafeLine(task.title)} agent=${code(task.targetAgent)} mode=${code(task.resultMode ?? "write")}`,
-          ),
+          ...payload.tasks.map((task) => taskProposalLine(task)),
+          ...planBatchDependencyLines(plan),
           "",
           "역할 흐름:",
           ...payload.tasks.map((task) =>
@@ -1181,6 +1288,7 @@ export function orchestratorPlanReport(input: {
     "",
     "안전장치:",
     "- `/go` 전까지 task/action은 만들지 않습니다.",
+    planHasAdvisory(plan) ? "- 대안/트레이드오프는 advisory이며 `/go` materialization 대상이 아닙니다." : undefined,
     "- merge/push/cleanup은 worker 실행 이후에도 별도 gate가 필요합니다.",
     ...orchestratorPlanNextLines(plan),
   ]
@@ -1224,12 +1332,20 @@ export function orchestratorGoMaterializedReport(input: {
     "오케스트레이터 계획을 승인했고 worker 실행 큐에 등록했습니다.",
     `계획: ${code(input.plan.id)}`,
     `상태: ${code(input.plan.status)}`,
+    ...(planHasAdvisory(input.plan) ? ["선택된 작업 경로만 task/action으로 등록했습니다. 대안은 advisory로 남깁니다."] : []),
     "",
     "생성된 task:",
     ...input.tasks.map((task) => `- ${code(task.id)} ${oneLine(task.title)} agent=${code(task.targetAgent)}`),
     "",
     "생성된 action:",
-    ...input.actions.map((action) => `- ${code(action.id)} task=${code(action.taskId)} status=${code(action.status)}`),
+    ...input.actions.map((action) => {
+      const waitCount = action.dependsOnActionIds?.length ?? 0;
+      const dependency = waitCount > 0 ? ` prerequisites=${code(String(waitCount))}` : "";
+      return `- ${code(action.id)} task=${code(action.taskId)} status=${code(action.status)}${dependency}`;
+    }),
+    "",
+    "실행 순서:",
+    ...input.actions.map((action) => actionDependencyLine(action, input.tasks)),
     "",
     "runner가 `actions:watch`에서 승인된 action을 실행합니다.",
     "",
@@ -1361,21 +1477,24 @@ export function taskDraftPlanReport(input: {
   inferredScope: boolean;
 }): string {
   const scope = input.scope;
+  const classification = classifyRemoteRequest(input.draft.instructions);
   const lines = [
     "# plan",
     "",
     `요청: ${oneLine(input.draft.instructions)}`,
     `드래프트: ${code(input.draft.id)}`,
     `프로젝트: ${code(input.project.id)}${input.inferredProject ? " (자동 선택)" : ""}`,
+    requestClassificationLine(classification),
     `분류: ${resultModeLabel(input.draft.resultMode)}${scope ? ` (${code(scope.id)} - ${oneLine(scope.label)})` : " (프로젝트 기본값)"}`,
     scope ? `위험도: ${scope.risk}${input.inferredScope ? " (자동 선택)" : ""}` : "위험도: unknown",
     `실행 모드: ${code(input.draft.resultMode ?? "write")}`,
     `준비 상태: ${input.violations.length === 0 ? "가능" : "불가"}`,
     "",
     "판단 근거:",
+    `- ${requestClassificationReasonLine(classification)}`,
     `- 작업 repo는 ${code(input.project.repoRoot)}입니다.`,
     scope
-      ? `- 요청 내용을 기준으로 ${code(scope.id)} 범위를 선택했습니다.`
+      ? `- 요청 분류와 내용을 기준으로 ${code(scope.id)} 범위를 선택했습니다.`
       : "- remote scope recipe가 없어 project 기본값만 적용했습니다.",
     "- `/plan`은 worker 실행이나 승인까지 진행하지 않습니다.",
     "",

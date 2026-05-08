@@ -193,6 +193,11 @@ export function validateTaskTargetFiles(files: string[], forbiddenChanges: strin
       violations.push(`targetFiles must not contain parent directory segments: ${trimmed}`);
       continue;
     }
+    const normalized = trimmed.replace(/\\/g, "/");
+    if ([".", "./", "*", "**", "**/*", "./**", "./**/*"].includes(normalized)) {
+      violations.push(`targetFiles entry is too broad: ${trimmed}`);
+      continue;
+    }
     const forbidden = forbiddenChanges.find((glob) => matchesAnyGlob(trimmed, [glob]));
     if (forbidden) {
       violations.push(`targetFiles entry is forbidden: ${trimmed} matches ${forbidden}`);
