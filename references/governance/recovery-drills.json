@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "drills": [
+    {
+      "id": "failed-verify",
+      "title": "Failed Worker Verification",
+      "failureMode": "failed_verify",
+      "governedSubject": { "type": "run", "id": "drill-failed-verify" },
+      "projectProfileIds": ["samantha"],
+      "signals": [
+        "worker run result has pass=false",
+        "verifyResults include a non-zero exit code",
+        "plan result synthesis is failed or mixed"
+      ],
+      "operatorSteps": [
+        "Inspect the run with `bun run samantha runs:show <run-id>` and the work chain with `bun run samantha review:show <run-id> --subject=run`.",
+        "Use `/recover` or a local recovery request so the new task is planned from the project profile canonical repoRoot.",
+        "Keep the failed worker worktree as evidence only; do not dispatch recovery from it.",
+        "Record the drill outcome with `bun run samantha drills:record failed-verify --outcome=<fixed|still_blocked|needs_bk> --note=<summary>`."
+      ],
+      "recoveryGuidance": {
+        "canonicalRoot": "Use the canonical repoRoot from `references/project-profiles/samantha.json` after profile expansion.",
+        "preMerge": [
+          "Do not merge a run whose verification failed.",
+          "Create a recovery plan from the canonical project profile root.",
+          "Run the recovery task through normal verification before any merge gate."
+        ],
+        "postMerge": [
+          "If a bad change was already merged, propose an explicit revert or forward-fix task from the canonical project profile root.",
+          "Do not use git reset or checkout to rewrite history.",
+          "Run verification, merge, push, and cleanup gates normally."
+        ],
+        "gates": ["plan approval", "worker verification", "merge gate", "push gate", "cleanup gate"]
+      }
+    },
+    {
+      "id": "dirty-worktree",
+      "title": "Dirty Worktree Before Integration",
+      "failureMode": "dirty_worktree",
+      "governedSubject": { "type": "merge", "id": "drill-dirty-worktree" },
+      "projectProfileIds": ["samantha"],
+      "signals": [
+        "merge:check reports uncommitted changes",
+        "run lifecycle is missing mergedAt",
+        "operator review reports partial integration"
+      ],
+      "operatorSteps": [
+        "Inspect the run and lifecycle with `bun run samantha review:show <run-id> --subject=run`.",
+        "Leave unrelated user changes untouched and identify whether the dirt belongs to the run under review.",
+        "If the run is invalid, request a recovery task from the canonical project profile root rather than cleaning the old worker worktree by hand.",
+        "Record the drill outcome with `bun run samantha drills:record dirty-worktree --outcome=<fixed|still_blocked|needs_bk> --note=<summary>`."
+      ],
+      "recoveryGuidance": {
+        "canonicalRoot": "Use the canonical repoRoot from the selected project profile; worker worktree paths are evidence only.",
+        "preMerge": [
+          "Do not apply merge while the integration target is dirty.",
+          "Resolve ownership of dirty files through a new approved task or BK decision.",
+          "Re-run merge:check after the canonical root is clean."
+        ],
+        "postMerge": [
+          "If dirt is discovered after merge but before push, stop at the push gate and review the lifecycle record.",
+          "If pushed already, create an explicit follow-up recovery plan instead of rewriting history.",
+          "Cleanup remains gated and must not remove evidence before review."
+        ],
+        "gates": ["merge gate", "push gate", "cleanup gate", "operator review"]
+      }
+    },
+    {
+      "id": "merge-conflict",
+      "title": "Merge Conflict",
+      "failureMode": "merge_conflict",
+      "governedSubject": { "type": "merge", "id": "drill-merge-conflict" },
+      "projectProfileIds": ["samantha"],
+      "signals": [
+        "merge:apply exits non-zero",
+        "merge gate reports non-fast-forward or conflicting changes",
+        "run lifecycle is not marked merged"
+      ],
+      "operatorSteps": [
+        "Inspect `bun run samantha merge:check --run-log=<path> --repo-root=<canonical-root>` output and the review report.",
+        "Treat the conflict as a blocked merge, not an invitation to force merge.",
+        "Create a recovery or rebase task from the canonical project profile root with the conflict evidence attached.",
+        "Record the drill outcome with `bun run samantha drills:record merge-conflict --outcome=<fixed|still_blocked|needs_bk> --note=<summary>`."
+      ],
+      "recoveryGuidance": {
+        "canonicalRoot": "Use the canonical project profile repoRoot selected for the original plan.",
+        "preMerge": [
+          "Do not bypass merge:check or merge:apply.",
+          "Do not edit the worker worktree as the recovery root.",
+          "Run verification again after the conflict is resolved by a new approved task."
+        ],
+        "postMerge": [
+          "If an incorrect conflict resolution was merged, create an explicit corrective task.",
+          "Do not rewrite published history from Samantha.",
+          "Push and cleanup remain separate gated transitions."
+        ],
+        "gates": ["merge gate", "worker verification", "push gate", "cleanup gate"]
+      }
+    },
+    {
+      "id": "failed-push",
+      "title": "Failed Push",
+      "failureMode": "failed_push",
+      "governedSubject": { "type": "push", "id": "drill-failed-push" },
+      "projectProfileIds": ["samantha"],
+      "signals": [
+        "merge lifecycle has mergedAt but no pushedAt",
+        "merge:push exits non-zero",
+        "operator review reports partial integration"
+      ],
+      "operatorSteps": [
+        "Inspect `bun run samantha review:show <run-id> --subject=run` and the push command failure.",
+        "Do not mark pushedAt manually and do not cleanup the worktree before push status is settled.",
+        "If branch state changed remotely, request BK guidance or a recovery task from the canonical project profile root.",
+        "Record the drill outcome with `bun run samantha drills:record failed-push --outcome=<fixed|still_blocked|needs_bk> --note=<summary>`."
+      ],
+      "recoveryGuidance": {
+        "canonicalRoot": "Use the canonical project profile repoRoot; the merged commit and run log are audit evidence.",
+        "preMerge": [
+          "Not applicable after mergedAt exists; verify the lifecycle before retrying a push gate.",
+          "If no merge occurred, resolve through the merge gate first.",
+          "Do not skip directly to cleanup."
+        ],
+        "postMerge": [
+          "Keep the lifecycle in partially integrated state until push succeeds or BK chooses a recovery path.",
+          "Retrying push requires an explicit operator action, not automatic worker retry.",
+          "Cleanup requires the normal cleanup gate after push status is recorded."
+        ],
+        "gates": ["push gate", "operator review", "cleanup gate"]
+      }
+    },
+    {
+      "id": "stale-approval",
+      "title": "Stale Approval",
+      "failureMode": "stale_approval",
+      "governedSubject": { "type": "plan", "id": "drill-stale-approval" },
+      "projectProfileIds": ["samantha"],
+      "signals": [
+        "decision subject no longer points to a current planned plan",
+        "plan is materialized, canceled, superseded, or missing",
+        "`/go` reports no actionable current approval"
+      ],
+      "operatorSteps": [
+        "Inspect pending decisions with `bun run samantha decisions:list --pending` and current state with `bun run samantha ceo:status`.",
+        "Reject, archive, or revise stale decisions through normal decision commands.",
+        "Create a fresh plan approval if the work is still desired; do not reuse stale approval evidence.",
+        "Record the drill outcome with `bun run samantha drills:record stale-approval --outcome=<fixed|still_blocked|needs_bk> --note=<summary>`."
+      ],
+      "recoveryGuidance": {
+        "canonicalRoot": "A fresh plan must use the selected canonical project profile repoRoot.",
+        "preMerge": [
+          "Do not materialize tasks from stale approval.",
+          "Generate a new plan or revision and wait for current BK approval.",
+          "Keep stale decision records as audit history."
+        ],
+        "postMerge": [
+          "If stale approval was discovered after integration, use review:show to reconstruct the chain.",
+          "Create a corrective plan if the integrated work was not actually approved.",
+          "Do not edit old decisions to make them current."
+        ],
+        "gates": ["decision gate", "plan materialization gate", "operator review"]
+      }
+    },
+    {
+      "id": "mistaken-profile-proposal",
+      "title": "Mistaken Profile Proposal",
+      "failureMode": "mistaken_profile_proposal",
+      "governedSubject": { "type": "agent_profile", "id": "codex-reviewer" },
+      "projectProfileIds": ["samantha"],
+      "signals": [
+        "profile proposal grants writer authority to a non-writer",
+        "profile proposal changes model or worktree policy without approval",
+        "profile governance reports unapproved authority change"
+      ],
+      "operatorSteps": [
+        "Inspect the profile/capability decision and governance violations before approval.",
+        "Reject the mistaken proposal or request a revised report-only profile change.",
+        "Do not activate profile changes from LLM output alone.",
+        "Record the drill outcome with `bun run samantha drills:record mistaken-profile-proposal --outcome=<fixed|still_blocked|needs_bk> --note=<summary>`."
+      ],
+      "recoveryGuidance": {
+        "canonicalRoot": "Profile proposals are reviewed against canonical repository profiles and policy records, not worker worktrees.",
+        "preMerge": [
+          "Keep `codex-worker` as the only production writer unless a later evidence phase explicitly changes policy.",
+          "Require a governed `agent_profile_change` approval for activation.",
+          "Reject proposals that silently expand worktree or merge authority."
+        ],
+        "postMerge": [
+          "If a mistaken profile file was merged, create a corrective profile-governance task from the canonical project profile root.",
+          "Record the original mistake and correction as governance events.",
+          "Run verification before merge, push, and cleanup."
+        ],
+        "gates": ["profile governance gate", "decision gate", "worker dispatch gate"]
+      }
+    },
+    {
+      "id": "blocked-capability-request",
+      "title": "Blocked Capability Request",
+      "failureMode": "blocked_capability_request",
+      "governedSubject": { "type": "capability", "id": "drill-blocked-capability" },
+      "projectProfileIds": ["samantha"],
+      "signals": [
+        "connector or secret access is requested without an approved capability record",
+        "skill bundle conflicts with Samantha orchestration safety policy",
+        "capability governance reports missing or blocked grants"
+      ],
+      "operatorSteps": [
+        "Inspect the capability decision and denial report without exposing secret values.",
+        "Reject blocked requests or create a narrower governed capability proposal.",
+        "Do not pass connectors or secrets to workers unless an approved capability record grants that exact access.",
+        "Record the drill outcome with `bun run samantha drills:record blocked-capability-request --outcome=<fixed|still_blocked|needs_bk> --note=<summary>`."
+      ],
+      "recoveryGuidance": {
+        "canonicalRoot": "Capability corrections must be proposed against project and agent profile records from the canonical repoRoot.",
+        "preMerge": [
+          "Do not dispatch work that depends on missing connector or secret grants.",
+          "Keep denial reports redacted and audit-friendly.",
+          "Require a separate governed capability approval for allowed skill bundles, connectors, and secrets."
+        ],
+        "postMerge": [
+          "If an unsafe grant was merged, create a corrective governance task and revoke the grant through normal approval gates.",
+          "Do not hide the unsafe proposal by deleting historical records.",
+          "Run profile governance tests before integration gates."
+        ],
+        "gates": ["capability governance gate", "decision gate", "worker dispatch gate"]
+      }
+    }
+  ]
+}

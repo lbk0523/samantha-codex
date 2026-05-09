@@ -103,6 +103,14 @@ import {
   type ProjectProfile,
 } from "./lib/project-profile";
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
+import {
+  createRecoveryDrillOutcomeEvent,
+  findRecoveryDrill,
+  formatRecoveryDrillReport,
+  loadRecoveryDrillCatalog,
+  parseRecoveryDrillOutcome,
+  recoveryDrillSourceId,
+} from "./lib/recovery-drills";
 import { createRemoteDispatchAction, RemoteActionStore, type RemoteActionRecord } from "./lib/remote-action-store";
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { recoveryResolvedPlanIds } from "./lib/recovery-continuity";
@@ -213,6 +221,10 @@ function governanceEventsPath(args: ParsedArgs): string {
 
 function costBudgetAuditPath(args: ParsedArgs): string {
   return join(stateDir(args), "budget-audit.jsonl");
+}
+
+function recoveryDrillsPath(args: ParsedArgs): string {
+  return resolve(flag(args, "drills", join(root, "references/governance/recovery-drills.json")));
 }
 
 function actionRunnerLockPath(args: ParsedArgs): string {
@@ -1456,6 +1468,18 @@ async function recordGovernedDecisionApproval(args: ParsedArgs, decision: Decisi
   });
 }
 
+function relatedRefsFromFlags(args: ParsedArgs): { decisionIds?: string[]; actionIds?: string[]; runIds?: string[] } | undefined {
+  const decisionId = flag(args, "decision-id", "");
+  const actionId = flag(args, "action-id", "");
+  const runId = flag(args, "run-id", "");
+  const related = {
+    decisionIds: decisionId ? [decisionId] : undefined,
+    actionIds: actionId ? [actionId] : undefined,
+    runIds: runId ? [runId] : undefined,
+  };
+  return related.decisionIds || related.actionIds || related.runIds ? related : undefined;
+}
+
 async function resolveLatestRemotePlanApprovalDecision(
   args: ParsedArgs,
   receivedAt: string,
@@ -2539,6 +2563,55 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "drills:list") {
+    const catalog = await loadRecoveryDrillCatalog(recoveryDrillsPath(args));
+    printJson(
+      catalog.drills.map((drill) => ({
+        id: drill.id,
+        title: drill.title,
+        failureMode: drill.failureMode,
+        governedSubject: drill.governedSubject,
+        projectProfileIds: drill.projectProfileIds,
+      })),
+    );
+    return;
+  }
+
+  if (args.command === "drills:show") {
+    const id = args.positionals[0];
+    if (!id) throw new Error("usage: drills:show <drill-id>");
+    const catalog = await loadRecoveryDrillCatalog(recoveryDrillsPath(args));
+    const drill = findRecoveryDrill(catalog, id);
+    const [projectProfiles, events] = await Promise.all([
+      loadProjectProfiles(projectProfilesDir(args)),
+      new GovernanceEventStore(governanceEventsPath(args)).list({
+        source: { kind: "operator_report", id: recoveryDrillSourceId(drill.id) },
+      }),
+    ]);
+    console.log(formatRecoveryDrillReport({ drill, projectProfiles, events }));
+    return;
+  }
+
+  if (args.command === "drills:record") {
+    const id = args.positionals[0];
+    const note = flag(args, "note", "");
+    if (!id || !note) {
+      throw new Error("usage: drills:record <drill-id> --outcome=<fixed|still_blocked|needs_bk> --note=<summary>");
+    }
+    const catalog = await loadRecoveryDrillCatalog(recoveryDrillsPath(args));
+    const drill = findRecoveryDrill(catalog, id);
+    const event = createRecoveryDrillOutcomeEvent({
+      drill,
+      outcome: parseRecoveryDrillOutcome(flag(args, "outcome", "")),
+      timestamp: flag(args, "timestamp", new Date().toISOString()),
+      actor: flag(args, "actor", "bk"),
+      note,
+      related: relatedRefsFromFlags(args),
+    });
+    printJson(await new GovernanceEventStore(governanceEventsPath(args)).append(event));
+    return;
+  }
+
   if (args.command === "tasks:add") {
     const taskPath = args.positionals[0];
     if (!taskPath) throw new Error("usage: tasks:add <task.json>");
@@ -3272,6 +3345,9 @@ async function main(): Promise<void> {
       "  runs:list",
       "  runs:show <run-id>",
       "  review:show <id> [--subject=auto|request|plan|decision|task|action|run]",
+      "  drills:list",
+      "  drills:show <drill-id>",
+      "  drills:record <drill-id> --outcome=<fixed|still_blocked|needs_bk> --note=<summary>",
       "  tasks:add <task.json>",
       "  tasks:list [--include-archived]",
       "  tasks:show <task-id>",

@@ -391,6 +391,21 @@ Verification focus:
 - rollback guidance does not bypass merge, push, cleanup, or verification gates
 - failure-mode docs remain linked from operator reports where useful
 
+Outcome:
+
+- Added a controlled drill catalog in
+  `references/governance/recovery-drills.json` for failed verify, dirty
+  worktree, merge conflict, failed push, stale approval, mistaken profile
+  proposal, and blocked capability request.
+- Added `docs/ROLLBACK_AND_RECOVERY_DRILLS.md` plus `drills:list`,
+  `drills:show`, and `drills:record` CLI support. These commands report drill
+  guidance and append explicit drill outcome governance events; they do not run
+  workers, retry failed plans, merge, push, cleanup, or rewrite git history.
+- Drill reports show canonical project profile roots and treat old worker
+  worktrees, run logs, and changed files as evidence only.
+- Outcome recording distinguishes `fixed`, `still_blocked`, and `needs_bk`
+  states in the append-only governance audit.
+
 ## G10: Phase 5 Exit Review And Phase 6 Handoff
 
 Goal: prove that governance is strong enough before Samantha moves into
