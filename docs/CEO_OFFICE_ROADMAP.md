@@ -1,6 +1,6 @@
 # CEO Office Roadmap
 
-Last updated: 2026-05-09
+Last updated: 2026-05-10
 
 ## Purpose
 
@@ -64,6 +64,8 @@ North-star criteria are tracked in [NORTH_STAR.md](NORTH_STAR.md).
   [PLANNING_AND_DELEGATION_MATURITY.md](PLANNING_AND_DELEGATION_MATURITY.md)
 - Phase 5 execution spec:
   [SAFETY_AUDIT_GOVERNANCE.md](SAFETY_AUDIT_GOVERNANCE.md)
+- Phase 6 execution spec:
+  [MULTI_PROJECT_OPERATIONS.md](MULTI_PROJECT_OPERATIONS.md)
 - North-star criteria: [NORTH_STAR.md](NORTH_STAR.md)
 
 Future phase execution specs should be added only when Samantha reaches that
@@ -213,7 +215,7 @@ Detailed stages: [SAFETY_AUDIT_GOVERNANCE.md](SAFETY_AUDIT_GOVERNANCE.md).
 
 ### 6. Multi-Project Operations
 
-Status: planned.
+Status: ready for staged implementation.
 
 Objective: let Samantha manage multiple active projects without path drift,
 state confusion, cross-project safety leaks, or lost goal ancestry.
@@ -242,7 +244,7 @@ Exit criteria:
 - Remote commands cannot accidentally operate on the wrong project.
 - Host runtime remains portable between Mac client and Ubuntu automation host.
 
-Execution stages: write a phase-specific document when this phase begins.
+Detailed stages: [MULTI_PROJECT_OPERATIONS.md](MULTI_PROJECT_OPERATIONS.md).
 
 ### 7. Evidence-Based Parallelism Expansion
 
