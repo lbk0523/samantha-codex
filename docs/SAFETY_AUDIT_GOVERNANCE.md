@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-09
 
-Status: active.
+Status: implemented.
 
 This document contains the execution stages for roadmap Phase 5:
 [Safety, Audit, And Governance](CEO_OFFICE_ROADMAP.md#5-safety-audit-and-governance).
@@ -429,6 +429,88 @@ Verification focus:
   authority expansion exists
 - Mac-side verification passes
 - Ubuntu host verification is run only when host runtime behavior is touched
+
+Outcome:
+
+- Completed the Phase 5 exit review below without adding runtime behavior.
+- Phase 5 is ready to close because every roadmap exit criterion has concrete
+  test or documentation evidence.
+- Phase 6 remains planned, not active. This review does not add a Phase 6
+  execution spec or enable multi-project runtime behavior.
+- `writerCap` remains `1`; no profile, capability, skill, connector, routine,
+  or budget authority expansion was approved or activated.
+
+## Phase 5 Exit Review
+
+| Exit criterion | Review result | Evidence |
+| --- | --- | --- |
+| A completed work item can be reconstructed from request to final state. | Met. The read-only operator review report reconstructs request, plan, decision, task, action, run, verify, merge, push, cleanup, and recovery links, and flags missing links as audit gaps. | [tests/operator-review-report.test.ts](../tests/operator-review-report.test.ts), [src/lib/operator-review-report.ts](../src/lib/operator-review-report.ts), [tests/run-lifecycle-store.test.ts](../tests/run-lifecycle-store.test.ts) |
+| Unsafe transitions are blocked before execution. | Met. Risk classification fails closed for unknown risk and drift; plan materialization, stale remote approval, merge, push, cleanup, and recovery gates stop unsafe transitions before creating or advancing work. | [tests/risk-policy.test.ts](../tests/risk-policy.test.ts), [tests/orchestrator-materializer.test.ts](../tests/orchestrator-materializer.test.ts), [tests/remote-approval.test.ts](../tests/remote-approval.test.ts), [tests/merge-gate.test.ts](../tests/merge-gate.test.ts), [tests/worktree-cleanup.test.ts](../tests/worktree-cleanup.test.ts) |
+| BK can see who or what approved each risky transition. | Met. Governed decision resolution records `resolvedBy`, `resolvedAt`, risk, and prompt summary, and appends a `transition_approved` governance event sourced to the decision. Operator review reports display approval records and audit gaps. | [tests/governance-decision-cli.test.ts](../tests/governance-decision-cli.test.ts), [tests/governance-event-store.test.ts](../tests/governance-event-store.test.ts), [tests/operator-review-report.test.ts](../tests/operator-review-report.test.ts) |
+| Agent/profile/capability changes require explicit approval and leave an auditable diff, risk class, approver, and timestamp. | Met. Unapproved profile, capability, connector, secret, skill, and safety-policy changes are rejected before use. Approved governed decisions record BK approval evidence and append governance audit events. | [tests/profile-governance.test.ts](../tests/profile-governance.test.ts), [tests/governance-decision-cli.test.ts](../tests/governance-decision-cli.test.ts), [tests/policy.test.ts](../tests/policy.test.ts) |
+| Cost and budget-relevant events can be recorded for review before later enforcement phases depend on them. | Met. Cost/budget observations are append-only audit records with measured, estimated, and unknown cost kinds. Reports distinguish unknown cost from zero and do not imply budget enforcement. | [tests/cost-budget-audit.test.ts](../tests/cost-budget-audit.test.ts), [tests/operator-reports.test.ts](../tests/operator-reports.test.ts), [src/lib/cost-budget-audit.ts](../src/lib/cost-budget-audit.ts) |
+| Recovery and rollback paths are documented and dogfooded. | Met. The controlled drill catalog covers failed verify, dirty worktree, merge conflict, failed push, stale approval, mistaken profile proposal, and blocked capability request. Drill outcomes append governance events and use canonical project profile roots, not worker worktrees. | [docs/ROLLBACK_AND_RECOVERY_DRILLS.md](ROLLBACK_AND_RECOVERY_DRILLS.md), [references/governance/recovery-drills.json](../references/governance/recovery-drills.json), [tests/recovery-drills.test.ts](../tests/recovery-drills.test.ts) |
+
+## Authority Review
+
+- Writer authority: `DEFAULT_SAFETY_POLICY.writerCap` remains `1`, and
+  `codex-worker` remains the only bundled writer profile. Non-writers remain
+  report-only with `worktreePolicy: "none"` and `mergePolicy: "none"`.
+  Evidence: [src/lib/policy.ts](../src/lib/policy.ts),
+  [tests/policy.test.ts](../tests/policy.test.ts), and
+  [references/agent-profiles](../references/agent-profiles).
+- Skill authority: bundled profiles have no required skill bundles, and
+  orchestration-conflicting skills remain blocked even with capability approval.
+  Evidence: [tests/profile-governance.test.ts](../tests/profile-governance.test.ts)
+  and [tests/codex-dispatch.test.ts](../tests/codex-dispatch.test.ts).
+- Connector and secret authority: bundled profiles do not grant connector or
+  secret access. Any future connector or secret grant must be an exact approved
+  capability record, and missing-secret denials stay redacted. Evidence:
+  [tests/profile-governance.test.ts](../tests/profile-governance.test.ts) and
+  [tests/worker-dispatch.test.ts](../tests/worker-dispatch.test.ts).
+- Routine authority: Phase 5 defines routine as a governed taxonomy subject but
+  adds no scheduler, webhook, API trigger, or routine activation path. Routine
+  execution remains a Phase 9 follow-up. Evidence:
+  [references/governance/taxonomy.json](../references/governance/taxonomy.json)
+  and [tests/governance-taxonomy.test.ts](../tests/governance-taxonomy.test.ts).
+- Budget authority: Phase 5 records budget observations only. It does not add
+  automatic budget stops, throttling, provider billing calls, or enforcement.
+  Evidence: [tests/cost-budget-audit.test.ts](../tests/cost-budget-audit.test.ts)
+  and [tests/operator-reports.test.ts](../tests/operator-reports.test.ts).
+
+## G10 Verification Run
+
+Run on 2026-05-09 from the Mac client side. No host runtime behavior changed,
+so Ubuntu host verification remains outside this G10 review.
+
+- Focused Phase 5 tests:
+  `bun test tests/governance-taxonomy.test.ts tests/governance-event-store.test.ts tests/risk-policy.test.ts tests/profile-governance.test.ts tests/cost-budget-audit.test.ts tests/operator-review-report.test.ts tests/recovery-drills.test.ts tests/policy.test.ts tests/orchestrator-materializer.test.ts tests/remote-approval.test.ts tests/merge-gate.test.ts tests/worktree-cleanup.test.ts tests/operator-reports.test.ts tests/codex-dispatch.test.ts tests/worker-dispatch.test.ts`
+  passed: 122 tests, 0 failures, 15 files.
+- `bun run verify:docs` passed.
+- `bun run verify:mac` passed. It ran `bun typecheck`, `bun run test:portable`
+  with 259 tests and 0 failures across 42 files, then `bun run verify:docs`.
+
+## Phase 6 Handoff Notes
+
+- Phase 6 project/goal ancestry: add a phase-specific execution document only
+  when Phase 6 begins. It should define project -> goal -> work item ancestry
+  for requests, plans, decisions, tasks, actions, runs, lifecycle records,
+  reports, recovery records, and budget observations. Remote commands must keep
+  deterministic project selection and must not operate on an inferred wrong
+  project.
+- Phase 7 role topology: use Phase 5 profile governance as the authority
+  baseline. Advisory role relationships, reviewer/researcher/evaluator
+  topology, and any role/capability matrix must not grant execution authority by
+  themselves. Any writer-cap change still requires dogfood evidence and BK
+  approval.
+- Phase 8 SOP and memory: SOP, skill, and memory documents may guide agents
+  only through deterministic write gates. They must be source-backed,
+  reviewable, reversible, and unable to override safety policy, worktree
+  allocation, dispatch, merge, push, cleanup, or approval gates.
+- Phase 9 routine and budget follow-ups: routine triggers and budget enforcement
+  must build on Phase 5 governance events and cost/budget audit hooks. Future
+  schedulers, webhooks, API-triggered work, throttling, or budget stops must go
+  through deterministic policy gates and must not be hidden agent judgment.
 
 ## Standard Verification
 

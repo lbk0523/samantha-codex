@@ -172,7 +172,7 @@ Detailed stages:
 
 ### 5. Safety, Audit, And Governance
 
-Status: active.
+Status: implemented.
 
 Objective: make Samantha trustworthy for larger and riskier work by improving
 traceability, policy enforcement, post-fact review, and governance for any
