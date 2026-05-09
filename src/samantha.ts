@@ -20,6 +20,8 @@ import {
   type DecisionSubject,
 } from "./lib/decision-store";
 import { writeDashboard, type LiveRunEvent, type LiveRunStatus } from "./lib/dashboard";
+import { GovernanceEventStore } from "./lib/governance-event-store";
+import { parseGovernanceRiskClass } from "./lib/governance-taxonomy";
 import { compactOutboxFileName } from "./lib/ids";
 import { processInbox, type InboxCommand } from "./lib/inbox";
 import { RunIndex, summarizeWorkerRun, type RunSummary } from "./lib/ledger";
@@ -88,6 +90,7 @@ import {
 } from "./lib/orchestrator-store";
 import { runPlan } from "./lib/plan-runner";
 import { validateDispatch } from "./lib/policy";
+import { validateAgentProfileGovernance } from "./lib/profile-governance";
 import {
   applyProjectDefaults,
   applyProjectRemoteScopeDefaults,
@@ -202,6 +205,10 @@ function decisionsPath(args: ParsedArgs): string {
   return join(stateDir(args), "decisions.jsonl");
 }
 
+function governanceEventsPath(args: ParsedArgs): string {
+  return join(stateDir(args), "governance-events.jsonl");
+}
+
 function actionRunnerLockPath(args: ParsedArgs): string {
   return resolve(flag(args, "actions-lock-file", join(stateDir(args), "actions.lock")));
 }
@@ -295,7 +302,9 @@ function decisionKind(value: string): DecisionKind {
     value === "orchestrator_plan_approval" ||
     value === "orchestrator_questions" ||
     value === "blocker_clarification" ||
-    value === "risk_acceptance"
+    value === "risk_acceptance" ||
+    value === "agent_profile_change" ||
+    value === "capability_change"
   ) {
     return value;
   }
@@ -322,7 +331,16 @@ function decisionSubject(args: ParsedArgs): DecisionSubject | undefined {
   if (typeof type !== "string" || typeof id !== "string" || !type || !id) {
     throw new Error("decision subject requires --subject-type and --subject-id");
   }
-  if (type !== "manual" && type !== "orchestrator_plan" && type !== "remote_action" && type !== "task" && type !== "run") {
+  if (
+    type !== "manual" &&
+    type !== "orchestrator_plan" &&
+    type !== "remote_action" &&
+    type !== "task" &&
+    type !== "run" &&
+    type !== "agent_profile" &&
+    type !== "capability" &&
+    type !== "policy"
+  ) {
     throw new Error(`unsupported decision subject type: ${type}`);
   }
   return { type, id };
@@ -372,7 +390,11 @@ async function loadAgentProfile(args: ParsedArgs, agentId: string): Promise<Agen
   const files = (await readdir(dir)).filter((file) => file.endsWith(".json")).sort();
   for (const file of files) {
     const agent = await readJson<AgentProfile>(join(dir, file));
-    if (agent.id === agentId) return agent;
+    if (agent.id === agentId) {
+      const check = validateAgentProfileGovernance(agent, await governanceDecisions(args));
+      if (!check.ok) throw new Error(`agent profile governance blocked:\n${check.violations.join("\n")}`);
+      return agent;
+    }
   }
   throw new Error(`agent profile not found: ${agentId}`);
 }
@@ -382,11 +404,16 @@ async function loadAgentProfilesById(args: ParsedArgs, agentIds: string[]): Prom
   for (const agentId of new Set(agentIds)) {
     try {
       agents.push(await loadAgentProfile(args, agentId));
-    } catch {
+    } catch (err) {
+      if (!errorMessage(err).startsWith("agent profile not found:")) throw err;
       // Materialization reports unknown target agents as validation violations.
     }
   }
   return agents;
+}
+
+async function governanceDecisions(args: ParsedArgs): Promise<DecisionItem[]> {
+  return new DecisionStore(decisionsPath(args)).list();
 }
 
 async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
@@ -648,6 +675,7 @@ async function executeTaskDispatch(input: {
     allocate,
     worktreesDir: input.worktreesDir || undefined,
     codexBin: input.codexBin ?? codexBin(input.args),
+    governanceDecisions: await governanceDecisions(input.args),
     ...(liveLogPath ? { liveLogPath, runId } : {}),
   };
 
@@ -1055,7 +1083,7 @@ async function prepareDispatchActionForTask(input: {
   if (!task) throw new Error(`task not found: ${input.taskId}`);
   if (task.status !== "pending") throw new Error(`task must be pending to dispatch: ${task.status}`);
   const agent = await loadAgentProfile(input.args, task.targetAgent);
-  const plan = validateDispatch(task, agent);
+  const plan = validateDispatch(task, agent, undefined, await governanceDecisions(input.args));
   if (!plan.mayDispatch) {
     throw new Error(`dispatch blocked:\n${plan.violations.join("\n")}`);
   }
@@ -1306,6 +1334,7 @@ async function resolveLatestDecision(input: {
     canceledAt: input.receivedAt,
     cancelReason: input.note,
   });
+  if (resolved) await recordGovernedDecisionApproval(input.args, resolved);
   return resolved;
 }
 
@@ -1325,6 +1354,30 @@ async function cancelRejectedApprovalPlan(input: {
   await input.planStore.markCanceled(plan.id, {
     canceledAt: input.canceledAt,
     cancelReason: input.cancelReason,
+  });
+}
+
+async function recordGovernedDecisionApproval(args: ParsedArgs, decision: DecisionItem): Promise<void> {
+  if (decision.status !== "resolved" || decision.resolution !== "approved") return;
+  if (decision.kind !== "agent_profile_change" && decision.kind !== "capability_change") return;
+  if (!decision.subject) throw new Error(`${decision.kind} decisions require a subject`);
+  if (!decision.risk) throw new Error(`${decision.kind} decisions require a risk class`);
+  const subjectType =
+    decision.subject.type === "agent_profile" || decision.subject.type === "capability" || decision.subject.type === "policy"
+      ? decision.subject.type
+      : undefined;
+  if (!subjectType) throw new Error(`${decision.kind} decisions cannot approve subject type: ${decision.subject.type}`);
+
+  await new GovernanceEventStore(governanceEventsPath(args)).create({
+    timestamp: decision.resolvedAt ?? new Date().toISOString(),
+    actor: decision.resolvedBy ?? "bk",
+    source: { kind: "decision", id: decision.id },
+    subject: { type: subjectType, id: decision.subject.id },
+    kind: "transition_approved",
+    riskClass: parseGovernanceRiskClass(decision.risk),
+    summary: decision.prompt,
+    related: { decisionIds: [decision.id] },
+    dedupeKey: `governed-decision-approval:${decision.id}`,
   });
 }
 
@@ -2297,6 +2350,7 @@ async function main(): Promise<void> {
       canceledAt: resolvedAt,
       cancelReason: note ?? "Rejected via decisions:resolve.",
     });
+    await recordGovernedDecisionApproval(args, resolved);
     printJson(resolved);
     return;
   }
@@ -2473,6 +2527,7 @@ async function main(): Promise<void> {
         allocate,
         worktreesDir: worktreesDir || undefined,
         codexBin: workerCodexBin,
+        governanceDecisions: await governanceDecisions(args),
       }));
       return;
     }

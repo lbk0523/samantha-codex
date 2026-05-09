@@ -11,9 +11,19 @@ export type DecisionKind =
   | "orchestrator_plan_approval"
   | "orchestrator_questions"
   | "blocker_clarification"
-  | "risk_acceptance";
+  | "risk_acceptance"
+  | "agent_profile_change"
+  | "capability_change";
 export type DecisionResolution = "approved" | "rejected" | "needs_revision" | "answered" | "canceled";
-export type DecisionSubjectType = "manual" | "orchestrator_plan" | "remote_action" | "task" | "run";
+export type DecisionSubjectType =
+  | "manual"
+  | "orchestrator_plan"
+  | "remote_action"
+  | "task"
+  | "run"
+  | "agent_profile"
+  | "capability"
+  | "policy";
 
 export interface DecisionSubject {
   type: DecisionSubjectType;

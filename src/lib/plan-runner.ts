@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./contracts";
+import { DecisionStore } from "./decision-store";
 import { RunIndex, summarizeWorkerRun } from "./ledger";
 import { writeWorkerRunLog } from "./run-log";
 import { executeWorkerDispatch, prepareWorkerDispatch } from "./worker-dispatch";
@@ -86,6 +87,7 @@ export function buildPlanBatches(tasks: LoadedPlanTask[]): string[][] {
 
 export async function runPlan(options: PlanRunOptions): Promise<PlanRunResult> {
   const { plan, tasks } = await loadPlan(options.planPath);
+  const governanceDecisions = await new DecisionStore(join(options.stateDir, "decisions.jsonl")).list();
   const batches = buildPlanBatches(tasks);
   const taskById = new Map(tasks.map((task) => [task.ref.id, task]));
   const results: Array<{ id: string; result: unknown }> = [];
@@ -101,6 +103,7 @@ export async function runPlan(options: PlanRunOptions): Promise<PlanRunResult> {
           repoRoot: resolve(dirname(options.planPath), loaded.ref.repoRoot),
           allocate: loaded.ref.allocate ?? false,
           worktreesDir: loaded.ref.worktreesDir,
+          governanceDecisions,
         };
 
         if (!options.execute && !loaded.ref.execute) {

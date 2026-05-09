@@ -1,4 +1,5 @@
 import type { AgentProfile, TaskSpec, WorktreeAllocation } from "./contracts";
+import type { DecisionItem } from "./decision-store";
 import { prepareCodexDispatch, type PreparedCodexDispatch } from "./codex-dispatch";
 import { gitHead } from "./git";
 import { appendWorkerLiveEvent, initializeWorkerLiveLog } from "./live-log";
@@ -15,6 +16,7 @@ export interface PrepareWorkerDispatchInput {
   liveLogPath?: string;
   runId?: string;
   codexBin?: string;
+  governanceDecisions?: DecisionItem[];
 }
 
 export interface WorkerDispatchPreparation {
@@ -60,7 +62,7 @@ export interface CommandLiveLogOptions {
 export async function prepareWorkerDispatch(
   input: PrepareWorkerDispatchInput,
 ): Promise<WorkerDispatchPreparation> {
-  const plan = validateDispatch(input.task, input.agent);
+  const plan = validateDispatch(input.task, input.agent, undefined, input.governanceDecisions);
   if (!plan.mayDispatch) {
     throw new Error(`dispatch blocked:\n${plan.violations.join("\n")}`);
   }

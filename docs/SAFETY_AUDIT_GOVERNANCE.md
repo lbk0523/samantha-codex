@@ -191,6 +191,22 @@ Verification focus:
 - LLMs, workers, skills, remote commands, and dashboard views cannot create or
   activate profiles directly
 
+Outcome:
+
+- Added `agent_profile_change` and `capability_change` decision kinds with
+  governed subjects for agent profiles, capabilities, and safety policy.
+- Added deterministic profile/capability gates in
+  `src/lib/profile-governance.ts`; dispatch, direct worker execution, plan runs,
+  and Samantha profile loading reject unapproved authority changes before use.
+- Existing governance keeps `codex-worker` as the only production writer, keeps
+  non-writers report-only with no worktree or merge authority, and requires
+  separate capability approval for allowed skill bundles and connector/secret
+  grants.
+- Approved governed decisions now append `transition_approved` governance events
+  with BK approver, timestamp, risk class, and the prompt diff/summary. No
+  connector implementation, profile activation command, or multi-writer
+  execution was added.
+
 ## G5: Skill, Connector, And Secret Authority Gates
 
 Goal: prevent skills and connectors from becoming hidden authority expansion

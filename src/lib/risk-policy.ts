@@ -10,7 +10,11 @@ import {
   type GovernedSubjectType,
 } from "./governance-taxonomy";
 
-export type RiskDecisionKind = "orchestrator_plan_approval" | "risk_acceptance";
+export type RiskDecisionKind =
+  | "orchestrator_plan_approval"
+  | "risk_acceptance"
+  | "agent_profile_change"
+  | "capability_change";
 
 export interface RiskApprovalEvidenceSubject {
   type: string;

@@ -1,4 +1,6 @@
 import type { AgentProfile, AgentRole, DispatchPlan, SafetyPolicy, TaskSpec } from "./contracts";
+import type { DecisionItem } from "./decision-store";
+import { validateAgentProfileGovernance } from "./profile-governance";
 
 export const DEFAULT_SAFETY_POLICY: SafetyPolicy = {
   writerCap: 1,
@@ -24,6 +26,7 @@ const KNOWN_AGENT_ROLES: AgentRole[] = [
 export function validateAgentProfile(
   agent: AgentProfile,
   policy: SafetyPolicy = DEFAULT_SAFETY_POLICY,
+  governanceDecisions: DecisionItem[] = [],
 ): string[] {
   const violations: string[] = [];
   const role = String((agent as { role?: unknown }).role ?? "");
@@ -73,6 +76,7 @@ export function validateAgentProfile(
   for (const skillName of missingBlockedSkills) {
     violations.push(`agent profile must block skill: ${skillName}`);
   }
+  violations.push(...validateAgentProfileGovernance(agent, governanceDecisions).violations);
 
   return violations;
 }
@@ -81,9 +85,10 @@ export function validateDispatch(
   task: TaskSpec,
   agent: AgentProfile,
   policy: SafetyPolicy = DEFAULT_SAFETY_POLICY,
+  governanceDecisions: DecisionItem[] = [],
 ): DispatchPlan {
   const violations: string[] = [];
-  violations.push(...validateAgentProfile(agent, policy));
+  violations.push(...validateAgentProfile(agent, policy, governanceDecisions));
 
   if (task.targetAgent !== agent.id) {
     violations.push(`task targets ${task.targetAgent}, but profile is ${agent.id}`);

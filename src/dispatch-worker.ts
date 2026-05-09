@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
+import { DecisionStore } from "./lib/decision-store";
 import { RunIndex, summarizeWorkerRun } from "./lib/ledger";
 import { writeWorkerRunLog } from "./lib/run-log";
 import { executeWorkerDispatch, prepareWorkerDispatch } from "./lib/worker-dispatch";
@@ -70,6 +71,9 @@ const input = {
   repoRoot: resolve(args.repoRoot),
   allocate: args.allocate,
   worktreesDir: args.worktreesDir,
+  governanceDecisions: await new DecisionStore(
+    join(resolve(args.stateDir ?? resolve(import.meta.dir, "..", "state")), "decisions.jsonl"),
+  ).list(),
 };
 
 if (args.execute) {
