@@ -105,6 +105,21 @@ Verification focus:
 - malformed or unknown events are reported clearly
 - event filters can retrieve the history for one subject
 
+Outcome:
+
+- Added `src/lib/governance-event-store.ts` with append-only JSONL governance
+  events containing stable ids, timestamp, actor, source, subject, event kind,
+  risk class, summary, and related decision/action/run refs.
+- Event creation and loading validate governed subject type, event kind, risk
+  class, and source kind against the G1 taxonomy.
+- Duplicate deterministic event ids return the first recorded event without
+  rewriting the JSONL file; corrections remain separate future events.
+- Added `tests/governance-event-store.test.ts` for append order, idempotent
+  no-op appends, load/list/filter behavior, and clear malformed/unknown event
+  errors.
+- G2 does not add profile/capability approval behavior, runtime governance
+  gates, daemon/watch/poll/reply/dispatch behavior, or history rewriting.
+
 ## G3: Risk Classification And Policy Contracts
 
 Goal: make dangerous transitions explicit before execution rather than relying
