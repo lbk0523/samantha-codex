@@ -62,6 +62,8 @@ North-star criteria are tracked in [NORTH_STAR.md](NORTH_STAR.md).
   [OPERATING_SURFACE_CONSOLIDATION.md](OPERATING_SURFACE_CONSOLIDATION.md)
 - Phase 4 execution spec:
   [PLANNING_AND_DELEGATION_MATURITY.md](PLANNING_AND_DELEGATION_MATURITY.md)
+- Phase 5 execution spec:
+  [SAFETY_AUDIT_GOVERNANCE.md](SAFETY_AUDIT_GOVERNANCE.md)
 - North-star criteria: [NORTH_STAR.md](NORTH_STAR.md)
 
 Future phase execution specs should be added only when Samantha reaches that
@@ -170,19 +172,30 @@ Detailed stages:
 
 ### 5. Safety, Audit, And Governance
 
-Status: planned.
+Status: active.
 
 Objective: make Samantha trustworthy for larger and riskier work by improving
-traceability, policy enforcement, and post-fact review.
+traceability, policy enforcement, post-fact review, and governance for any
+change that expands agent authority.
 
 Likely scope:
 
 - stronger safety policy contracts
-- explicit risk classification
-- richer audit trails for decisions, actions, runs, merges, pushes, and cleanup
+- explicit risk classification across requests, plans, actions, agent profiles,
+  skills, connectors, routines, merges, pushes, cleanup, and recovery
+- richer audit trails for decisions, actions, runs, merges, pushes, cleanup,
+  recovery, and agent/profile/capability changes
 - immutable event views
-- operator review reports
-- policy tests for dangerous transitions
+- operator review reports that reconstruct a work item from request to final
+  state
+- decision categories for `agent_profile_change` and `capability_change`
+- BK approval gates for adding roles, changing writer authority, allowing skill
+  bundles, granting connector or secret access, and changing safety policy
+- audit fields for cost and budget observations without enforcing automatic
+  budget stops yet
+- policy tests that prevent LLMs, workers, skills, or remote adapters from
+  creating profiles, routines, budgets, connector access, or new authority
+  directly
 - rollback and recovery drills
 
 Exit criteria:
@@ -190,30 +203,42 @@ Exit criteria:
 - A completed work item can be reconstructed from request to final state.
 - Unsafe transitions are blocked before execution.
 - BK can see who or what approved each risky transition.
+- Agent/profile/capability changes require explicit approval and leave an
+  auditable diff, risk class, approver, and timestamp.
+- Cost and budget-relevant events can be recorded for review before later
+  enforcement phases depend on them.
 - Recovery and rollback paths are documented and dogfooded.
 
-Execution stages: write a phase-specific document when this phase begins.
+Detailed stages: [SAFETY_AUDIT_GOVERNANCE.md](SAFETY_AUDIT_GOVERNANCE.md).
 
 ### 6. Multi-Project Operations
 
 Status: planned.
 
 Objective: let Samantha manage multiple active projects without path drift,
-state confusion, or cross-project safety leaks.
+state confusion, cross-project safety leaks, or lost goal ancestry.
 
 Likely scope:
 
 - stronger project profile resolution
+- project -> goal -> work item ancestry for tasks, decisions, actions, runs,
+  reports, and recovery records
 - project-level queues and reporting
 - cross-project prioritization
 - per-project safety policies
+- project and goal-level cost/budget reporting using the audit fields introduced
+  in Phase 5
 - shared host runtime without hard-coded local paths
 - project-specific dashboards or filters
+- company-style import/export is out of scope until project isolation and audit
+  reconstruction are proven
 
 Exit criteria:
 
 - BK can ask what matters across projects and get one ranked answer.
 - Project state is isolated where needed and aggregated where useful.
+- BK can trace a recommendation or completed task back to the project and goal
+  it served.
 - Remote commands cannot accidentally operate on the wrong project.
 - Host runtime remains portable between Mac client and Ubuntu automation host.
 
@@ -223,21 +248,28 @@ Execution stages: write a phase-specific document when this phase begins.
 
 Status: planned.
 
-Objective: expand parallel execution only when dogfood evidence proves that the
-safety model can handle it.
+Objective: expand parallel execution and role topology only when dogfood
+evidence proves that the safety model can handle it.
 
 Likely scope:
 
 - stronger non-writer parallel reports
+- advisory org graph for role relationships, such as who reviews, researches,
+  evaluates, or reports to the orchestrator
+- role/capability matrix tied to the Phase 5 profile governance audit
 - evidence ledger for successful parallel runs
 - conflict detection before considering writer cap changes
 - merge queue and cleanup reliability
 - explicit rollback plans
 - possible writer cap increase only after evidence review
+- no self-organizing agent teams until deterministic scheduling, audit, and
+  rollback evidence exists
 
 Exit criteria:
 
 - Parallel non-writer work is routine and auditable.
+- Role relationships are visible for reporting and planning, but they do not
+  grant new execution authority by themselves.
 - Writer cap changes have explicit evidence and BK approval.
 - Merge and cleanup gates remain deterministic under higher load.
 - Rollback behavior has been tested before any multi-writer enablement.
@@ -261,12 +293,20 @@ Likely scope:
 - product strategy context
 - searchable reports and artifacts
 - bounded memory synthesis with deterministic write gates
+- markdown SOP/skill documents with frontmatter, preconditions, workflow steps,
+  and quality checks
+- explicit review and approval for memory or SOP updates that would change agent
+  behavior
+- source-backed memory entries that distinguish observed facts, BK decisions,
+  and LLM summaries
 
 Exit criteria:
 
 - Samantha can cite prior decisions when planning new work.
 - Memory updates are explicit, reviewable, and reversible.
 - LLM-generated summaries cannot silently overwrite source-of-truth state.
+- SOP or skill documents can guide agents, but cannot override safety policy,
+  worktree allocation, dispatch, merge, push, cleanup, or approval gates.
 - BK can ask why a recommendation was made and trace it to stored context.
 
 Execution stages: write a phase-specific document when this phase begins.
@@ -282,6 +322,12 @@ Likely scope:
 - robust host service installation and upgrades
 - watchdog and self-diagnostics
 - queue backpressure
+- routine triggers with deterministic fingerprints so duplicate live work is
+  coalesced instead of repeatedly dispatched
+- schedule, webhook, and API-triggered work creation only through existing
+  approval and materialization gates
+- budget enforcement and throttling built on the cost/budget audit records from
+  earlier phases
 - notification throttling
 - backup and restore
 - host migration notes
@@ -291,6 +337,10 @@ Exit criteria:
 
 - Samantha can run for long periods on the Ubuntu host without manual babysitting.
 - Host failures produce actionable reports instead of silent stalls.
+- Routine triggers do not create duplicate active work for the same live
+  fingerprint.
+- Budget and queue pressure can stop or defer work through deterministic policy
+  instead of hidden agent judgment.
 - State can be backed up, restored, and audited.
 - BK can recover the system from another machine with documented steps.
 

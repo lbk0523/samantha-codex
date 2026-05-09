@@ -9,6 +9,8 @@ Deterministic CEO Office
   - stores requests, plans, tasks, actions, and audit logs
   - tracks status, blockers, risks, next actions, and BK decision needs
   - enforces safety policy before any dispatch
+  - governs agent profiles, capabilities, skills, connectors, routines, and
+    budgets before they can expand execution authority
   - calls bounded LLM agents for planning, synthesis, review, or question drafting
   - allocates worktrees and dispatches approved Codex CLI agents
   - evaluates worker outputs and verification commands
@@ -52,12 +54,27 @@ Telegram notifications are compact outbox reports. On the active automation host
 
 The Phase 4 planning and delegation maturity path is implemented. The next
 planned product phase is Safety, Audit, And Governance: stronger traceability,
-policy enforcement, and post-fact review while keeping Telegram as a thin
-adapter and keeping durable authority in the deterministic CEO office.
+policy enforcement, post-fact review, and explicit governance for changes that
+expand agent authority. New roles, profile changes, allowed skills, connector
+or secret access, routines, and budget enforcement should be introduced only
+behind deterministic approvals and audit trails.
 
 The current architecture canary is role-aware but intentionally small: the Orchestrator Agent may choose report-only `codex-reviewer`, `codex-evaluator`, `codex-spec`, `codex-researcher`, `codex-content`, or `codex-operations` tasks before or alongside one `codex-worker` write task. The Control Plane keeps non-writers read-only, rejects non-writer write proposals, and keeps writer concurrency capped at one. This is not general multi-agent team construction.
 
 The existing deterministic CEO office should remain responsible for safety, state, and execution; it should not be discarded.
+
+Future expansion should stay governance-first:
+
+- Phase 5 hardens approval and audit for agent/profile/capability changes before
+  adding broader authority.
+- Phase 6 adds project and goal ancestry before Samantha aggregates work across
+  multiple projects.
+- Phase 7 may add an advisory role graph and stronger non-writer parallelism,
+  but role relationships do not grant execution authority by themselves.
+- Phase 8 may add durable SOP/skill memory, but those documents cannot override
+  safety policy or execution gates.
+- Phase 9 may add routine coalescing and budget enforcement only after the
+  underlying audit and policy hooks exist.
 
 ## Bounded LLM Call Contract
 
@@ -74,7 +91,7 @@ Question-drafting output is stored only as a BK decision item after deterministi
 
 ## Skill Policy
 
-External skill bundles are allowed only as agent work methodology. They do not own orchestration.
+External skill bundles are allowed only as agent work methodology. They do not own orchestration, grant connector access, create routines, change budgets, or expand profile authority.
 
 Example policy:
 
@@ -90,6 +107,8 @@ blocked_skills:
 ```
 
 Samantha remains responsible for worktree allocation, dispatch, merge, push, and safety checks.
+Adding or allowing a skill that materially changes agent behavior should be
+treated as a governed capability change, not as an informal prompt edit.
 
 ## First Safety Gates
 
