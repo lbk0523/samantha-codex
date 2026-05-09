@@ -3622,7 +3622,7 @@ describe("dashboard", () => {
           offset: { nextOffset: 11 },
           replyState: { schemaVersion: 1, sentFiles: ["remote-status.md"], updatedAt: "2026-05-03T10:02:02.000Z" },
         },
-        systemd: { directory: "/systemd", files: [] },
+        systemd: { directory: "/systemd", checked: true, platform: "linux", files: [] },
         warnings: [],
         failures: [],
       },
@@ -3747,7 +3747,7 @@ describe("dashboard", () => {
         telegram: {
           replyState: { schemaVersion: 1, sentFiles: [], updatedAt: "2026-05-05T10:00:00.000Z" },
         },
-        systemd: { directory: "/systemd", files: [] },
+        systemd: { directory: "/systemd", checked: true, platform: "linux", files: [] },
         warnings: [],
         failures: [],
       },

@@ -172,6 +172,26 @@ describe("collectOpsSnapshot", () => {
     expect(snapshot.warnings).toContain("systemd template not installed: samantha-ceo-notify.timer");
   });
 
+  test("skips systemd template warnings by default on non-Linux hosts", async () => {
+    const root = await makeRoot();
+    const snapshot = await collectOpsSnapshot({
+      envFilePath: join(root, ".env"),
+      inboxDir: join(root, "inbox"),
+      outboxDir: join(root, "outbox"),
+      heartbeatPath: join(root, "state", "heartbeat.json"),
+      lockPath: join(root, "state", "daemon.lock"),
+      telegramOffsetPath: join(root, "state", "telegram-offset.json"),
+      telegramRepliesPath: join(root, "state", "telegram-replies.json"),
+      hostPlatform: "darwin",
+      env: {},
+    });
+
+    expect(snapshot.systemd.checked).toBe(false);
+    expect(snapshot.systemd.platform).toBe("darwin");
+    expect(snapshot.systemd.files).toEqual([]);
+    expect(snapshot.warnings.some((warning) => warning.startsWith("systemd template not installed:"))).toBe(false);
+  });
+
   test("reports stale heartbeat and dead lock state as runtime failures", async () => {
     const root = await makeRoot();
     const stateDir = join(root, "state");

@@ -435,7 +435,12 @@ describe("operator reports", () => {
           updatedAt: "2026-05-03T10:02:00.000Z",
         },
       },
-      systemd: { directory: "/systemd", files: [{ file: "samantha-inbox-watch.service", installed: true }] },
+      systemd: {
+        directory: "/systemd",
+        checked: true,
+        platform: "linux",
+        files: [{ file: "samantha-inbox-watch.service", installed: true }],
+      },
       warnings: [],
       failures: [],
     };

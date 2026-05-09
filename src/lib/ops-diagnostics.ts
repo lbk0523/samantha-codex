@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { checkDaemonHealth, type DaemonHealthResult } from "./daemon";
@@ -45,6 +45,8 @@ export interface RemoteCommandDiagnostics extends FileDiagnostics {
 
 export interface SystemdTemplateDiagnostics {
   directory: string;
+  checked: boolean;
+  platform: NodeJS.Platform;
   files: Array<{
     file: string;
     installed: boolean;
@@ -214,6 +216,7 @@ export async function collectOpsSnapshot(input: {
   serviceTemplateDir?: string;
   systemdUserDir?: string;
   launchdUserDir?: string;
+  hostPlatform?: NodeJS.Platform;
   maxAgeMs?: number;
   env?: NodeJS.ProcessEnv;
   now?: Date;
@@ -236,21 +239,35 @@ export async function collectOpsSnapshot(input: {
   const remoteOutbox = await remoteOutboxFiles(input.outboxDir);
   const replyState = await readOptionalJson<TelegramReplyState>(input.telegramRepliesPath);
   const sentFiles = new Set(replyState?.sentFiles ?? []);
+  const hostPlatform = input.hostPlatform ?? platform();
+  const shouldCheckSystemd = input.systemdUserDir !== undefined || hostPlatform === "linux";
   const systemdUserDir = input.systemdUserDir ?? join(homedir(), ".config/systemd/user");
   const launchdUserDir = input.launchdUserDir ?? join(homedir(), "Library/LaunchAgents");
-  const serviceProvider = input.serviceProvider ?? (process.platform === "darwin" ? "launchd" : "systemd");
+  const serviceProvider =
+    input.serviceProvider ??
+    (input.launchdUserDir !== undefined
+      ? "launchd"
+      : input.systemdUserDir !== undefined
+        ? "systemd"
+        : hostPlatform === "darwin"
+          ? "launchd"
+          : "systemd");
   const serviceTemplateFiles = serviceProvider === "launchd" ? launchdFiles : systemdFiles;
   const serviceTemplateDir =
     input.serviceTemplateDir ?? (serviceProvider === "launchd" ? launchdUserDir : systemdUserDir);
   const maxAgeMs = input.maxAgeMs ?? 15_000;
   const systemd = {
     directory: systemdUserDir,
-    files: await Promise.all(
-      systemdFiles.map(async (file) => ({
-        file,
-        installed: await exists(join(systemdUserDir, file)),
-      })),
-    ),
+    checked: shouldCheckSystemd,
+    platform: hostPlatform,
+    files: shouldCheckSystemd
+      ? await Promise.all(
+          systemdFiles.map(async (file) => ({
+            file,
+            installed: await exists(join(systemdUserDir, file)),
+          })),
+        )
+      : [],
   };
   const serviceTemplates = {
     provider: serviceProvider,

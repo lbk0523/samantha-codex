@@ -2114,9 +2114,10 @@ export function doctorReport(snapshot: OpsSnapshot): string {
     directory: snapshot.systemd.directory,
     files: snapshot.systemd.files,
   };
-  const serviceTemplateLines = serviceTemplates.files.map(
-    (file) => `- ${file.file}: ${file.installed ? "installed" : "missing"}`,
-  );
+  const serviceTemplateLines =
+    snapshot.serviceTemplates || snapshot.systemd.checked
+      ? serviceTemplates.files.map((file) => `- ${file.file}: ${file.installed ? "installed" : "missing"}`)
+      : [`- skipped (${snapshot.systemd.platform} host)`];
   return [
     "# ops:doctor",
     "",
