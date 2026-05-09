@@ -677,7 +677,7 @@ describe("operator reports", () => {
     });
     expect(blockerNow).toContain("BK 확인이 필요한 blocker clarification이 있습니다.");
     expect(blockerNow).toContain("질문: Should Samantha recover the failed run or wait?");
-    expect(blockerNow).toContain("답변: `/revise <답변>`");
+    expect(blockerNow).toContain("답변: `/answer <답변>`");
     expect(blockerNow).toContain("수정 요청: `/revise <피드백>`");
     expect(blockerNow).toContain("취소: `/cancel`");
     expect(blockerNow).not.toContain(blockerClarification.id);

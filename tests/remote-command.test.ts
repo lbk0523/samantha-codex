@@ -29,6 +29,33 @@ describe("commandFromRemoteInput", () => {
     ).toThrow("unsupported remote command");
   });
 
+  test("maps Telegram answer to blocker clarification resolution without ids", () => {
+    const command = commandFromRemoteInput(
+      {
+        senderId: "bk",
+        text: "/answer 계속 진행해도 돼",
+        receivedAt: "2026-05-07T11:05:00.000Z",
+        remoteId: 8,
+      },
+      "bk",
+    );
+
+    expect(command).toMatchObject({
+      type: "decisions:answer-blocker-clarification",
+      args: {
+        source: "remote",
+        receivedAt: "2026-05-07T11:05:00.000Z",
+        note: "계속 진행해도 돼",
+      },
+    });
+    expect(JSON.stringify(command)).not.toContain("decision-");
+  });
+
+  test("rejects empty Telegram answers", () => {
+    expect(() => commandFromRemoteInput({ senderId: "bk", text: "/answer" }, "bk")).toThrow("missing answer text");
+    expect(() => commandFromRemoteInput({ senderId: "bk", text: "/answer   " }, "bk")).toThrow("missing answer text");
+  });
+
   test("redirects legacy yes and accept responses to approve", () => {
     expect(commandFromRemoteInput({ senderId: "bk", text: "/yes" }, "bk")).toMatchObject({
       type: "remote:deprecated",

@@ -294,7 +294,7 @@ function chooseNextAction(input: {
     return {
       kind: "answer_questions",
       label: "Answer or revise the current orchestrator plan",
-      command: "/revise <answer>",
+      command: "/revise <feedback>",
       targetId: latestDecision.id,
       reason: latestDecision.reason,
     };

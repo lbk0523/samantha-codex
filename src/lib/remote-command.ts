@@ -115,6 +115,18 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   if (text === "/approve") {
     return { id: `remote-${commandToken}-approve`, type: "decisions:approve-latest", args: { source: "remote", receivedAt } };
   }
+  if (text === "/answer") {
+    throw new Error("missing answer text");
+  }
+  if (text.startsWith("/answer ")) {
+    const answer = text.slice("/answer ".length).trim();
+    if (!answer) throw new Error("missing answer text");
+    return {
+      id: `remote-${commandToken}-answer`,
+      type: "decisions:answer-blocker-clarification",
+      args: { source: "remote", receivedAt, note: answer },
+    };
+  }
   if (text === "/recover") {
     return {
       id: `remote-${commandToken}-recover`,

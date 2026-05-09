@@ -1,6 +1,6 @@
 # Samantha Remote Adapters
 
-Last updated: 2026-05-07
+Last updated: 2026-05-09
 
 ## Policy
 
@@ -21,6 +21,7 @@ Use this as the existing Telegram adapter path:
 ```text
 /work <request> -> /plan -> /go -> /now
 wrong plan -> /revise <feedback> -> /plan -> /go
+blocker clarification -> /answer <answer> -> /now or /go
 failed plan result -> /recover -> /plan -> /go
 ```
 
@@ -28,6 +29,8 @@ failed plan result -> /recover -> /plan -> /go
 - `/work <request>` captures new work as an orchestration request; it does not create a task or dispatch a worker.
 - `/plan` runs the local Codex CLI `codex-orchestrator` profile in read-only mode and returns the generated plan.
 - `/plan_current` shows the current unapproved plan again without rerunning the orchestrator.
+- `/approve` approves exactly one current plan approval decision.
+- `/answer <answer>` resolves exactly one current pending blocker clarification and preserves the plan.
 - `/go` validates the selected task set in the orchestrator plan, creates task records, and approves dispatch actions. It does not execute workers inside `inbox:watch`.
 - `/revise <feedback>` supersedes the current unapproved plan and creates a new planning request with the feedback.
 - `/cancel` discards the current pending planning request or unapproved plan. It cannot stop workers or cancel actions.
@@ -37,10 +40,13 @@ failed plan result -> /recover -> /plan -> /go
 
 `/help` shows only this short flow. Lower-level inspection and explicit id-based commands are not exposed as Telegram commands. Deprecated Telegram commands return a short replacement hint instead of running the old flow.
 
-Plans may be executable, question-only, or blocked by prerequisites. Question-only
-and prerequisite-blocked plans show `/revise <feedback>` instead of `/go` as the
-safe next step. Alternatives and tradeoffs are advisory; `/go` materializes only
-the selected `tasks` and `batches` path after deterministic validation.
+Plans may be executable, question-only, blocked by prerequisites, or blocked by
+a pending blocker clarification. Question-only and prerequisite-blocked plans
+show `/revise <feedback>` instead of `/go` as the safe next step. Pending
+blocker clarifications show `/answer <answer>` so BK can keep the current plan
+while recording the clarifying judgment. Alternatives and tradeoffs are
+advisory; `/go` materializes only the selected `tasks` and `batches` path after
+deterministic validation.
 
 ## Supported Commands
 
@@ -52,6 +58,8 @@ The current Telegram adapter spellings are:
 - `/work <text>`
 - `/plan [project_id] [scope_id]`
 - `/plan_current`
+- `/approve`
+- `/answer <answer>`
 - `/go`
 - `/revise <feedback>`
 - `/cancel [reason]`
@@ -61,9 +69,9 @@ The current Telegram adapter spellings are:
 
 Unsupported commands are ignored or rejected.
 
-Supported Telegram commands are operational reports plus orchestration request intake/planning/revision/materialization/recovery. `/work` writes an orchestration request to `state/orchestration-requests.jsonl`; `/plan` writes an orchestrator plan to `state/orchestrator-plans.jsonl`; `/plan_current` reads the latest `planned` or `questions` plan without creating a new plan; `/revise <feedback>` marks the current unapproved plan `superseded` and writes a new pending orchestration request containing the previous plan plus feedback; `/go` validates that plan, writes tasks to `state/tasks.jsonl`, approves dispatch actions in `state/remote-actions.jsonl`, or advances the latest passed committed run through merge, push, and cleanup gates using stored run metadata; `/recover` writes a new recovery-oriented orchestration request from the latest failed materialized plan result. Direct worker dispatch, arbitrary shell execution, arbitrary repo paths, arbitrary merge/push/cleanup paths, run/task/action/proposal/draft id entry, and worker execution inside inbox processing are intentionally not exposed remotely.
+Supported Telegram commands are operational reports plus orchestration request intake/planning/approval/answer/revision/materialization/recovery. `/work` writes an orchestration request to `state/orchestration-requests.jsonl`; `/plan` writes an orchestrator plan to `state/orchestrator-plans.jsonl`; `/plan_current` reads the latest `planned` or `questions` plan without creating a new plan; `/approve` resolves exactly one current plan approval decision; `/answer <answer>` resolves exactly one current pending `blocker_clarification` as `answered`, stores the answer note, preserves the current plan, and creates no tasks or actions; `/revise <feedback>` marks the current unapproved plan `superseded` and writes a new pending orchestration request containing the previous plan plus feedback; `/go` validates that plan, writes tasks to `state/tasks.jsonl`, approves dispatch actions in `state/remote-actions.jsonl`, or advances the latest passed committed run through merge, push, and cleanup gates using stored run metadata; `/recover` writes a new recovery-oriented orchestration request from the latest failed materialized plan result. Direct worker dispatch, arbitrary shell execution, arbitrary repo paths, arbitrary merge/push/cleanup paths, run/task/action/proposal/draft id entry, and worker execution inside inbox processing are intentionally not exposed remotely.
 
-`/now` is the default operating command. It chooses one next remote command from current action state, orchestrator plans, orchestration requests, failed plan recovery state, diagnostics, pending tasks, and latest run state. After `/work <request>`, `/now` should show the pending orchestration request and `/plan` instead of reporting no immediate action. When a plan is waiting for approval, reports show `/plan_current`, `/go`, and `/revise <feedback>` so BK can reread, approve, or redirect without starting over. After a failed materialized plan result is reported and no newer active item exists, `/now` should show `/recover`. It must not present inspect-only commands or id-based commands as the next action.
+`/now` is the default operating command. It chooses one next remote command from current action state, orchestrator plans, orchestration requests, failed plan recovery state, diagnostics, pending decisions, pending tasks, and latest run state. After `/work <request>`, `/now` should show the pending orchestration request and `/plan` instead of reporting no immediate action. When a plan is waiting for approval, reports show `/plan_current`, `/go`, and `/revise <feedback>` so BK can reread, approve, or redirect without starting over. When a blocker clarification is pending, reports show `/answer <answer>`, `/revise <feedback>`, and `/cancel` before plan/action progress guidance. After a failed materialized plan result is reported and no newer active item exists, `/now` should show `/recover`. It must not present inspect-only commands or id-based commands as the next action.
 
 `/check` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
 
@@ -309,3 +317,4 @@ The timer templates favor interactive replies:
 - Sender allowlist is mandatory.
 - Bot tokens should be supplied via environment variables or local service environment, not committed files.
 - Merge, push, and cleanup remain explicit Samantha gates; Telegram can only approve the latest passed run through `/go`, not provide arbitrary paths or commands.
+- `/answer` can resolve only one current pending blocker clarification; it cannot approve a plan, materialize tasks, dispatch workers, or accept decision ids.

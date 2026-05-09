@@ -1,6 +1,6 @@
 # Planning And Delegation Maturity
 
-Last updated: 2026-05-08
+Last updated: 2026-05-09
 
 Status: implemented.
 
@@ -254,6 +254,139 @@ Behavior documentation reviewed:
 - [PARALLELISM_EVIDENCE.md](PARALLELISM_EVIDENCE.md) records that P9 does not
   increase `writerCap`; report-only non-writer confidence remains separate from
   any future multi-writer decision.
+
+## P10: Clarification Gate Closure
+
+Goal: close the remaining P8 ambiguity-question gaps so pending blocker
+clarification decisions cannot be bypassed by plan materialization and are
+clearly answerable from the operating surface.
+
+Reason for this stage:
+
+- Review found that pending `blocker_clarification` decisions are not a hard
+  `/go` materialization gate unless the latest decision for the current
+  `orchestrator_plan` subject is itself the blocker clarification.
+- Review found that `/now` does not load decision queue state, so non-approval
+  blocker clarification decisions can be visible in `ceo:status` while `/now`
+  still reports plan/action state instead of answer/revise/cancel guidance.
+
+Focus:
+
+- Treat pending `blocker_clarification` decisions as a deterministic
+  materialization blocker before creating tasks, actions, or marking a plan
+  materialized.
+- Make `/now` decision-aware enough to show pending blocker clarification
+  answer/revise/cancel guidance before plan/action progress guidance.
+- Keep Telegram as a thin adapter: no decision ids or shell commands in routine
+  remote workflows, and no direct worker dispatch from Telegram.
+- Keep the deterministic CEO Office as the owner of durable state and safety
+  gates.
+- Keep writer cap `1`; do not enable multi-writer execution.
+
+Verification focus:
+
+- `/go` creates no tasks, actions, or materialized plan while any current
+  `blocker_clarification` is pending, including clarification decisions linked
+  to `run`, `task`, or `remote_action` subjects.
+- `/now`, compact CEO notification, CLI CEO status, and dashboard/operating
+  surface all show one consistent safe next action for pending blocker
+  clarification.
+- Plan approval decisions still use the narrow existing `/approve` path only
+  when exactly one current plan approval decision is pending.
+- Resolved or archived blocker clarification decisions do not block later safe
+  materialization.
+- Existing P1-P9 behavior remains unchanged: selected-plan-only materialization,
+  report-only non-writers, recovery continuity, bounded synthesis, and writer
+  cap `1`.
+
+Mac-side verification:
+
+```bash
+bun test tests/operations.test.ts tests/operator-reports.test.ts tests/ceo-status.test.ts
+bun run verify:mac
+```
+
+P10 outcome: completed by `fc9b49b Close clarification materialization gate`.
+Pending blocker clarification decisions now block plan materialization, `/now`
+loads decision queue state, and the operating surface prioritizes blocker
+clarification before approved-plan progress. Review after implementation found
+one remaining workflow gap: Telegram can display answer guidance for blocker
+clarification, but there is not yet a dedicated Telegram command that resolves
+that decision without revising the plan.
+
+## P11: Telegram Answer Command
+
+Goal: add a narrow Telegram answer path for blocker clarification decisions so
+BK can keep the current plan while recording the clarifying judgment that
+unblocks later deterministic gates.
+
+Reason for this stage:
+
+- P10 correctly blocks `/go` while blocker clarification is pending.
+- P10 reports currently suggest `/revise <answer>` for clarification answers,
+  but `/revise` means "supersede the current plan and create a revised planning
+  request." That is the wrong semantic for "keep this plan, record BK's answer,
+  and let Samantha recalculate the next safe action."
+- The missing operation is decision resolution, not plan revision.
+
+Command semantics:
+
+- Add `/answer <text>` as a Telegram command for exactly one current pending
+  `blocker_clarification` decision.
+- `/answer` resolves only that blocker clarification decision with
+  `resolution: "answered"` and stores `<text>` as the decision note.
+- `/answer` must not approve a plan, materialize tasks/actions, dispatch
+  workers, merge, push, clean up, or mutate the plan payload.
+- `/answer` preserves the current plan. After it records the answer, BK should
+  use `/now` or `/go` to let the deterministic CEO Office recompute the next
+  safe action.
+- `/revise <feedback>` remains the command for changing/superseding the
+  current plan.
+- `/approve` remains only for current plan approval decisions.
+- If there is no current pending blocker clarification, `/answer` should return
+  a safe no-op/redirect report instead of resolving unrelated decisions.
+- If more than one current pending blocker clarification exists, `/answer`
+  should not guess; it should redirect BK to `/now`, CLI, or dashboard.
+
+Focus:
+
+- Remote command parsing for `/answer <text>` without accepting decision ids.
+- Inbox handling that resolves exactly one current pending blocker
+  clarification and writes an id-free report.
+- `/now`, compact CEO notifications, operating surface, and decision-required
+  reports should say `답변: /answer <답변>` for blocker clarification.
+- Existing `/revise` reports should remain plan-revision oriented.
+- The hard materialization gate from P10 must remain in force until the
+  blocker clarification is resolved.
+
+Verification focus:
+
+- `/answer <text>` with exactly one current pending blocker clarification
+  resolves that decision as `answered`, stores the note, leaves the plan
+  unchanged, and creates no tasks/actions.
+- After `/answer`, an already-approved safe plan can materialize through a
+  separate `/go`.
+- `/answer` does not approve plan approval decisions and does not affect
+  ordinary `orchestrator_questions` decisions.
+- `/answer` with zero or multiple current pending blocker clarifications does
+  not mutate state and reports the safe next inspection/action.
+- `/revise <feedback>` still supersedes the current unapproved plan and creates
+  a revised planning request.
+- `/approve` still approves only the single current plan approval decision.
+- Telegram reports remain id-free for routine operation.
+
+Mac-side verification:
+
+```bash
+bun test tests/remote-command.test.ts tests/operations.test.ts tests/operator-reports.test.ts tests/operating-surface.test.ts tests/remote-approval.test.ts
+bun run verify:mac
+```
+
+P11 outcome: completed. Telegram `/answer <text>` now resolves exactly one
+current pending `blocker_clarification` decision as `answered`, stores the
+answer note, preserves the current plan, and creates no tasks or actions.
+`/go` remains blocked until the clarification is resolved, and `/approve` still
+applies only to the single current plan approval decision.
 
 Phase 5 follow-ups, explicitly outside Phase 4:
 

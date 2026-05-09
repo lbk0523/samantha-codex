@@ -58,13 +58,15 @@ Telegram is intentionally small. The normal remote workflow is:
 Common follow-up commands:
 
 - `/plan_current` shows the current unapproved plan without rerunning Codex.
+- `/approve` approves the single current plan approval decision.
+- `/answer <answer>` records the answer for one current blocker clarification without changing the plan.
 - `/revise <feedback>` replaces the current plan request with revised context.
 - `/cancel [reason]` discards the pending request or unapproved plan.
 - `/go` approves a valid plan, then later advances passed work through merge, push, and cleanup gates.
 - `/recover` creates a recovery-oriented request after a failed materialized plan result.
 - `/now`, `/check`, and `/problems` report current operating status.
 
-Telegram input cannot provide shell commands, arbitrary repo paths, merge/push/cleanup paths, or internal task/action/run ids.
+Telegram input cannot provide shell commands, arbitrary repo paths, merge/push/cleanup paths, or internal task/action/run/decision ids.
 
 ## Local Commands
 

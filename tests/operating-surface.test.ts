@@ -118,10 +118,10 @@ describe("operating surface view", () => {
     const view = buildOperatingSurfaceView(snapshot);
     const report = ceoNotificationReport(snapshot);
 
-    expect(view.primaryAction.telegramCommand).toBe("/revise <답변>");
+    expect(view.primaryAction.telegramCommand).toBe("/answer <답변>");
     expect(view.primaryAction.localCommand).toContain("decisions:resolve decision-20260508-blocker-abc12345");
-    expect(report).toContain("텔레그램: `/revise <답변>`");
-    expect(report).toContain("수정 요청도: `/revise <피드백>`");
+    expect(report).toContain("텔레그램: `/answer <답변>`");
+    expect(report).toContain("계획 변경 필요 시: `/revise <피드백>`");
     expect(report).toContain("취소: `/cancel`");
     expect(report).not.toContain("decision-20260508");
     expect(report).not.toContain("bun run");

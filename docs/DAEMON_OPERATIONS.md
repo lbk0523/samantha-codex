@@ -163,7 +163,7 @@ The service templates are tuned for interactive latency:
 
 Normal reply latency should usually be a few seconds. It can be longer when Telegram network calls are slow or when the machine is sleeping.
 
-For routine operation, use Telegram `/now` first. It reports the next command to send, usually `/plan`, `/plan_current`, `/go`, `/revise <feedback>`, `/cancel`, `/recover`, `/problems`, or `/check`. Use `/check` for compact status and `/problems` when `/check` or `/now` reports warnings or failures.
+For routine operation, use Telegram `/now` first. It reports the next command to send, usually `/plan`, `/plan_current`, `/answer <answer>`, `/go`, `/revise <feedback>`, `/cancel`, `/recover`, `/problems`, or `/check`. Use `/check` for compact status and `/problems` when `/check` or `/now` reports warnings or failures.
 
 ## Safety Notes
 

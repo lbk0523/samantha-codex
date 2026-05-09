@@ -404,7 +404,7 @@ function blockerClarificationNowReport(decision: DecisionItem): string {
     decision.risk ? `리스크: ${telegramSafeLine(decision.risk)}` : "",
     "",
     "다음 액션:",
-    `- 답변: ${code("/revise <답변>")}`,
+    `- 답변: ${code("/answer <답변>")}`,
     `- 수정 요청: ${code("/revise <피드백>")}`,
     `- 취소: ${code("/cancel")}`,
   ]
@@ -712,6 +712,7 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "- `/plan`: Orchestrator Agent가 실행 전 계획 작성",
     "- `/plan_current`: 현재 계획 다시 보기",
     "- `/approve`: 현재 단일 계획 승인 결정만 승인",
+    "- `/answer <답변>`: 현재 단일 blocker clarification에 답변 기록",
     "- `/go`: 계획 승인, worker 실행 큐 등록, 또는 최신 성공 run 통합 gate 진행",
     "- `/revise <피드백>`: 현재 계획을 수정 요청",
     "- `/cancel`: 승인 전 계획/요청 취소",
@@ -775,6 +776,37 @@ export function remoteApprovalRedirectReport(input: { reason: string }): string 
     "# approve",
     "",
     remoteNotificationText(input.reason),
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code("/now")}`,
+    "",
+    "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
+  ].join("\n");
+}
+
+export function remoteAnswerRecordedReport(): string {
+  return [
+    "# answer",
+    "",
+    "현재 blocker clarification 답변을 기록했습니다.",
+    "",
+    "현재 계획은 변경하지 않았고 task/action도 만들지 않았습니다.",
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code("/now")}`,
+    `- 승인된 안전 계획 진행: ${code("/go")}`,
+    "",
+    "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
+  ].join("\n");
+}
+
+export function remoteAnswerRedirectReport(input: { reason: string }): string {
+  return [
+    "# answer",
+    "",
+    remoteNotificationText(input.reason),
+    "",
+    "답변은 기록하지 않았고 state는 변경하지 않았습니다.",
     "",
     "다음 액션:",
     `- 텔레그램: ${code("/now")}`,
@@ -1133,7 +1165,7 @@ export function ceoNotificationReport(snapshot: CeoStatusSnapshot): string {
     "다음 액션:",
     `- 텔레그램: ${code(nextCommand)}`,
     decision && canApproveDecision ? `- 수정 필요 시: ${code("/revise <피드백>")}` : "",
-    decision && isBlockerClarification ? `- 수정 요청도: ${code("/revise <피드백>")}` : "",
+    decision && isBlockerClarification ? `- 계획 변경 필요 시: ${code("/revise <피드백>")}` : "",
     decision ? `- 취소: ${code("/cancel")}` : "",
     snapshot.blocked.length ? `- 현재 블로커: ${remoteNotificationText(snapshot.blocked[0]?.title ?? "확인 필요")}` : "",
     snapshot.historicalFailures.length ? `- 히스토리 실패: ${snapshot.historicalFailures.length}건은 CLI 또는 dashboard에서 확인` : "",

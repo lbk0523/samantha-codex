@@ -7,6 +7,7 @@ import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonH
 import {
   decisionAllowsOrchestratorMaterialization,
   decisionHasCurrentPlanSubject,
+  decisionIsCurrentBlockerClarification,
   decisionIsCurrentPlanApproval,
   decisionFromQuestionDraft,
   decisionFromOrchestratorPlan,
@@ -47,6 +48,8 @@ import {
   remoteDeprecatedCommandReport,
   remoteGoNoActionablePlanReport,
   remoteApprovalRedirectReport,
+  remoteAnswerRecordedReport,
+  remoteAnswerRedirectReport,
   remoteDecisionApprovedReport,
   remoteDecisionRejectedReport,
   remoteActionApprovedReport,
@@ -1226,7 +1229,7 @@ function decisionGateReport(decision: DecisionItem | undefined): string {
   const nextActionLines =
     decision.kind === "blocker_clarification"
       ? [
-          `- 답변: ${"`/revise <답변>`"}`,
+          `- 답변: ${"`/answer <답변>`"}`,
           `- 수정 요청: ${"`/revise <피드백>`"}`,
           `- 취소: ${"`/cancel`"}`,
         ]
@@ -1347,6 +1350,32 @@ async function resolveLatestRemotePlanApprovalDecision(
 
 async function approveLatestRemoteDecision(args: ParsedArgs, receivedAt: string): Promise<string> {
   return resolveLatestRemotePlanApprovalDecision(args, receivedAt, "approved");
+}
+
+async function answerLatestRemoteBlockerClarification(args: ParsedArgs, receivedAt: string, note: string): Promise<string> {
+  if (!note.trim()) throw new Error("answer text is required");
+
+  const store = new DecisionStore(decisionsPath(args));
+  const planStore = new OrchestratorPlanStore(orchestratorPlansPath(args));
+  const plans = await planStore.list();
+  const candidates = (await store.list()).filter((decision) => decisionIsCurrentBlockerClarification(decision, plans));
+
+  if (candidates.length !== 1) {
+    return remoteAnswerRedirectReport({
+      reason:
+        candidates.length === 0
+          ? "답변할 현재 pending blocker clarification이 없습니다."
+          : "Telegram answer is only allowed when exactly one current blocker clarification is pending.",
+    });
+  }
+
+  await store.resolve(candidates[0].id, {
+    resolvedAt: receivedAt,
+    resolution: "answered",
+    note,
+  });
+
+  return remoteAnswerRecordedReport();
 }
 
 async function writeCeoNotificationOutbox(
@@ -1738,6 +1767,13 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
   }
   if (command.type === "decisions:approve-latest") {
     return approveLatestRemoteDecision(args, String(command.args?.receivedAt ?? new Date().toISOString()));
+  }
+  if (command.type === "decisions:answer-blocker-clarification") {
+    return answerLatestRemoteBlockerClarification(
+      args,
+      String(command.args?.receivedAt ?? new Date().toISOString()),
+      String(command.args?.note ?? ""),
+    );
   }
   if (command.type === "decisions:reject-latest") {
     return resolveLatestRemotePlanApprovalDecision(

@@ -329,4 +329,109 @@ describe("remote approval inbox flow", () => {
       expect.objectContaining({ id: resolved.id, status: "resolved", resolution: "approved" }),
     ]);
   });
+
+  test("answer does not resolve plan approval or orchestrator question decisions", async () => {
+    const root = await makeRoot();
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    await mkdir(state, { recursive: true });
+    await mkdir(inbox, { recursive: true });
+    const approval = createDecisionItem({
+      title: "Review plan: Leave pending",
+      prompt: "Approve, revise, or cancel before dispatch.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-approval" },
+      createdAt: "2026-05-07T11:00:00.000Z",
+    });
+    const questions = createDecisionItem({
+      title: "Answer plan questions: Leave pending",
+      prompt: "Which path should Samantha plan?",
+      kind: "orchestrator_questions",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-questions" },
+      options: ["answer", "revise", "cancel"],
+      createdAt: "2026-05-07T11:01:00.000Z",
+    });
+    await writeFile(join(state, "decisions.jsonl"), [approval, questions].map((item) => JSON.stringify(item)).join("\n") + "\n", "utf8");
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      [planRecord("plan-approval"), planRecord("plan-questions", "questions")].map((item) => JSON.stringify(item)).join("\n") + "\n",
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "remote-answer.json"),
+      JSON.stringify({
+        id: "remote-answer",
+        type: "decisions:answer-blocker-clarification",
+        args: { source: "remote", receivedAt: "2026-05-07T11:03:00.000Z", note: "Keep going." },
+      }),
+      "utf8",
+    );
+
+    expect(await processInbox({ state, inbox, outbox, archive })).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "remote-answer.md"), "utf8");
+    expect(report).toContain("답변할 현재 pending blocker clarification이 없습니다.");
+    expect(report).not.toContain("decision-");
+    const records = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { id: string; status: string; resolution?: string });
+    expect(records).toEqual([
+      expect.objectContaining({ id: approval.id, status: "pending" }),
+      expect.objectContaining({ id: questions.id, status: "pending" }),
+    ]);
+    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(state, "remote-actions.jsonl"), "utf8")).rejects.toThrow();
+  });
+
+  test("answer redirects without mutation when multiple current blocker clarifications are pending", async () => {
+    const root = await makeRoot();
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    await mkdir(state, { recursive: true });
+    await mkdir(inbox, { recursive: true });
+    const blockers = ["A", "B"].map((title, index) =>
+      createDecisionItem({
+        title: `Clarify blocker ${title}`,
+        prompt: "Should Samantha continue?",
+        kind: "blocker_clarification",
+        source: "system",
+        subject: { type: "run", id: `run-${index}` },
+        options: ["continue", "wait", "cancel"],
+        risk: "Wrong answer can unblock the wrong work.",
+        createdAt: `2026-05-07T11:0${index}:00.000Z`,
+      }),
+    );
+    await writeFile(join(state, "decisions.jsonl"), blockers.map((item) => JSON.stringify(item)).join("\n") + "\n", "utf8");
+    await writeFile(
+      join(inbox, "remote-answer.json"),
+      JSON.stringify({
+        id: "remote-answer",
+        type: "decisions:answer-blocker-clarification",
+        args: { source: "remote", receivedAt: "2026-05-07T11:03:00.000Z", note: "Continue." },
+      }),
+      "utf8",
+    );
+
+    expect(await processInbox({ state, inbox, outbox, archive })).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "remote-answer.md"), "utf8");
+    expect(report).toContain("Telegram answer is only allowed when exactly one current blocker clarification is pending.");
+    expect(report).toContain("CLI 또는 dashboard");
+    expect(report).not.toContain("decision-");
+    const records = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { id: string; status: string; resolution?: string });
+    expect(records).toEqual([
+      expect.objectContaining({ id: blockers[0]?.id, status: "pending" }),
+      expect.objectContaining({ id: blockers[1]?.id, status: "pending" }),
+    ]);
+  });
 });

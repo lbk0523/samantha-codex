@@ -59,7 +59,7 @@ function fallbackTelegramCommand(nextAction: CeoNextAction): string {
 function decisionTelegramCommand(decision: CeoDecisionSummary | undefined): string | undefined {
   if (!decision) return undefined;
   if (decision.kind === "decision") {
-    if (decision.decisionKind === "blocker_clarification") return "/revise <답변>";
+    if (decision.decisionKind === "blocker_clarification") return "/answer <답변>";
     if (decision.options?.includes("approve")) return "/approve";
     return "/now";
   }

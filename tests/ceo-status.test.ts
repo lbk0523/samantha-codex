@@ -397,7 +397,7 @@ describe("CEO status snapshot", () => {
       command: `bun run samantha decisions:resolve ${blocker.id} --resolution=answered --note=<answer>`,
       targetId: blocker.id,
     });
-    expect(report).toContain("Next safe action:\n- Answer the latest blocker clarification\n- Telegram: /revise <답변>");
+    expect(report).toContain("Next safe action:\n- Answer the latest blocker clarification\n- Telegram: /answer <답변>");
     expect(report).not.toContain("Telegram: /go");
   });
 

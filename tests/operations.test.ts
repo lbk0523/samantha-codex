@@ -271,6 +271,10 @@ describe("inbox and remote commands", () => {
     });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/go" }, "bk").type).toBe("actions:go");
     expect(commandFromRemoteInput({ senderId: "bk", text: "/approve" }, "bk").type).toBe("decisions:approve-latest");
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/answer 계속 진행" }, "bk")).toMatchObject({
+      type: "decisions:answer-blocker-clarification",
+      args: { note: "계속 진행" },
+    });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/recover" }, "bk")).toMatchObject({
       type: "orchestrator:recover-latest",
       args: { senderId: "bk" },
@@ -1348,11 +1352,11 @@ describe("inbox and remote commands", () => {
     const blockedGo = await readFile(join(outbox, "001-go.md"), "utf8");
     expect(blockedGo).toContain("# decision-required");
     expect(blockedGo).toContain("BK clarification required before Samantha materializes worker tasks.");
-    expect(blockedGo).toContain("답변: `/revise <답변>`");
+    expect(blockedGo).toContain("답변: `/answer <답변>`");
     expect(blockedGo).not.toContain("/approve");
     const blockedNow = await readFile(join(outbox, "002-now.md"), "utf8");
     expect(blockedNow).toContain("BK 확인이 필요한 blocker clarification이 있습니다.");
-    expect(blockedNow).toContain("답변: `/revise <답변>`");
+    expect(blockedNow).toContain("답변: `/answer <답변>`");
     expect(blockedNow).not.toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
     await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
     expect(await new RemoteActionStore(join(state, "remote-actions.jsonl")).list()).toEqual([]);
@@ -1360,13 +1364,61 @@ describe("inbox and remote commands", () => {
       status: "planned",
     });
 
-    await new DecisionStore(join(state, "decisions.jsonl")).resolve(blocker.id, {
-      resolvedAt: "2026-05-06T10:05:00.000Z",
-      resolution: "answered",
-      note: "Recover later; continue with this approved plan.",
-    });
     await writeFile(
-      join(inbox, "003-go-after-answer.json"),
+      join(inbox, "003-answer.json"),
+      JSON.stringify({
+        id: "remote-answer-blocker",
+        type: "decisions:answer-blocker-clarification",
+        args: {
+          receivedAt: "2026-05-06T10:05:00.000Z",
+          note: "Recover later; continue with this approved plan.",
+        },
+      }),
+      "utf8",
+    );
+
+    const answerProcess = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect({
+      stdout: await new Response(answerProcess.stdout).text(),
+      stderr: await new Response(answerProcess.stderr).text(),
+      exitCode: await answerProcess.exited,
+    }).toMatchObject({ exitCode: 0 });
+
+    const answerReport = await readFile(join(outbox, "003-answer.md"), "utf8");
+    expect(answerReport).toContain("# answer");
+    expect(answerReport).toContain("현재 계획은 변경하지 않았고 task/action도 만들지 않았습니다.");
+    expect(answerReport).not.toContain(blocker.id);
+    const decisionsAfterAnswer = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { id: string; status: string; resolution?: string; resolutionNote?: string });
+    expect(decisionsAfterAnswer.find((decision) => decision.id === blocker.id)).toMatchObject({
+      status: "resolved",
+      resolution: "answered",
+      resolutionNote: "Recover later; continue with this approved plan.",
+    });
+    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    expect(await new RemoteActionStore(join(state, "remote-actions.jsonl")).list()).toEqual([]);
+    expect(await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).find("plan-blocker-gated")).toMatchObject({
+      status: "planned",
+    });
+
+    await writeFile(
+      join(inbox, "004-go-after-answer.json"),
       JSON.stringify({ id: "remote-go-after-answer", type: "actions:go", args: { receivedAt: "2026-05-06T10:06:00.000Z" } }),
       "utf8",
     );
@@ -1391,7 +1443,7 @@ describe("inbox and remote commands", () => {
       stderr: await new Response(resolvedProcess.stderr).text(),
       exitCode: await resolvedProcess.exited,
     }).toMatchObject({ exitCode: 0 });
-    expect(await readFile(join(outbox, "003-go-after-answer.md"), "utf8")).toContain("오케스트레이터 계획을 승인했고 worker 실행 큐에 등록했습니다.");
+    expect(await readFile(join(outbox, "004-go-after-answer.md"), "utf8")).toContain("오케스트레이터 계획을 승인했고 worker 실행 큐에 등록했습니다.");
     expect(await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).find("plan-blocker-gated")).toMatchObject({
       status: "materialized",
     });
