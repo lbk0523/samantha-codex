@@ -1,4 +1,5 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
 import { buildCeoStatusSnapshot, formatCeoStatusReport, type CeoStatusSnapshot } from "./lib/ceo-status";
@@ -217,8 +218,24 @@ function agentProfilesDir(args: ParsedArgs): string {
   return resolve(flag(args, "agent-profiles-dir", join(root, "references/agent-profiles")));
 }
 
+function expandHostPath(path: string): string {
+  const home = process.env.HOME?.trim() || homedir();
+  let expanded = path;
+  if (expanded === "~") expanded = home;
+  if (expanded.startsWith("~/")) expanded = join(home, expanded.slice(2));
+  return expanded.replace(/\$(\w+)|\$\{([^}]+)\}/g, (match, bareName: string, bracedName: string) => {
+    const name = bareName || bracedName;
+    if (name === "HOME") return home;
+    return process.env[name]?.trim() || match;
+  });
+}
+
 function projectProfilesDir(args: ParsedArgs): string {
-  return resolve(flag(args, "project-profiles-dir", join(root, "references/project-profiles")));
+  return resolve(
+    expandHostPath(
+      flag(args, "project-profiles-dir", process.env.SAMANTHA_PROJECT_PROFILES_DIR ?? join(root, "references/project-profiles")),
+    ),
+  );
 }
 
 function daemonLockPath(args: ParsedArgs): string {
@@ -586,11 +603,13 @@ function remoteDispatchRepoRoot(args: ParsedArgs): string {
   if (!repoRoot) {
     throw new Error("remote dispatch actions require inbox:watch --repo-root=<repo> or SAMANTHA_REPO_ROOT");
   }
-  return resolve(repoRoot);
+  return resolve(expandHostPath(repoRoot));
 }
 
 function orchestratorRepoRoot(args: ParsedArgs): string {
-  return resolve(flag(args, "orchestrator-repo-root", process.env.SAMANTHA_ORCHESTRATOR_REPO_ROOT ?? root));
+  return resolve(
+    expandHostPath(flag(args, "orchestrator-repo-root", process.env.SAMANTHA_ORCHESTRATOR_REPO_ROOT ?? root)),
+  );
 }
 
 function codexBin(args: ParsedArgs): string {

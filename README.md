@@ -38,10 +38,10 @@ The orchestrator proposes work. The control plane owns execution and safety. Age
 
 ## Operating Boundaries
 
-- Ubuntu/WSL is the Samantha automation host.
-- Mac is a development/client machine.
-- Mac-side work may edit, test, commit, and push normal repo code.
-- Do not run Samantha daemon, watch, poll, reply, worker dispatch, or dashboard runtime processes from Mac.
+- Exactly one active machine is the Samantha automation host at a time.
+- Supported automation hosts are Ubuntu/WSL and macOS.
+- A separate Mac may remain a development/client machine and may edit, test, commit, and push normal repo code.
+- Do not run Samantha daemon, watch, poll, reply, worker dispatch, or dashboard runtime processes from a client machine.
 - Runtime state belongs to the automation host: `state/`, `runs/`, `.samantha-worktrees/`, dashboard runtime output, outbox/archive data, and live logs.
 - Repo code and docs should not hard-code local absolute paths. Prefer repo-relative paths, project ids, environment variables, or project profile resolution.
 
@@ -89,7 +89,7 @@ Verification profiles:
 
 - `bun run test` is the same as `bun run test:portable`.
 - `bun run test:portable` runs Mac-safe unit and contract tests.
-- `bun run test:host` runs Ubuntu/Samantha-host tests that depend on host runtime behavior.
+- `bun run test:host` runs automation-host tests that depend on host runtime behavior.
 - `bun run test:all` runs both portable and host tests.
 - `bun run verify:docs` checks README cross-links and local absolute path safety.
 - `bun run verify:mac` runs the normal Mac-side verification bundle.
@@ -162,7 +162,8 @@ Writer agents do not commit or push. Production code writers use per-task worktr
 - `references/tasks/` and `references/plans/` contain fixtures and canaries.
 - `references/project-profiles/` contains canonical project profile hints.
 - `docs/` contains roadmap, architecture, operations, adapter, and policy notes.
-- `ops/systemd/` contains automation-host service and timer templates.
+- `ops/systemd/` contains Linux automation-host service and timer templates.
+- `ops/launchd/` contains macOS automation-host LaunchAgent templates.
 
 ## Design Notes
 

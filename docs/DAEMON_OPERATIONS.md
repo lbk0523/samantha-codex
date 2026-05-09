@@ -1,6 +1,6 @@
 # Samantha Daemon Operations
 
-Last updated: 2026-05-05
+Last updated: 2026-05-09
 
 ## Purpose
 
@@ -54,7 +54,13 @@ The dashboard includes daemon, queue, Telegram, latest remote command/report, pr
 
 Bad inbox commands are archived and get an outbox failure report instead of crashing the watcher.
 
-## systemd User Service
+## Host Service Managers
+
+Only one automation host should run these services at a time. Stop the old host before enabling services on a new host.
+
+Use `ops/systemd/` on Linux or WSL hosts. Use `ops/launchd/` on macOS hosts.
+
+## Linux systemd User Service
 
 Install the template:
 
@@ -74,7 +80,7 @@ systemctl --user enable samantha-inbox-watch
 systemctl --user enable samantha-actions-watch
 ```
 
-The service templates read `%h/projects/samantha-codex/.env`, so `SAMANTHA_REPO_ROOT` and `SAMANTHA_CODEX_BIN` can be set there without committing local paths.
+The service templates read `%h/projects/samantha-codex/.env`, so `SAMANTHA_REPO_ROOT`, `SAMANTHA_CODEX_BIN`, and project repo-root overrides can be set there without committing local paths.
 
 Inspect:
 
@@ -99,9 +105,51 @@ If the service should run after logout, enable lingering once:
 loginctl enable-linger "$USER"
 ```
 
-## Telegram Timer
+## macOS launchd LaunchAgents
 
-`telegram:poll` is a one-shot remote adapter. For 24/7 remote commands, run it through the included user timer while `inbox:watch` handles processing.
+The macOS templates assume this repo is cloned at `~/projects/samantha-codex`. If it is elsewhere, set `SAMANTHA_HOME` in the copied plist command or keep a symlink at that path.
+
+The shared runner reads `~/projects/samantha-codex/.env`, exports those values, and then runs `bun run samantha <command>`.
+
+Install:
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+cp ops/launchd/com.bk.samantha.*.plist ~/Library/LaunchAgents/
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.bk.samantha.inbox-watch.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.bk.samantha.actions-watch.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.bk.samantha.telegram-poll.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.bk.samantha.telegram-reply.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.bk.samantha.ceo-notify.plist
+```
+
+Inspect:
+
+```bash
+launchctl print "gui/$(id -u)/com.bk.samantha.inbox-watch"
+launchctl print "gui/$(id -u)/com.bk.samantha.actions-watch"
+launchctl print "gui/$(id -u)/com.bk.samantha.telegram-poll"
+launchctl print "gui/$(id -u)/com.bk.samantha.telegram-reply"
+launchctl print "gui/$(id -u)/com.bk.samantha.ceo-notify"
+bun run samantha health:check
+bun run samantha doctor
+```
+
+Stop:
+
+```bash
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.bk.samantha.inbox-watch.plist
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.bk.samantha.actions-watch.plist
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.bk.samantha.telegram-poll.plist
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.bk.samantha.telegram-reply.plist
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.bk.samantha.ceo-notify.plist
+```
+
+Keep the macOS automation host awake while services should run. SSH and Tailscale connectivity are separate host setup steps.
+
+## Telegram Scheduled Adapters
+
+`telegram:poll` is a one-shot remote adapter. For 24/7 remote commands, run it through the host service manager while `inbox:watch` handles processing.
 
 Prepare local env:
 
@@ -116,11 +164,14 @@ TELEGRAM_BOT_TOKEN=<token>
 TELEGRAM_CHAT_ID=<telegram-chat-id>
 # Optional, required when no project profile supplies the worker repo root:
 SAMANTHA_REPO_ROOT=$HOME/projects/samantha-codex
-# Optional, required when systemd cannot find codex in PATH:
+# Optional, required when the host service cannot find codex in PATH:
 SAMANTHA_CODEX_BIN=$HOME/.local/bin/codex
+# Optional per-profile repo root overrides:
+SAMANTHA_PROJECT_OMHT_REPO_ROOT=$HOME/projects/oh-my-health-trainer
+SAMANTHA_PROJECT_SAMANTHA_REPO_ROOT=$HOME/projects/samantha-codex
 ```
 
-Install and enable:
+Install and enable on Linux/WSL:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -139,7 +190,7 @@ systemctl --user enable --now samantha-ceo-notify.timer
 
 The first `samantha-telegram-reply.service` run baselines existing `outbox/remote-*.md` files without sending them. New remote outbox reports are sent after that.
 
-`samantha-ceo-notify.timer` is Ubuntu-host automation. It runs `ceo:notify` hourly, writes a compact CEO report into `outbox/remote-*.md`, and leaves delivery to `samantha-telegram-reply.timer`. Report generation is recorded in `state/ceo-reports.jsonl`; Telegram delivery, retries, and failures are recorded in `state/telegram-replies.json`.
+`samantha-ceo-notify` is automation-host work. It runs `ceo:notify` hourly, writes a compact CEO report into `outbox/remote-*.md`, and leaves delivery to the Telegram reply adapter. Report generation is recorded in `state/ceo-reports.jsonl`; Telegram delivery, retries, and failures are recorded in `state/telegram-replies.json`.
 
 Inspect:
 
@@ -154,12 +205,12 @@ bun run samantha health:check
 bun run samantha doctor
 ```
 
-The service templates are tuned for interactive latency:
+The host service templates are tuned for interactive latency:
 
 - `inbox:watch` polls local inbox every 1 second.
-- `samantha-telegram-poll.timer` restarts polling 3 seconds after the prior poll exits.
-- `samantha-telegram-reply.timer` scans outbox 3 seconds after the prior reply pass exits.
-- `samantha-ceo-notify.timer` generates a periodic CEO notification hourly.
+- Telegram poll restarts about 3 seconds after the prior poll exits.
+- Telegram reply scans outbox about 3 seconds after the prior reply pass exits.
+- CEO notification generation runs hourly.
 
 Normal reply latency should usually be a few seconds. It can be longer when Telegram network calls are slow or when the machine is sleeping.
 
@@ -170,6 +221,6 @@ For routine operation, use Telegram `/now` first. It reports the next command to
 - Do not run multiple watchers manually; the lock should block duplicates, but one service instance is the intended shape.
 - Keep remote adapters write-only into `inbox/`.
 - Keep merge, push, and worktree cleanup as explicit gated Samantha commands.
-- Mac clients may edit, test, commit, and push normal repo code. Do not run Samantha daemon, watch, poll, reply, worker dispatch, dashboard runtime, or systemd timer processes from Mac.
-- Ubuntu/Samantha host owns `state/`, `runs/`, `.samantha-worktrees/`, dashboard runtime output, and final automation verification.
-- Host-only verification commands are run on Ubuntu only: `bun run test:host`, `bun run verify:host`, and `bun run test:all`.
+- Client machines may edit, test, commit, and push normal repo code. Do not run Samantha daemon, watch, poll, reply, worker dispatch, dashboard runtime, systemd timers, or launchd agents from a client machine.
+- The active automation host owns `state/`, `runs/`, `.samantha-worktrees/`, dashboard runtime output, and final automation verification.
+- Host-only verification commands are run on the active automation host: `bun run test:host`, `bun run verify:host`, and `bun run test:all`.

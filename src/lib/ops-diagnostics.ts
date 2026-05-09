@@ -51,6 +51,17 @@ export interface SystemdTemplateDiagnostics {
   }>;
 }
 
+export type ServiceTemplateProvider = "systemd" | "launchd";
+
+export interface ServiceTemplateDiagnostics {
+  provider: ServiceTemplateProvider;
+  directory: string;
+  files: Array<{
+    file: string;
+    installed: boolean;
+  }>;
+}
+
 export interface OpsSnapshot {
   ok: boolean;
   checkedAt: string;
@@ -58,6 +69,7 @@ export interface OpsSnapshot {
   health: DaemonHealthResult;
   queues: QueueDiagnostics;
   telegram: TelegramStateDiagnostics;
+  serviceTemplates?: ServiceTemplateDiagnostics;
   systemd: SystemdTemplateDiagnostics;
   warnings: string[];
   failures: string[];
@@ -72,6 +84,14 @@ const systemdFiles = [
   "samantha-telegram-reply.timer",
   "samantha-ceo-notify.service",
   "samantha-ceo-notify.timer",
+];
+
+const launchdFiles = [
+  "com.bk.samantha.inbox-watch.plist",
+  "com.bk.samantha.actions-watch.plist",
+  "com.bk.samantha.telegram-poll.plist",
+  "com.bk.samantha.telegram-reply.plist",
+  "com.bk.samantha.ceo-notify.plist",
 ];
 
 async function exists(path: string): Promise<boolean> {
@@ -190,7 +210,10 @@ export async function collectOpsSnapshot(input: {
   lockPath: string;
   telegramOffsetPath: string;
   telegramRepliesPath: string;
+  serviceProvider?: ServiceTemplateProvider;
+  serviceTemplateDir?: string;
   systemdUserDir?: string;
+  launchdUserDir?: string;
   maxAgeMs?: number;
   env?: NodeJS.ProcessEnv;
   now?: Date;
@@ -214,6 +237,11 @@ export async function collectOpsSnapshot(input: {
   const replyState = await readOptionalJson<TelegramReplyState>(input.telegramRepliesPath);
   const sentFiles = new Set(replyState?.sentFiles ?? []);
   const systemdUserDir = input.systemdUserDir ?? join(homedir(), ".config/systemd/user");
+  const launchdUserDir = input.launchdUserDir ?? join(homedir(), "Library/LaunchAgents");
+  const serviceProvider = input.serviceProvider ?? (process.platform === "darwin" ? "launchd" : "systemd");
+  const serviceTemplateFiles = serviceProvider === "launchd" ? launchdFiles : systemdFiles;
+  const serviceTemplateDir =
+    input.serviceTemplateDir ?? (serviceProvider === "launchd" ? launchdUserDir : systemdUserDir);
   const maxAgeMs = input.maxAgeMs ?? 15_000;
   const systemd = {
     directory: systemdUserDir,
@@ -221,6 +249,16 @@ export async function collectOpsSnapshot(input: {
       systemdFiles.map(async (file) => ({
         file,
         installed: await exists(join(systemdUserDir, file)),
+      })),
+    ),
+  };
+  const serviceTemplates = {
+    provider: serviceProvider,
+    directory: serviceTemplateDir,
+    files: await Promise.all(
+      serviceTemplateFiles.map(async (file) => ({
+        file,
+        installed: await exists(join(serviceTemplateDir, file)),
       })),
     ),
   };
@@ -275,7 +313,9 @@ export async function collectOpsSnapshot(input: {
     ...pidVisibilityViolations.map((violation) => `pid visibility check failed: ${violation}`),
     ...(!telegram.offset ? ["telegram offset state is missing"] : []),
     ...(!telegram.replyState ? ["telegram reply state is missing"] : []),
-    ...systemd.files.filter((file) => !file.installed).map((file) => `systemd template not installed: ${file.file}`),
+    ...serviceTemplates.files
+      .filter((file) => !file.installed)
+      .map((file) => `${serviceTemplates.provider} template not installed: ${file.file}`),
     ...(queues.unsentRemoteOutboxCount > 0 ? [`${queues.unsentRemoteOutboxCount} unsent remote outbox report(s)`] : []),
     ...((replyState?.failures?.length ?? 0) > 0 ? [`${replyState?.failures?.length ?? 0} Telegram reply failure(s)`] : []),
   ];
@@ -287,6 +327,7 @@ export async function collectOpsSnapshot(input: {
     health: effectiveHealth,
     queues,
     telegram,
+    serviceTemplates,
     systemd,
     warnings,
     failures,

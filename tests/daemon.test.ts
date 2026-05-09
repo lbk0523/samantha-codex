@@ -188,4 +188,24 @@ describe("daemon lock and health", () => {
     expect(timer).toContain("Persistent=true");
     expect(timer).toContain("WantedBy=timers.target");
   });
+
+  test("ships launchd templates for macOS automation hosts", async () => {
+    const runner = await readFile(resolve("ops/launchd/samantha-launchd-runner.sh"), "utf8");
+    const inbox = await readFile(resolve("ops/launchd/com.bk.samantha.inbox-watch.plist"), "utf8");
+    const actions = await readFile(resolve("ops/launchd/com.bk.samantha.actions-watch.plist"), "utf8");
+    const poll = await readFile(resolve("ops/launchd/com.bk.samantha.telegram-poll.plist"), "utf8");
+    const reply = await readFile(resolve("ops/launchd/com.bk.samantha.telegram-reply.plist"), "utf8");
+    const ceo = await readFile(resolve("ops/launchd/com.bk.samantha.ceo-notify.plist"), "utf8");
+
+    expect(runner).toContain('repo_root="${SAMANTHA_HOME:-$HOME/projects/samantha-codex}"');
+    expect(runner).toContain('exec "$bun_bin" run samantha "$@"');
+    expect(inbox).toContain("com.bk.samantha.inbox-watch");
+    expect(inbox).toContain("samantha-launchd-runner.sh\" inbox:watch --interval-ms=1000");
+    expect(actions).toContain("samantha-launchd-runner.sh\" actions:watch --interval-ms=1000");
+    expect(poll).toContain("samantha-launchd-runner.sh\" telegram:poll --timeout-seconds=25");
+    expect(poll).toContain("<integer>3</integer>");
+    expect(reply).toContain("samantha-launchd-runner.sh\" telegram:reply");
+    expect(ceo).toContain("samantha-launchd-runner.sh\" ceo:notify");
+    expect(ceo).toContain("<integer>3600</integer>");
+  });
 });

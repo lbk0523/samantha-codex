@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { TaskResultMode } from "./contracts";
 import type { TaskDraftUpdatePatch } from "./task-draft-store";
 
@@ -45,6 +46,11 @@ export interface RemoteRequestClassification {
   preferredAgentId?: "codex-worker" | "codex-reviewer" | "codex-evaluator" | "codex-spec";
   safeHandling: "implementation_plan" | "report_only" | "questions_first" | "recovery_plan";
   reasons: string[];
+}
+
+export interface ProjectProfileLoadOptions {
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
 }
 
 const classificationDefaults: Record<RemoteRequestIntent, Omit<RemoteRequestClassification, "intent" | "reasons">> = {
@@ -358,13 +364,46 @@ function scopeForClassification(
   return writeScope(scopes);
 }
 
-export async function loadProjectProfiles(dir: string): Promise<ProjectProfile[]> {
-  const files = (await readdir(dir)).filter((file) => file.endsWith(".json")).sort();
-  return Promise.all(files.map(async (file) => JSON.parse(await readFile(join(dir, file), "utf8")) as ProjectProfile));
+function profileRepoRootEnvName(profileId: string): string {
+  return `SAMANTHA_PROJECT_${profileId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_REPO_ROOT`;
 }
 
-export async function loadProjectProfile(dir: string, id: string): Promise<ProjectProfile> {
-  const profile = (await loadProjectProfiles(dir)).find((item) => item.id === id);
+function expandProfilePath(path: string, options: Required<ProjectProfileLoadOptions>): string {
+  let expanded = path;
+  if (expanded === "~") expanded = options.homeDir;
+  if (expanded.startsWith("~/")) expanded = join(options.homeDir, expanded.slice(2));
+  expanded = expanded.replace(/\$(\w+)|\$\{([^}]+)\}/g, (match, bareName: string, bracedName: string) => {
+    const name = bareName || bracedName;
+    if (name === "HOME") return options.env.HOME?.trim() || options.homeDir;
+    return options.env[name]?.trim() || match;
+  });
+  return resolve(expanded);
+}
+
+function normalizeProjectProfile(profile: ProjectProfile, options: ProjectProfileLoadOptions = {}): ProjectProfile {
+  const normalizedOptions = {
+    env: options.env ?? process.env,
+    homeDir: options.homeDir ?? homedir(),
+  };
+  const override = normalizedOptions.env[profileRepoRootEnvName(profile.id)]?.trim();
+  return {
+    ...profile,
+    repoRoot: expandProfilePath(override || profile.repoRoot, normalizedOptions),
+  };
+}
+
+export async function loadProjectProfiles(dir: string, options: ProjectProfileLoadOptions = {}): Promise<ProjectProfile[]> {
+  const files = (await readdir(dir)).filter((file) => file.endsWith(".json")).sort();
+  return Promise.all(
+    files.map(async (file) => {
+      const profile = JSON.parse(await readFile(join(dir, file), "utf8")) as ProjectProfile;
+      return normalizeProjectProfile(profile, options);
+    }),
+  );
+}
+
+export async function loadProjectProfile(dir: string, id: string, options: ProjectProfileLoadOptions = {}): Promise<ProjectProfile> {
+  const profile = (await loadProjectProfiles(dir, options)).find((item) => item.id === id);
   if (!profile) throw new Error(`project profile not found: ${id}`);
   return profile;
 }

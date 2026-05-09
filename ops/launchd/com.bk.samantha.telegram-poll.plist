@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bk.samantha.telegram-poll</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>exec "$HOME/projects/samantha-codex/ops/launchd/samantha-launchd-runner.sh" telegram:poll --timeout-seconds=25</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>3</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/com.bk.samantha.telegram-poll.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/com.bk.samantha.telegram-poll.err.log</string>
+</dict>
+</plist>

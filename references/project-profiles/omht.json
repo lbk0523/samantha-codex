@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "omht",
-  "repoRoot": "/home/lbk0523/projects/oh-my-health-trainer",
+  "repoRoot": "$HOME/projects/oh-my-health-trainer",
   "keywords": [
     "omht",
     "ohmt",

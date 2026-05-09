@@ -119,7 +119,34 @@ describe("collectOpsSnapshot", () => {
     expect(snapshot.telegram.offset?.nextOffset).toBe(77);
     expect(snapshot.warnings).toContain("1 unsent remote outbox report(s)");
     expect(snapshot.warnings).not.toContain("systemd template not installed: samantha-ceo-notify.timer");
+    expect(snapshot.serviceTemplates?.provider).toBe("systemd");
+    expect(snapshot.serviceTemplates?.files.every((file) => file.installed)).toBe(true);
     expect(JSON.stringify(snapshot)).not.toContain("secret");
+  });
+
+  test("checks launchd templates on macOS automation hosts", async () => {
+    const root = await makeRoot();
+    const launchdDir = join(root, "LaunchAgents");
+    await mkdir(launchdDir, { recursive: true });
+    await writeFile(join(launchdDir, "com.bk.samantha.inbox-watch.plist"), "", "utf8");
+
+    const snapshot = await collectOpsSnapshot({
+      envFilePath: join(root, ".env"),
+      inboxDir: join(root, "inbox"),
+      outboxDir: join(root, "outbox"),
+      heartbeatPath: join(root, "state", "heartbeat.json"),
+      lockPath: join(root, "state", "daemon.lock"),
+      telegramOffsetPath: join(root, "state", "telegram-offset.json"),
+      telegramRepliesPath: join(root, "state", "telegram-replies.json"),
+      serviceProvider: "launchd",
+      serviceTemplateDir: launchdDir,
+      env: {},
+    });
+
+    expect(snapshot.serviceTemplates?.provider).toBe("launchd");
+    expect(snapshot.serviceTemplates?.directory).toBe(launchdDir);
+    expect(snapshot.serviceTemplates?.files.map((file) => file.file)).toContain("com.bk.samantha.inbox-watch.plist");
+    expect(snapshot.warnings).toContain("launchd template not installed: com.bk.samantha.actions-watch.plist");
   });
 
   test("reports missing runtime prerequisites as failures and warnings", async () => {

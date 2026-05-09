@@ -73,16 +73,16 @@ function errorMessage(err: unknown): string {
 }
 
 const telegramCommandReplacements: Array<[RegExp, string]> = [
-  [/\/help_advanced\b/g, "/help"],
-  [/\/help advanced\b/g, "/help"],
-  [/\/(?:next_action|next-action|runs|run_latest|run_next|run-next|tasks|task|actions|action_current|action|proposals|proposal_next|proposal|drafts|draft_next)\b/g, "/now"],
-  [/\/run\b/g, "/now"],
-  [/\/(?:status|dashboard)\b/g, "/check"],
-  [/\/(?:doctor|health|failures)\b/g, "/problems"],
-  [/\/(?:accept|draft_approve|draft-approve|yes|prepare_dispatch|prepare-dispatch|approve_action|approve-action)\b/g, "/go"],
-  [/\/reject\b/g, "/cancel"],
-  [/\/(?:draft_prepare|draft-prepare)\b/g, "/plan"],
-  [/\/(?:propose|draft_propose|draft-propose|draft)\b/g, "/work <요청>"],
+  [/(^|[^\w/])\/help_advanced\b/g, "$1/help"],
+  [/(^|[^\w/])\/help advanced\b/g, "$1/help"],
+  [/(^|[^\w/])\/(?:next_action|next-action|runs|run_latest|run_next|run-next|tasks|task|actions|action_current|action|proposals|proposal_next|proposal|drafts|draft_next)\b/g, "$1/now"],
+  [/(^|[^\w/])\/run\b/g, "$1/now"],
+  [/(^|[^\w/])\/(?:status|dashboard)\b/g, "$1/check"],
+  [/(^|[^\w/])\/(?:doctor|health|failures)\b/g, "$1/problems"],
+  [/(^|[^\w/])\/(?:accept|draft_approve|draft-approve|yes|prepare_dispatch|prepare-dispatch|approve_action|approve-action)\b/g, "$1/go"],
+  [/(^|[^\w/])\/reject\b/g, "$1/cancel"],
+  [/(^|[^\w/])\/(?:draft_prepare|draft-prepare)\b/g, "$1/plan"],
+  [/(^|[^\w/])\/(?:propose|draft_propose|draft-propose|draft)\b/g, "$1/work <요청>"],
 ];
 
 function normalizeTelegramVisibleText(value: string): string {
@@ -156,7 +156,7 @@ function compactLine(rawLine: string): string | undefined {
   if (/^- `[^`]+`\s+(?:status|outcome)=/.test(trimmed)) return undefined;
   if (/^- latest:\s+`[^`]+`\s+outcome=/.test(trimmed)) return undefined;
   if (/^- 텔레그램: `\/action_current`$/.test(trimmed)) return "- 텔레그램: `/now`";
-  if (trimmed.startsWith("`bun run ")) return undefined;
+  if (trimmed.includes("`bun run ")) return undefined;
 
   return line;
 }
@@ -164,6 +164,7 @@ function compactLine(rawLine: string): string | undefined {
 export function compactTelegramReport(report: string): string {
   const skipSectionHeadings = new Set([
     "기록:",
+    "증거:",
     "로컬 fallback:",
     "로컬 merge 후보:",
     "실행 예정 명령:",

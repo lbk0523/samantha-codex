@@ -19,16 +19,16 @@ function oneLine(value: string): string {
 }
 
 const telegramCommandReplacements: Array<[RegExp, string]> = [
-  [/\/help_advanced\b/g, "/help"],
-  [/\/help advanced\b/g, "/help"],
-  [/\/(?:next_action|next-action|runs|run_latest|run_next|run-next|tasks|task|actions|action_current|action|proposals|proposal_next|proposal|drafts|draft_next)\b/g, "/now"],
-  [/\/run\b/g, "/now"],
-  [/\/(?:status|dashboard)\b/g, "/check"],
-  [/\/(?:doctor|health|failures)\b/g, "/problems"],
-  [/\/(?:accept|draft_approve|draft-approve|yes|prepare_dispatch|prepare-dispatch|approve_action|approve-action)\b/g, "/go"],
-  [/\/reject\b/g, "/cancel"],
-  [/\/(?:draft_prepare|draft-prepare)\b/g, "/plan"],
-  [/\/(?:propose|draft_propose|draft-propose|draft)\b/g, "/work <요청>"],
+  [/(^|[^\w/])\/help_advanced\b/g, "$1/help"],
+  [/(^|[^\w/])\/help advanced\b/g, "$1/help"],
+  [/(^|[^\w/])\/(?:next_action|next-action|runs|run_latest|run_next|run-next|tasks|task|actions|action_current|action|proposals|proposal_next|proposal|drafts|draft_next)\b/g, "$1/now"],
+  [/(^|[^\w/])\/run\b/g, "$1/now"],
+  [/(^|[^\w/])\/(?:status|dashboard)\b/g, "$1/check"],
+  [/(^|[^\w/])\/(?:doctor|health|failures)\b/g, "$1/problems"],
+  [/(^|[^\w/])\/(?:accept|draft_approve|draft-approve|yes|prepare_dispatch|prepare-dispatch|approve_action|approve-action)\b/g, "$1/go"],
+  [/(^|[^\w/])\/reject\b/g, "$1/cancel"],
+  [/(^|[^\w/])\/(?:draft_prepare|draft-prepare)\b/g, "$1/plan"],
+  [/(^|[^\w/])\/(?:propose|draft_propose|draft-propose|draft)\b/g, "$1/work <요청>"],
 ];
 
 function telegramSafeText(value: string): string {
@@ -2109,7 +2109,12 @@ export function healthReport(health: DaemonHealthResult): string {
 }
 
 export function doctorReport(snapshot: OpsSnapshot): string {
-  const systemdLines = snapshot.systemd.files.map(
+  const serviceTemplates = snapshot.serviceTemplates ?? {
+    provider: "systemd" as const,
+    directory: snapshot.systemd.directory,
+    files: snapshot.systemd.files,
+  };
+  const serviceTemplateLines = serviceTemplates.files.map(
     (file) => `- ${file.file}: ${file.installed ? "installed" : "missing"}`,
   );
   return [
@@ -2153,8 +2158,10 @@ export function doctorReport(snapshot: OpsSnapshot): string {
       : "- replies: missing",
     `- 최근 reply 실패: ${oneLine(latestReplyFailure(snapshot))}`,
     "",
-    "systemd templates:",
-    ...systemdLines,
+    "service templates:",
+    `- provider: ${serviceTemplates.provider}`,
+    `- directory: ${code(serviceTemplates.directory)}`,
+    ...serviceTemplateLines,
     "",
     "Failures:",
     ...(snapshot.failures.length ? snapshot.failures.map((failure) => `- ${oneLine(failure)}`) : ["- 없음"]),

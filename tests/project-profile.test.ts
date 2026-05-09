@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   applyProjectDefaults,
   applyProjectRemoteScopeDefaults,
   classifyRemoteRequest,
   classifyRemoteRequestIntent,
   inferProjectProfile,
+  loadProjectProfiles,
   selectProjectRemoteScope,
   type ProjectProfile,
 } from "../src/lib/project-profile";
@@ -142,5 +146,29 @@ describe("project profiles", () => {
     expect(inferProjectProfile([profile, samantha], { requestText: "samantha 프로젝트 대시보드 개선 계획 보고" })?.id).toBe("samantha");
     expect(inferProjectProfile([profile, samantha], { requestText: "ohmt 프로젝트 작업 재개 계획 보고" })?.id).toBe("omht");
     expect(inferProjectProfile([profile, samantha], { requestText: "다음 작업 계획 보고" })).toBeUndefined();
+  });
+
+  test("expands host-local profile repo roots and env overrides", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-profile-"));
+    try {
+      await writeFile(join(root, "omht.json"), JSON.stringify({ ...profile, repoRoot: "$HOME/projects/omht" }), "utf8");
+
+      const [homeProfile] = await loadProjectProfiles(root, {
+        env: { HOME: "/Users/byung" },
+        homeDir: "/Users/byung",
+      });
+      expect(homeProfile.repoRoot).toBe("/Users/byung/projects/omht");
+
+      const [overrideProfile] = await loadProjectProfiles(root, {
+        env: {
+          HOME: "/Users/byung",
+          SAMANTHA_PROJECT_OMHT_REPO_ROOT: "~/work/omht",
+        },
+        homeDir: "/Users/byung",
+      });
+      expect(overrideProfile.repoRoot).toBe("/Users/byung/work/omht");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

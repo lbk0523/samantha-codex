@@ -297,6 +297,7 @@ function checkTelegramReports(): void {
         completed: [],
         active: [],
         blocked: [],
+        historicalFailures: [],
         needsDecision: [
           {
             kind: "decision",

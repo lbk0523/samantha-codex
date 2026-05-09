@@ -16,18 +16,19 @@ This repository builds a Codex-only version of Samantha: a personal 24/7 operati
 
 ## Cross-OS Workspace Rules
 
-- Ubuntu/WSL is the Samantha automation host. Mac is a development/client machine.
+- Exactly one active machine is the Samantha automation host at a time.
+- Supported automation hosts are Ubuntu/WSL and macOS. A separate Mac may remain a development/client machine.
 - Do not assume absolute paths are portable across OSes.
   - Ubuntu paths look like `/home/lbk0523/...`.
   - Mac paths look like `/Users/byung/...`.
 - Repo code and docs must not hard-code local absolute paths unless the file is explicitly local-only or operational state.
 - Prefer project ids, repo-relative paths, environment variables, or project profile resolution over absolute paths.
-- `state/`, `runs/`, `.samantha-worktrees/`, and dashboard runtime output belong to the Ubuntu Samantha host.
-- Do not run Samantha daemon, watch, poll, reply, worker dispatch, or dashboard runtime processes from Mac.
-- Final automation verification and merge gates are Ubuntu/Samantha-host responsibilities.
-- Mac-side work may edit, test, commit, and push normal repo code, but operational state remains Ubuntu-owned.
-- Mac-side verification should use portable commands such as `bun typecheck`, `bun run test:portable`, `bun run verify:docs`, and `bun run verify:mac`.
-- Host/runtime verification should use Ubuntu-only commands such as `bun run test:host`, `bun run test:all`, and `bun run verify:host`.
+- `state/`, `runs/`, `.samantha-worktrees/`, and dashboard runtime output belong to the active automation host.
+- Do not run Samantha daemon, watch, poll, reply, worker dispatch, or dashboard runtime processes from a client machine.
+- Final automation verification and merge gates are active-automation-host responsibilities.
+- Client-side work may edit, test, commit, and push normal repo code, but operational state remains host-owned.
+- Client-side verification should use portable commands such as `bun typecheck`, `bun run test:portable`, `bun run verify:docs`, and `bun run verify:mac`.
+- Host/runtime verification should use the active automation host with commands such as `bun run test:host`, `bun run test:all`, and `bun run verify:host`.
 
 ## Safety Priority
 

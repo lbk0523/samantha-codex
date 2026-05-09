@@ -75,7 +75,7 @@ Supported Telegram commands are operational reports plus orchestration request i
 
 `/check` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
 
-`/problems` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, latest remote command/report context, reply failures, and expected systemd template installation without printing secret values.
+`/problems` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, latest remote command/report context, reply failures, and expected host service template installation without printing secret values.
 
 Proposal and task draft records still exist as local fallback state, but they are not part of the normal Telegram command surface. Old proposal/draft Telegram commands return deprecated-command guidance and point back to `/work`, `/plan`, `/go`, or `/now`.
 
@@ -142,7 +142,7 @@ When all actions belonging to one materialized orchestrator plan finish, `action
 
 Lower-level action preparation and explicit action approval remain available through local CLI/inbox commands for debugging, but they are no longer Telegram commands. Telegram should use `/go` to advance the current safe gate.
 
-`actions:watch` or one-shot `actions:run-pending` executes only existing approved action ids. Telegram cannot supply shell commands, extra flags, arbitrary repo paths, or arbitrary integration instructions. After a passed run, `/go` may advance Samantha's fixed merge, push, and cleanup gates for the latest recorded run only. Drafts prepared with a project profile carry that profile's `repoRoot` into the promoted task and dispatch action; otherwise the repo root must be configured locally through `SAMANTHA_REPO_ROOT`. If neither is set, action preparation fails with an explicit report. If systemd cannot find Codex, set `SAMANTHA_CODEX_BIN` in `.env`.
+`actions:watch` or one-shot `actions:run-pending` executes only existing approved action ids. Telegram cannot supply shell commands, extra flags, arbitrary repo paths, or arbitrary integration instructions. After a passed run, `/go` may advance Samantha's fixed merge, push, and cleanup gates for the latest recorded run only. Drafts prepared with a project profile carry that profile's `repoRoot` into the promoted task and dispatch action; otherwise the repo root must be configured locally through `SAMANTHA_REPO_ROOT`. If the host service cannot find Codex, set `SAMANTHA_CODEX_BIN` in `.env`.
 
 Use `--tmux` for a read-only supervisor view while the worker runs. Samantha still owns the worker process, safety gates, merge, and push; tmux only tails `runs/live/<run-id>.jsonl` through a formatter. Attach with:
 
@@ -282,7 +282,7 @@ Safe first-run behavior:
 - Use `--mark-existing` to explicitly baseline current remote outbox files before enabling the timer.
 - Failed sends are not marked sent. Failure attempts, last errors, and split-message progress are stored in `state/telegram-replies.json`, and the next timer pass retries from the next unconfirmed message.
 
-systemd user timer templates are included:
+Linux/WSL systemd user timer templates are included:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -302,7 +302,9 @@ systemctl --user enable --now samantha-ceo-notify.timer
 
 The timer reads `%h/projects/samantha-codex/.env`. If the older Claude-side Samantha environment file exists elsewhere, either copy only the two Telegram values into this repo's ignored `.env` or adjust the copied service's `EnvironmentFile=` path locally.
 
-`samantha-ceo-notify.timer` is Ubuntu-host automation. It generates a compact CEO notification hourly; `samantha-telegram-reply.timer` is the only timer that sends the generated remote outbox files.
+macOS LaunchAgent templates are included under `ops/launchd/` for the same commands. Install them into `~/Library/LaunchAgents` on the active macOS automation host.
+
+`samantha-ceo-notify` is automation-host work. It generates a compact CEO notification hourly; `telegram:reply` is the only adapter that sends the generated remote outbox files.
 
 The timer templates favor interactive replies:
 
