@@ -1,6 +1,13 @@
-import type { AgentProfile, SafetyPolicy, SkillBundleRef } from "./contracts";
+import type {
+  AgentProfile,
+  ConnectorAccessCapabilityRecord,
+  SafetyPolicy,
+  SecretAccessCapabilityRecord,
+  SkillBundleRef,
+} from "./contracts";
 import type { DecisionItem } from "./decision-store";
 import { parseGovernanceRiskClass, type GovernanceRiskClass } from "./governance-taxonomy";
+import { readableSlug, shortHash } from "./ids";
 
 export const PROFILE_CHANGE_RISK_CLASS: GovernanceRiskClass = "high";
 export const CAPABILITY_CHANGE_RISK_CLASS: GovernanceRiskClass = "high";
@@ -109,6 +116,14 @@ export function connectorSecretCapabilityId(agentId: string): string {
   return `agent_profile:${agentId}:connector_secret_access`;
 }
 
+export function connectorAccessCapabilityId(agentId: string, connector: string): string {
+  return `agent_profile:${oneLine(agentId)}:connector_access:${readableSlug(oneLine(connector), 48)}`;
+}
+
+export function secretAccessCapabilityId(agentId: string, secretName: string): string {
+  return `agent_profile:${oneLine(agentId)}:secret_access:${shortHash(oneLine(secretName), 12)}`;
+}
+
 export function safetyPolicyCapabilityId(): string {
   return "safety_policy";
 }
@@ -119,16 +134,130 @@ function isNonEmptyGrantValue(value: unknown): boolean {
   return Boolean(value);
 }
 
-function connectorSecretGrantKeys(agent: AgentProfile): string[] {
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? oneLine(value) : "";
+}
+
+function addUnique(values: string[], value: string): void {
+  if (!values.includes(value)) values.push(value);
+}
+
+function adHocConnectorSecretGrantKeys(agent: AgentProfile): string[] {
   const record = agent as unknown as Record<string, unknown>;
   return [
     "allowedConnectors",
-    "connectorAccess",
     "connectors",
     "allowedSecrets",
-    "secretAccess",
     "secrets",
   ].filter((key) => isNonEmptyGrantValue(record[key]));
+}
+
+function connectorCapabilityRecords(input: {
+  agentId: string;
+  value: unknown;
+  ungovernedKeys: string[];
+  violations: string[];
+}): ConnectorAccessCapabilityRecord[] {
+  if (!isNonEmptyGrantValue(input.value)) return [];
+  if (!Array.isArray(input.value)) {
+    addUnique(input.ungovernedKeys, "connectorAccess");
+    return [];
+  }
+
+  const records: ConnectorAccessCapabilityRecord[] = [];
+  for (const item of input.value) {
+    if (!isPlainRecord(item)) {
+      addUnique(input.ungovernedKeys, "connectorAccess");
+      continue;
+    }
+    const connector = stringField(item.connector);
+    const capabilityId = stringField(item.capabilityId);
+    if (!connector || !capabilityId) {
+      input.violations.push(
+        `agent profile ${input.agentId} has invalid connector capability record: connector and capabilityId are required`,
+      );
+      continue;
+    }
+    if (capabilityId !== connectorAccessCapabilityId(input.agentId, connector)) {
+      input.violations.push(
+        `agent profile ${input.agentId} has connector capability record with mismatched capabilityId: ${connector}`,
+      );
+      continue;
+    }
+    records.push({ connector, capabilityId });
+  }
+  return records;
+}
+
+function secretCapabilityRecords(input: {
+  agentId: string;
+  value: unknown;
+  ungovernedKeys: string[];
+  violations: string[];
+}): SecretAccessCapabilityRecord[] {
+  if (!isNonEmptyGrantValue(input.value)) return [];
+  if (!Array.isArray(input.value)) {
+    addUnique(input.ungovernedKeys, "secretAccess");
+    return [];
+  }
+
+  const records: SecretAccessCapabilityRecord[] = [];
+  for (const item of input.value) {
+    if (!isPlainRecord(item)) {
+      addUnique(input.ungovernedKeys, "secretAccess");
+      continue;
+    }
+    const secretName = stringField(item.secretName);
+    const capabilityId = stringField(item.capabilityId);
+    if (!secretName || !capabilityId) {
+      input.violations.push(
+        `agent profile ${input.agentId} has invalid secret capability record: secretName and capabilityId are required`,
+      );
+      continue;
+    }
+    if (capabilityId !== secretAccessCapabilityId(input.agentId, secretName)) {
+      input.violations.push(
+        `agent profile ${input.agentId} has secret capability record with mismatched capabilityId`,
+      );
+      continue;
+    }
+    records.push({ secretName, capabilityId });
+  }
+  return records;
+}
+
+function connectorSecretCapabilityScan(agent: AgentProfile): {
+  connectorRecords: ConnectorAccessCapabilityRecord[];
+  secretRecords: SecretAccessCapabilityRecord[];
+  violations: string[];
+} {
+  const record = agent as unknown as Record<string, unknown>;
+  const ungovernedKeys = adHocConnectorSecretGrantKeys(agent);
+  const violations: string[] = [];
+  const connectorRecords = connectorCapabilityRecords({
+    agentId: agent.id,
+    value: record.connectorAccess,
+    ungovernedKeys,
+    violations,
+  });
+  const secretRecords = secretCapabilityRecords({
+    agentId: agent.id,
+    value: record.secretAccess,
+    ungovernedKeys,
+    violations,
+  });
+
+  if (ungovernedKeys.length > 0) {
+    violations.push(
+      `agent profile ${agent.id} has connector/secret access outside governed capability records: ${ungovernedKeys.join(", ")}`,
+    );
+  }
+
+  return { connectorRecords, secretRecords, violations };
 }
 
 function approvedDecisionFor(input: {
@@ -187,7 +316,7 @@ export function validateAgentProfileGovernance(
   const violations: string[] = [];
   const authorityDiff = agentProfileAuthorityDiff(agent);
   const requiredBundles = stableBundleList(agent.skillPolicy?.requiredBundles);
-  const grantKeys = connectorSecretGrantKeys(agent);
+  const connectorSecretScan = connectorSecretCapabilityScan(agent);
 
   if (authorityDiff.length > 0 && !approvedProfileChangeDecision(agent, decisions)) {
     violations.push(
@@ -199,9 +328,22 @@ export function validateAgentProfileGovernance(
       `agent profile ${agent.id} has unapproved allowed skill bundle capability: ${requiredBundles.join(", ")}`,
     );
   }
-  if (grantKeys.length > 0 && !approvedCapabilityChangeDecision(connectorSecretCapabilityId(agent.id), decisions)) {
+  violations.push(...connectorSecretScan.violations);
+
+  const missingConnectorApprovals = connectorSecretScan.connectorRecords.filter(
+    (record) => !approvedCapabilityChangeDecision(record.capabilityId, decisions),
+  );
+  const missingSecretApprovals = connectorSecretScan.secretRecords.filter(
+    (record) => !approvedCapabilityChangeDecision(record.capabilityId, decisions),
+  );
+  if (missingConnectorApprovals.length > 0) {
     violations.push(
-      `agent profile ${agent.id} has unapproved connector/secret capability grant: ${grantKeys.join(", ")}`,
+      `agent profile ${agent.id} is missing approved connector capability records: ${missingConnectorApprovals.map((record) => record.connector).join(", ")}`,
+    );
+  }
+  if (missingSecretApprovals.length > 0) {
+    violations.push(
+      `agent profile ${agent.id} is missing approved secret capability records: ${missingSecretApprovals.length} secret grant(s)`,
     );
   }
 

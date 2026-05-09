@@ -17,6 +17,16 @@ export interface SkillPolicy {
   blockedSkills: string[];
 }
 
+export interface ConnectorAccessCapabilityRecord {
+  connector: string;
+  capabilityId: string;
+}
+
+export interface SecretAccessCapabilityRecord {
+  secretName: string;
+  capabilityId: string;
+}
+
 export interface AgentProfile {
   id: string;
   role: AgentRole;
@@ -26,6 +36,8 @@ export interface AgentProfile {
   worktreePolicy: WorktreePolicy;
   mergePolicy: MergePolicy;
   skillPolicy: SkillPolicy;
+  connectorAccess?: ConnectorAccessCapabilityRecord[];
+  secretAccess?: SecretAccessCapabilityRecord[];
 }
 
 export interface TaskSpec {

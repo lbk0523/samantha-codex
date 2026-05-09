@@ -5,8 +5,10 @@ import {
   CAPABILITY_CHANGE_RISK_CLASS,
   PROFILE_CHANGE_RISK_CLASS,
   agentProfileChangeSummary,
+  connectorAccessCapabilityId,
   connectorSecretCapabilityId,
   safetyPolicyCapabilityId,
+  secretAccessCapabilityId,
   skillBundleCapabilityId,
   validateSafetyPolicyGovernance,
 } from "../src/lib/profile-governance";
@@ -124,23 +126,121 @@ describe("agent profile and capability governance", () => {
   });
 
   test("requires governed capability approval for connector or secret access grants", () => {
-    const changed = {
+    const agentId = reviewer.id;
+    const secretName = "OPERATIONS_API_KEY";
+    const changed: AgentProfile = {
       ...reviewer,
-      connectorAccess: ["gmail"],
-      secretAccess: ["TELEGRAM_BOT_TOKEN"],
-    } as AgentProfile;
+      connectorAccess: [
+        { connector: "gmail", capabilityId: connectorAccessCapabilityId(agentId, "gmail") },
+      ],
+      secretAccess: [
+        { secretName, capabilityId: secretAccessCapabilityId(agentId, secretName) },
+      ],
+    };
+    const violations = validateDispatch(reportTask, changed).violations;
 
-    expect(validateDispatch(reportTask, changed).violations).toContain(
-      "agent profile codex-reviewer has unapproved connector/secret capability grant: connectorAccess, secretAccess",
-    );
+    expect(violations).toContain("agent profile codex-reviewer is missing approved connector capability records: gmail");
+    expect(violations).toContain("agent profile codex-reviewer is missing approved secret capability records: 1 secret grant(s)");
+    expect(JSON.stringify(violations)).not.toContain(secretName);
     expect(validateDispatch(reportTask, changed, undefined, [
       approvedDecision({
         kind: "capability_change",
         subjectType: "capability",
-        subjectId: connectorSecretCapabilityId(changed.id),
-        prompt: "Grant connector/secret access only as a governed record; no connector implementation is enabled.",
+        subjectId: connectorAccessCapabilityId(agentId, "gmail"),
+        prompt: "Grant gmail connector access as a governed capability record; no connector implementation is enabled.",
+      }),
+      approvedDecision({
+        kind: "capability_change",
+        subjectType: "capability",
+        subjectId: secretAccessCapabilityId(agentId, secretName),
+        prompt: "Grant one named secret reference as a governed capability record without exposing the value.",
       }),
     ]).mayDispatch).toBe(true);
+  });
+
+  test("rejects connector or secret access outside governed capability records", () => {
+    const secretName = "OPERATIONS_API_KEY";
+    const changed = {
+      ...reviewer,
+      connectorAccess: ["gmail"],
+      secretAccess: [secretName],
+    } as unknown as AgentProfile;
+    const result = validateDispatch(reportTask, changed, undefined, [
+      approvedDecision({
+        kind: "capability_change",
+        subjectType: "capability",
+        subjectId: connectorSecretCapabilityId(changed.id),
+        prompt: "Broad connector/secret approval is not a governed capability record.",
+      }),
+    ]);
+
+    expect(result.mayDispatch).toBe(false);
+    expect(result.violations).toContain(
+      "agent profile codex-reviewer has connector/secret access outside governed capability records: connectorAccess, secretAccess",
+    );
+    expect(JSON.stringify(result.violations)).not.toContain(secretName);
+  });
+
+  test("keeps report-only agents read-only even when an approved skill suggests broader action", () => {
+    const changed: AgentProfile = {
+      ...reviewer,
+      skillPolicy: {
+        ...reviewer.skillPolicy,
+        requiredBundles: [{ id: "write-helper", source: "local", ref: "skills/write-helper" }],
+      },
+    };
+    const writeTask: TaskSpec = {
+      ...reportTask,
+      resultMode: "write",
+      targetFiles: ["src/lib/policy.ts"],
+    };
+    const result = validateDispatch(writeTask, changed, undefined, [
+      approvedDecision({
+        kind: "agent_profile_change",
+        subjectType: "agent_profile",
+        subjectId: changed.id,
+        prompt: agentProfileChangeSummary(changed),
+      }),
+      approvedDecision({
+        kind: "capability_change",
+        subjectType: "capability",
+        subjectId: skillBundleCapabilityId(changed.id),
+        prompt: "Allow write-helper methodology for report-only review; no execution authority is granted.",
+      }),
+    ]);
+
+    expect(result.mayDispatch).toBe(false);
+    expect(result.violations).toContain("non-writer tasks must use report resultMode");
+    expect(result.violations).toContain("non-writer report tasks must not declare targetFiles");
+  });
+
+  test("blocks orchestration-conflicting skill bundles even with capability approval", () => {
+    const changed: AgentProfile = {
+      ...reviewer,
+      skillPolicy: {
+        ...reviewer.skillPolicy,
+        requiredBundles: [{ id: "using-git-worktrees", source: "local", ref: "skills/using-git-worktrees" }],
+      },
+    };
+    const result = validateDispatch(reportTask, changed, undefined, [
+      approvedDecision({
+        kind: "agent_profile_change",
+        subjectType: "agent_profile",
+        subjectId: changed.id,
+        prompt: agentProfileChangeSummary(changed),
+      }),
+      approvedDecision({
+        kind: "capability_change",
+        subjectType: "capability",
+        subjectId: skillBundleCapabilityId(changed.id),
+        prompt: "Attempt to allow a worktree skill.",
+      }),
+    ]);
+
+    expect(result.mayDispatch).toBe(false);
+    expect(result.violations).toContain(
+      "agent profile required skill bundle is blocked by safety policy: using-git-worktrees",
+    );
   });
 
   test("rejects unapproved safety policy changes", () => {

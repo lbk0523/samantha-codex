@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import { git } from "../src/lib/git";
+import { secretAccessCapabilityId } from "../src/lib/profile-governance";
 import { commitWorkerChanges, executeWorkerDispatch, prepareWorkerDispatch, runCommand, runSetupCommands } from "../src/lib/worker-dispatch";
 
 const agent: AgentProfile = {
@@ -69,6 +70,26 @@ describe("prepareWorkerDispatch", () => {
         allocate: false,
       }),
     ).rejects.toThrow("writer tasks must declare forbiddenChanges");
+  });
+
+  test("explains missing secret approval without leaking secret names in dispatch errors", async () => {
+    const secretName = "OPERATIONS_API_KEY";
+    try {
+      await prepareWorkerDispatch({
+        task,
+        agent: {
+          ...agent,
+          secretAccess: [{ secretName, capabilityId: secretAccessCapabilityId(agent.id, secretName) }],
+        },
+        repoRoot: "/repo",
+        allocate: false,
+      });
+      throw new Error("expected dispatch to be blocked");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      expect(message).toContain("agent profile codex-worker is missing approved secret capability records: 1 secret grant(s)");
+      expect(message).not.toContain(secretName);
+    }
   });
 
   test("does not add git metadata write access on dry-run preparation", async () => {

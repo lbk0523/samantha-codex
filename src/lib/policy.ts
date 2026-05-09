@@ -32,6 +32,9 @@ export function validateAgentProfile(
   const role = String((agent as { role?: unknown }).role ?? "");
   const writerClass = String((agent as { writerClass?: unknown }).writerClass ?? "");
   const blockedSkills = Array.isArray(agent.skillPolicy?.blockedSkills) ? agent.skillPolicy.blockedSkills : [];
+  const requiredSkillBundleIds = Array.isArray(agent.skillPolicy?.requiredBundles)
+    ? agent.skillPolicy.requiredBundles.map((bundle) => String(bundle.id ?? "").trim()).filter(Boolean)
+    : [];
 
   if (!KNOWN_AGENT_ROLES.includes(role as AgentRole)) {
     violations.push(`agent profile role is unknown: ${role || "(empty)"}`);
@@ -75,6 +78,10 @@ export function validateAgentProfile(
   const missingBlockedSkills = policy.blockedSkillNames.filter((skillName) => !blockedSkills.includes(skillName));
   for (const skillName of missingBlockedSkills) {
     violations.push(`agent profile must block skill: ${skillName}`);
+  }
+  const requiredBlockedSkills = requiredSkillBundleIds.filter((skillName) => policy.blockedSkillNames.includes(skillName));
+  for (const skillName of requiredBlockedSkills) {
+    violations.push(`agent profile required skill bundle is blocked by safety policy: ${skillName}`);
   }
   violations.push(...validateAgentProfileGovernance(agent, governanceDecisions).violations);
 

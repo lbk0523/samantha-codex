@@ -36,6 +36,8 @@ describe("codex dispatch preparation", () => {
     const prompt = buildCodexWorkerPrompt(task, agent);
 
     expect(prompt).toContain("Samantha owns orchestration");
+    expect(prompt).toContain("Skill bundles are methodology only");
+    expect(prompt).toContain("Do not use connectors or secrets unless Samantha provides approved capability records");
     expect(prompt).toContain("Do not create worktrees");
     expect(prompt).toContain("Do not commit or push");
     expect(prompt).toContain("src/lib/codex-dispatch.ts");
@@ -75,6 +77,7 @@ describe("codex dispatch preparation", () => {
     expect(prompt).toContain("Role contract: review existing code, plan risk, regressions, and safety issues");
     expect(prompt).toContain("Produce the report artifact in your final response. Do not create report files.");
     expect(prompt).toContain("Do not edit, create, delete, format, commit, push, or move files.");
+    expect(prompt).toContain("No connector or secret access is inherited from BK or the host.");
     expect(prompt).toContain("- (none; read-only task)");
     expect(prompt).toContain("- **/*");
   });

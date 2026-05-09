@@ -109,6 +109,21 @@ blocked_skills:
 Samantha remains responsible for worktree allocation, dispatch, merge, push, and safety checks.
 Adding or allowing a skill that materially changes agent behavior should be
 treated as a governed capability change, not as an informal prompt edit.
+A blocked orchestration skill remains blocked even if a capability approval
+exists; approvals cannot override the safety policy.
+
+## Connector And Secret Boundaries
+
+Connector and secret access is unavailable to workers unless an agent profile
+declares governed capability records and BK has approved matching
+`capability_change` decisions. Ad hoc connector or secret fields are rejected
+before dispatch.
+
+Connector records identify the connector and deterministic capability id.
+Secret records identify a secret reference for gate calculation, but denial
+reports do not print secret values and summarize missing secret approvals by
+count. No connector access is inherited from BK, the operator machine, or
+enabled local tools.
 
 ## First Safety Gates
 

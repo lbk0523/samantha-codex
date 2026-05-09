@@ -230,6 +230,26 @@ Verification focus:
 - report-only agents remain read-only even when a skill suggests broader action
 - denial reports explain the missing approval without exposing secrets
 
+Outcome:
+
+- Added first-class `connectorAccess` and `secretAccess` capability records on
+  agent profiles. Connector records require deterministic connector capability
+  ids; secret records use deterministic non-value capability ids and denial
+  messages report missing secret grants by count rather than printing secret
+  names or values.
+- Ad hoc connector or secret grants, including string arrays and broad legacy
+  grant fields, are rejected before dispatch even when a broad capability
+  approval exists.
+- Required skill bundles remain governed capabilities. A skill bundle blocked
+  by Samantha safety policy remains denied even if a capability approval exists.
+- Worker prompts now make the boundary explicit: skills are methodology only,
+  connectors and secrets require approved capability records, and no connector
+  or secret access is inherited from BK or the host.
+- Added focused tests in `tests/profile-governance.test.ts`,
+  `tests/codex-dispatch.test.ts`, and `tests/worker-dispatch.test.ts`; existing
+  policy tests continue to cover the base role and dispatch contract. No real
+  connector integration or new secret access surface was added.
+
 ## G6: Cost And Budget Audit Hooks
 
 Goal: record budget-relevant facts now so later budget enforcement can be built
