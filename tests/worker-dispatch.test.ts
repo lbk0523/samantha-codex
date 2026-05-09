@@ -182,6 +182,23 @@ describe("prepareWorkerDispatch", () => {
     expect(result.stderr.trim()).toBe("err");
   });
 
+  test("does not inherit host secret env values into worker commands", async () => {
+    const previous = process.env.SAMANTHA_SECRET_LEAK_PROBE;
+    process.env.SAMANTHA_SECRET_LEAK_PROBE = "visible";
+    try {
+      const result = await runCommand(["bash", "-lc", "printf 'secret=%s' \"$SAMANTHA_SECRET_LEAK_PROBE\""]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("secret=");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SAMANTHA_SECRET_LEAK_PROBE;
+      } else {
+        process.env.SAMANTHA_SECRET_LEAK_PROBE = previous;
+      }
+    }
+  });
+
   test("tees command progress to a live log when requested", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-live-log-"));
     try {
@@ -276,6 +293,52 @@ describe("prepareWorkerDispatch", () => {
       expect(result.commit).toBeUndefined();
       expect(result.pass).toBe(true);
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("does not inherit host secret env values into the Codex worker process", async () => {
+    const root = await makeRepo();
+    const fakeCodex = join(root, "fake-codex");
+    const previous = process.env.SAMANTHA_SECRET_LEAK_PROBE;
+    process.env.SAMANTHA_SECRET_LEAK_PROBE = "visible";
+    try {
+      await writeFile(
+        fakeCodex,
+        [
+          "#!/usr/bin/env bash",
+          "printf 'secret=%s\\n' \"$SAMANTHA_SECRET_LEAK_PROBE\"",
+          "echo 'HARNESS_RESULT: {\"status\":\"pass\",\"note\":\"report only\",\"commit\":\"\"}'",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const result = await executeWorkerDispatch({
+        task: {
+          ...task,
+          id: "worker-env-isolation-fixture",
+          targetFiles: ["README.md"],
+          verifyCommands: ["test -f README.md"],
+          resultMode: "report",
+        },
+        agent,
+        repoRoot: root,
+        allocate: true,
+        worktreesDir: "worktrees",
+        codexBin: fakeCodex,
+      });
+
+      expect(result.command?.stdout).toContain("secret=\n");
+      expect(result.command?.stdout).not.toContain("visible");
+      expect(result.pass).toBe(true);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SAMANTHA_SECRET_LEAK_PROBE;
+      } else {
+        process.env.SAMANTHA_SECRET_LEAK_PROBE = previous;
+      }
       await rm(root, { recursive: true, force: true });
     }
   });
