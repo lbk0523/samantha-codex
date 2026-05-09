@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { git, gitHead } from "../src/lib/git";
@@ -150,6 +150,23 @@ describe("evaluateMergeGate", () => {
     expect(result.violations).toContain("target repo has uncommitted changes");
   });
 
+  test("blocks non-fast-forward merge candidates before a conflict can apply", async () => {
+    const { root, baseCommit, logPath } = await makeRepo();
+    await writeFile(join(root, "allowed.txt"), "conflicting main change\n", "utf8");
+    await git(["add", "allowed.txt"], root);
+    await git(["commit", "-m", "feat: target change"], root);
+
+    const result = await evaluateMergeGate({ runLogPath: logPath, repoRoot: root });
+    const apply = await applyMerge({ runLogPath: logPath, repoRoot: root });
+
+    expect(result.mayMerge).toBe(false);
+    expect(result.command).toBeUndefined();
+    expect(result.violations).toContain("target repo HEAD no longer matches the worker base commit");
+    expect(apply.applied).toBe(false);
+    expect(apply.merge).toBeUndefined();
+    expect(await git(["merge-base", "--is-ancestor", baseCommit, "HEAD"], root)).toBe("");
+  });
+
   test("applies a clean fast-forward merge and runs post-merge verification", async () => {
     const { root, workerCommit, logPath } = await makeRepo();
 
@@ -160,6 +177,23 @@ describe("evaluateMergeGate", () => {
     expect(result.merge?.exitCode).toBe(0);
     expect(result.verifyResults[0]?.exitCode).toBe(0);
     expect(await gitHead(root)).toBe(workerCommit);
+  });
+
+  test("records failed post-merge verification without treating the merge as verified", async () => {
+    const { root, logPath } = await makeRepo();
+    const log = JSON.parse(await readFile(logPath, "utf8")) as WorkerRunLog;
+    log.task.verifyCommands = ["grep -q missing allowed.txt"];
+    await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
+
+    const result = await applyMerge({ runLogPath: logPath, repoRoot: root });
+
+    expect(result.applied).toBe(true);
+    expect(result.verified).toBe(false);
+    expect(result.verifyResults[0]).toMatchObject({
+      command: "grep -q missing allowed.txt",
+      exitCode: 1,
+    });
+    expect(result.violations).toContain("post-merge verify command failed (1): grep -q missing allowed.txt");
   });
 
   test("does not apply merge when the gate is blocked", async () => {
@@ -192,5 +226,15 @@ describe("evaluateMergeGate", () => {
     expect(result.mayPush).toBe(false);
     expect(result.push).toBeUndefined();
     expect(result.violations).toContain("target repo has uncommitted changes");
+  });
+
+  test("reports push command failures without marking the transition safe", async () => {
+    const { root } = await makePushRepo();
+
+    const result = await pushMerge({ repoRoot: root, remote: "missing" });
+
+    expect(result.mayPush).toBe(false);
+    expect(result.push?.exitCode).not.toBe(0);
+    expect(result.violations).toContain(`push command failed (${result.push?.exitCode})`);
   });
 });

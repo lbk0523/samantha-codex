@@ -2811,6 +2811,71 @@ describe("inbox and remote commands", () => {
     expect(nextOutput).not.toContain("task-dependent-waiting --repo-root");
   });
 
+  test("marks waiting task failed when its prerequisite action is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-dependent-action-missing-"));
+    tmpRoots.push(root);
+    const state = join(root, "state");
+    const outbox = join(root, "outbox");
+    await mkdir(state, { recursive: true });
+
+    const waitingTask: TaskSpec = {
+      ...task,
+      id: "task-dependent-missing",
+      title: "Dependent missing",
+      status: "pending",
+    };
+    const waitingAction = {
+      ...createRemoteDispatchAction({
+        task: waitingTask,
+        repoRoot: "/repo",
+        createdAt: "2026-05-06T10:02:00.000Z",
+        source: "remote" as const,
+        commandId: "remote-missing-dependency",
+        dependsOnActionIds: ["action-missing"],
+      }),
+      status: "waiting" as const,
+      dependsOnActionIds: ["action-missing"],
+    };
+    await writeFile(join(state, "tasks.jsonl"), `${JSON.stringify(waitingTask)}\n`, "utf8");
+    await writeFile(join(state, "remote-actions.jsonl"), `${JSON.stringify(waitingAction)}\n`, "utf8");
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "actions:run-pending",
+        "--limit=1",
+        `--state-dir=${state}`,
+        `--outbox-dir=${outbox}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect({
+      stdout: await new Response(proc.stdout).text(),
+      stderr: await new Response(proc.stderr).text(),
+      exitCode: await proc.exited,
+    }).toMatchObject({ exitCode: 0 });
+
+    const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
+    expect(actions[0]).toMatchObject({
+      status: "failed",
+      result: {
+        pass: false,
+        outcome: "dependency_failed",
+        failure: "dependency action missing: action-missing",
+      },
+    });
+    const taskRecords = (await readFile(join(state, "tasks.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as TaskSpec);
+    expect(taskRecords[0]).toMatchObject({
+      id: "task-dependent-missing",
+      status: "failed",
+    });
+  });
+
   test("plans Samantha requests against the Samantha project profile instead of the OMHT fallback", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-project-"));
     tmpRoots.push(root);

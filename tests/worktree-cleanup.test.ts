@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { git, gitHead } from "../src/lib/git";
@@ -155,6 +155,23 @@ describe("cleanupCompletedWorktree", () => {
 
     expect(result.cleaned).toBe(false);
     expect(result.violations).toContain("worker worktree has uncommitted changes");
+    expect(await exists(worktreePath)).toBe(true);
+  });
+
+  test("refuses cleanup when the run log points at the target repo worktree", async () => {
+    const { root, logPath, worktreePath } = await makePassedRun({ merge: true });
+    const log = JSON.parse(await readFile(logPath, "utf8")) as WorkerRunLog;
+    log.result.preparation.worktreePath = root;
+    if (log.result.preparation.allocation) {
+      log.result.preparation.allocation.worktreePath = root;
+    }
+    await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
+
+    const result = await cleanupCompletedWorktree({ runLogPath: logPath, repoRoot: root });
+
+    expect(result.cleaned).toBe(false);
+    expect(result.violations).toContain("refusing to remove the target repo main worktree");
+    expect(await exists(root)).toBe(true);
     expect(await exists(worktreePath)).toBe(true);
   });
 });

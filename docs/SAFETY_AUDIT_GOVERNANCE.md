@@ -351,6 +351,23 @@ Verification focus:
 - no transition can be triggered by LLM output alone
 - existing portable verification remains green
 
+Outcome:
+
+- Added focused G8 assertions across the existing gate tests for plan
+  materialization, dispatch/result evaluation, dependency promotion, merge,
+  push, cleanup, recovery, profile activation, capability activation, and
+  safety policy changes.
+- Covered stale or wrong approval evidence, stale plan state, target-file and
+  forbidden-change violations, failed verify commands, non-fast-forward merge
+  candidates, push command failure, cleanup refusal, missing dependency
+  promotion, recovery no-op without failed-plan evidence, and ambiguous remote
+  approval no-op behavior.
+- Confirmed LLM-authored plan output remains advisory until the deterministic
+  current-plan BK decision gate is resolved; stale approval evidence does not
+  create tasks or remote actions.
+- No Telegram, dashboard, writer concurrency, worker authority, connector, or
+  secret surface was broadened for G8.
+
 ## G9: Rollback And Recovery Drills
 
 Goal: prove the operator can recover from realistic governance and execution

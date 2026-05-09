@@ -381,6 +381,137 @@ describe("prepareWorkerDispatch", () => {
     }
   });
 
+  test("fails writer tasks that change files outside targetFiles", async () => {
+    const root = await makeRepo();
+    const fakeCodex = join(root, "fake-codex");
+    try {
+      await writeFile(
+        fakeCodex,
+        [
+          "#!/usr/bin/env bash",
+          "while [ \"$1\" != \"--cd\" ]; do shift; done",
+          "shift",
+          "cd \"$1\"",
+          "echo outside > other.txt",
+          "echo 'HARNESS_RESULT: {\"status\":\"pass\",\"note\":\"outside target\",\"commit\":\"\"}'",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const result = await executeWorkerDispatch({
+        task: {
+          ...task,
+          id: "write-outside-target-fixture",
+          targetFiles: ["README.md"],
+          verifyCommands: ["test -f other.txt"],
+        },
+        agent,
+        repoRoot: root,
+        allocate: true,
+        worktreesDir: "worktrees",
+        codexBin: fakeCodex,
+      });
+
+      expect(result.evaluation?.changedFiles).toEqual(["other.txt"]);
+      expect(result.evaluation?.scopeViolations).toEqual([{ file: "other.txt", reason: "outside-target" }]);
+      expect(result.commit).toBeUndefined();
+      expect(result.pass).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails writer tasks that touch forbidden files even when they are targeted", async () => {
+    const root = await makeRepo();
+    const fakeCodex = join(root, "fake-codex");
+    try {
+      await writeFile(
+        fakeCodex,
+        [
+          "#!/usr/bin/env bash",
+          "while [ \"$1\" != \"--cd\" ]; do shift; done",
+          "shift",
+          "cd \"$1\"",
+          "mkdir -p state",
+          "echo secret > state/secret.txt",
+          "echo 'HARNESS_RESULT: {\"status\":\"pass\",\"note\":\"forbidden change\",\"commit\":\"\"}'",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const result = await executeWorkerDispatch({
+        task: {
+          ...task,
+          id: "write-forbidden-change-fixture",
+          targetFiles: ["state/secret.txt"],
+          forbiddenChanges: ["state/**"],
+          verifyCommands: ["test -f state/secret.txt"],
+        },
+        agent,
+        repoRoot: root,
+        allocate: true,
+        worktreesDir: "worktrees",
+        codexBin: fakeCodex,
+      });
+
+      expect(result.evaluation?.scopeViolations).toEqual([
+        { file: "state/secret.txt", reason: "forbidden", matchedPattern: "state/**" },
+      ]);
+      expect(result.commit).toBeUndefined();
+      expect(result.pass).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails writer tasks when Samantha verify commands fail", async () => {
+    const root = await makeRepo();
+    const fakeCodex = join(root, "fake-codex");
+    try {
+      await writeFile(
+        fakeCodex,
+        [
+          "#!/usr/bin/env bash",
+          "while [ \"$1\" != \"--cd\" ]; do shift; done",
+          "shift",
+          "cd \"$1\"",
+          "echo changed > README.md",
+          "echo 'HARNESS_RESULT: {\"status\":\"pass\",\"note\":\"verify should fail\",\"commit\":\"\"}'",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const result = await executeWorkerDispatch({
+        task: {
+          ...task,
+          id: "write-failed-verify-fixture",
+          targetFiles: ["README.md"],
+          verifyCommands: ["grep -q missing README.md"],
+        },
+        agent,
+        repoRoot: root,
+        allocate: true,
+        worktreesDir: "worktrees",
+        codexBin: fakeCodex,
+      });
+
+      expect(result.evaluation?.verifyResults[0]).toMatchObject({
+        command: "grep -q missing README.md",
+        exitCode: 1,
+      });
+      expect(result.commit).toBeUndefined();
+      expect(result.pass).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("keeps no-change write worker tasks failing", async () => {
     const root = await makeRepo();
     const fakeCodex = join(root, "fake-codex");

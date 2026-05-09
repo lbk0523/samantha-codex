@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   createDecisionItem,
   decisionAllowsOrchestratorMaterialization,
+  decisionIsCurrentPlanApproval,
   decisionLifecycleStatus,
   decisionFromQuestionDraft,
   decisionFromOrchestratorPlan,
@@ -216,6 +217,35 @@ describe("DecisionStore", () => {
       resolution: "approved",
       resolvedAt: "2026-05-07T10:05:00.000Z",
       resolvedBy: "bk",
+    })).toBe(false);
+  });
+
+  test("stale plan approvals are not current materialization authority", () => {
+    const approval = createDecisionItem({
+      title: "Review risky plan",
+      prompt: "Approve the plan before materialization.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-1" },
+      options: ["approve", "revise", "cancel"],
+      risk: "Touches dispatch gates.",
+      createdAt: "2026-05-07T10:00:00.000Z",
+    });
+    const resolvedApproval = {
+      ...approval,
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedAt: "2026-05-07T10:05:00.000Z",
+      resolvedBy: "bk" as const,
+    };
+
+    expect(decisionIsCurrentPlanApproval(approval, [plan])).toBe(true);
+    expect(decisionIsCurrentPlanApproval(approval, [{ ...plan, status: "materialized" }])).toBe(false);
+    expect(decisionIsCurrentPlanApproval(approval, [{ ...plan, status: "canceled" }])).toBe(false);
+    expect(decisionIsCurrentPlanApproval(resolvedApproval, [plan])).toBe(false);
+    expect(decisionAllowsOrchestratorMaterialization({
+      ...resolvedApproval,
+      subject: { type: "task", id: "plan-1" },
     })).toBe(false);
   });
 

@@ -17,18 +17,25 @@ async function processInbox(input: {
   inbox: string;
   outbox: string;
   archive: string;
+  agentProfiles?: string;
+  projectProfiles?: string;
+  repoRoot?: string;
 }): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const args = [
+    "bun",
+    "run",
+    "src/samantha.ts",
+    "inbox:process",
+    `--state-dir=${input.state}`,
+    `--inbox-dir=${input.inbox}`,
+    `--outbox-dir=${input.outbox}`,
+    `--archive-dir=${input.archive}`,
+  ];
+  if (input.agentProfiles) args.push(`--agent-profiles-dir=${input.agentProfiles}`);
+  if (input.projectProfiles) args.push(`--project-profiles-dir=${input.projectProfiles}`);
+  if (input.repoRoot) args.push(`--repo-root=${input.repoRoot}`);
   const proc = Bun.spawn(
-    [
-      "bun",
-      "run",
-      "src/samantha.ts",
-      "inbox:process",
-      `--state-dir=${input.state}`,
-      `--inbox-dir=${input.inbox}`,
-      `--outbox-dir=${input.outbox}`,
-      `--archive-dir=${input.archive}`,
-    ],
+    args,
     { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
   );
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -57,6 +64,34 @@ function planRecord(id: string, status = "planned"): Record<string, unknown> {
       tasks: [],
       batches: [],
       userMessage: "Plan ready.",
+    },
+  };
+}
+
+function executablePlanRecord(id: string): Record<string, unknown> {
+  const record = planRecord(id);
+  const payload = record.payload as Record<string, unknown>;
+  return {
+    ...record,
+    payload: {
+      ...payload,
+      scope: ["focused implementation"],
+      tasks: [
+        {
+          id: "apply-focused-change",
+          title: "Apply focused change",
+          targetAgent: "codex-worker",
+          projectId: "samantha",
+          resultMode: "write",
+          targetFiles: ["src/lib/policy.ts"],
+          forbiddenChanges: ["state/**"],
+          setupCommands: [],
+          verifyCommands: ["bun typecheck"],
+          instructions: "Apply the approved focused change.",
+          dependencies: [],
+        },
+      ],
+      batches: [["apply-focused-change"]],
     },
   };
 }
@@ -328,6 +363,117 @@ describe("remote approval inbox flow", () => {
       expect.objectContaining({ id: stale.id, status: "pending" }),
       expect.objectContaining({ id: resolved.id, status: "resolved", resolution: "approved" }),
     ]);
+  });
+
+  test("go does not materialize an LLM plan from stale approval alone", async () => {
+    const root = await makeRoot();
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const agents = join(root, "agents");
+    const projects = join(root, "projects");
+    await mkdir(state, { recursive: true });
+    await mkdir(inbox, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      JSON.stringify({
+        id: "codex-worker",
+        role: "writer",
+        model: "gpt-5.5",
+        writerClass: "writer",
+        worktreePolicy: "per-task",
+        mergePolicy: "samantha-controlled",
+        skillPolicy: {
+          requiredBundles: [],
+          blockedSkills: [
+            "using-git-worktrees",
+            "dispatching-parallel-agents",
+            "subagent-driven-development",
+          ],
+        },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(projects, "samantha.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: "samantha",
+        repoRoot: "/repo/samantha-codex",
+        setupCommands: [],
+        verifyCommands: ["bun typecheck"],
+        forbiddenChanges: ["state/**"],
+      }),
+      "utf8",
+    );
+    const staleApproval = {
+      ...createDecisionItem({
+        title: "Review plan: Stale approval",
+        prompt: "Approve, revise, or cancel before dispatch.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: "plan-stale-approved" },
+        createdAt: "2026-05-07T10:58:00.000Z",
+      }),
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedAt: "2026-05-07T10:58:30.000Z",
+      resolvedBy: "bk" as const,
+    };
+    await writeFile(join(state, "decisions.jsonl"), `${JSON.stringify(staleApproval)}\n`, "utf8");
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      [planRecord("plan-stale-approved", "materialized"), executablePlanRecord("plan-current")]
+        .map((item) => JSON.stringify(item))
+        .join("\n") + "\n",
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "remote-go.json"),
+      JSON.stringify({ id: "remote-go", type: "actions:go", args: { source: "remote", receivedAt: "2026-05-07T11:02:00.000Z" } }),
+      "utf8",
+    );
+
+    expect(await processInbox({ state, inbox, outbox, archive, agentProfiles: agents, projectProfiles: projects, repoRoot: "/repo/samantha-codex" }))
+      .toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "remote-go.md"), "utf8");
+    expect(report).toContain("# decision-required");
+    expect(report).toContain("BK decision required before Samantha materializes worker tasks.");
+    const records = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { status: string; resolution?: string; subject?: { id: string } });
+    expect(records).toEqual([
+      expect.objectContaining({ status: "resolved", resolution: "approved", subject: { type: "orchestrator_plan", id: "plan-stale-approved" } }),
+      expect.objectContaining({ status: "pending", subject: { type: "orchestrator_plan", id: "plan-current" } }),
+    ]);
+    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(state, "remote-actions.jsonl"), "utf8")).rejects.toThrow();
+  });
+
+  test("recover no-ops without failed plan evidence", async () => {
+    const root = await makeRoot();
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    await mkdir(state, { recursive: true });
+    await mkdir(inbox, { recursive: true });
+    await writeFile(
+      join(inbox, "remote-recover.json"),
+      JSON.stringify({ id: "remote-recover", type: "orchestrator:recover-latest", args: { source: "remote", receivedAt: "2026-05-07T11:02:00.000Z" } }),
+      "utf8",
+    );
+
+    expect(await processInbox({ state, inbox, outbox, archive })).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "remote-recover.md"), "utf8");
+    expect(report).not.toContain("# recover");
+    await expect(readFile(join(state, "orchestration-requests.jsonl"), "utf8")).rejects.toThrow();
   });
 
   test("answer does not resolve plan approval or orchestrator question decisions", async () => {

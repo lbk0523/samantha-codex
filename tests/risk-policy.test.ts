@@ -51,6 +51,7 @@ describe("risk policy contracts", () => {
     expect(classifyGovernanceRisk({ subjectType: "push", transitionKind: "push" }).riskClass).toBe("irreversible");
     expect(classifyGovernanceRisk({ subjectType: "cleanup", transitionKind: "cleanup" }).riskClass).toBe("irreversible");
     expect(classifyGovernanceRisk({ subjectType: "recovery", transitionKind: "recover" }).riskClass).toBe("high");
+    expect(classifyGovernanceRisk({ subjectType: "policy", transitionKind: "activate" }).riskClass).toBe("high");
   });
 
   test("unknown risk and risk drift fail closed", () => {

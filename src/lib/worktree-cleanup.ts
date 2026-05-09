@@ -82,6 +82,7 @@ export async function cleanupCompletedWorktree(input: WorktreeCleanupInput): Pro
   const commit = commitForLog(log);
   const repoRoot = await gitTopLevel(input.repoRoot);
   const canonicalRepoRoot = await canonicalPath(repoRoot);
+  const canonicalAllocationWorktree = allocation ? await canonicalPath(allocation.worktreePath) : "";
   const violations: string[] = [];
 
   if (!allocation) {
@@ -96,7 +97,7 @@ export async function cleanupCompletedWorktree(input: WorktreeCleanupInput): Pro
   if (allocation && (await canonicalPath(allocation.repoRoot)) !== canonicalRepoRoot) {
     violations.push("run log repoRoot does not match target repo");
   }
-  if (allocation && allocation.worktreePath === repoRoot) {
+  if (allocation && canonicalAllocationWorktree === canonicalRepoRoot) {
     violations.push("refusing to remove the target repo main worktree");
   }
 

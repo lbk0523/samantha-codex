@@ -96,6 +96,59 @@ describe("agent profile and capability governance", () => {
     expect(changed.mergePolicy).toBe("none");
   });
 
+  test("rejects stale governed approvals for the wrong profile, capability, or policy subject", () => {
+    const changedProfile = { ...reviewer, model: "gpt-6" };
+    const profileResult = validateDispatch(reportTask, changedProfile, undefined, [
+      approvedDecision({
+        kind: "agent_profile_change",
+        subjectType: "agent_profile",
+        subjectId: "codex-worker",
+        prompt: agentProfileChangeSummary(changedProfile),
+      }),
+    ]);
+
+    const skillChanged: AgentProfile = {
+      ...reviewer,
+      skillPolicy: {
+        ...reviewer.skillPolicy,
+        requiredBundles: [{ id: "web-research", source: "local", ref: "skills/web-research" }],
+      },
+    };
+    const capabilityResult = validateDispatch(reportTask, skillChanged, undefined, [
+      approvedDecision({
+        kind: "agent_profile_change",
+        subjectType: "agent_profile",
+        subjectId: skillChanged.id,
+        prompt: agentProfileChangeSummary(skillChanged),
+      }),
+      approvedDecision({
+        kind: "capability_change",
+        subjectType: "capability",
+        subjectId: skillBundleCapabilityId("codex-worker"),
+        prompt: "Stale skill bundle approval for a different profile.",
+      }),
+    ]);
+    const changedPolicy: SafetyPolicy = { ...DEFAULT_SAFETY_POLICY, writerCap: 2 };
+    const policyResult = validateSafetyPolicyGovernance(changedPolicy, DEFAULT_SAFETY_POLICY, [
+      approvedDecision({
+        kind: "capability_change",
+        subjectType: "capability",
+        subjectId: safetyPolicyCapabilityId(),
+        prompt: "Wrong subject type for safety policy change.",
+      }),
+    ]);
+
+    expect(profileResult.violations).toContain(
+      "agent profile codex-reviewer has unapproved governed authority change: model: gpt-5.5 -> gpt-6",
+    );
+    expect(capabilityResult.violations).toContain(
+      "agent profile codex-reviewer has unapproved allowed skill bundle capability: web-research@local@skills/web-research",
+    );
+    expect(policyResult.violations).toEqual([
+      "safety policy has unapproved governed capability change: writerCap: 1 -> 2",
+    ]);
+  });
+
   test("requires separate governed capability approval for allowed skill bundles", () => {
     const changed: AgentProfile = {
       ...reviewer,
