@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
 import { buildCeoStatusSnapshot, formatCeoStatusReport, type CeoStatusSnapshot } from "./lib/ceo-status";
 import { buildCeoReportId, CeoReportStore, type CeoReportRecord } from "./lib/ceo-report-store";
+import { CostBudgetAuditStore, createRunCostBudgetObservation } from "./lib/cost-budget-audit";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
 import {
   decisionAllowsOrchestratorMaterialization,
@@ -207,6 +208,10 @@ function decisionsPath(args: ParsedArgs): string {
 
 function governanceEventsPath(args: ParsedArgs): string {
   return join(stateDir(args), "governance-events.jsonl");
+}
+
+function costBudgetAuditPath(args: ParsedArgs): string {
+  return join(stateDir(args), "budget-audit.jsonl");
 }
 
 function actionRunnerLockPath(args: ParsedArgs): string {
@@ -647,6 +652,7 @@ async function executeTaskDispatch(input: {
   args: ParsedArgs;
   taskId: string;
   repoRoot: string;
+  action?: RemoteActionRecord;
   allocate?: boolean;
   liveLog?: boolean;
   tmux?: boolean;
@@ -713,6 +719,14 @@ async function executeTaskDispatch(input: {
   const runLog = await writeWorkerRunLog(baseLogDir, logInput);
   const runSummary = summarizeWorkerRun({ ...logInput, runId: runLog.runId, logPath: runLog.path });
   await new RunIndex(runsPath(input.args)).append(runSummary);
+  await tryRecordRunBudgetObservation({
+    args: input.args,
+    run: runSummary,
+    task,
+    agent,
+    action: input.action,
+    command: execution.preparation.codex.command,
+  });
   await taskStore.updateStatus(task.id, runSummary.pass ? "completed" : "failed");
   return {
     runLog,
@@ -720,6 +734,30 @@ async function executeTaskDispatch(input: {
     ...(liveLogPath ? { liveLog: { path: liveLogPath } } : {}),
     ...(tmux ? { tmux } : {}),
   };
+}
+
+async function tryRecordRunBudgetObservation(input: {
+  args: ParsedArgs;
+  run: RunSummary;
+  task: TaskSpec;
+  agent: AgentProfile;
+  action?: RemoteActionRecord;
+  command?: string[];
+}): Promise<void> {
+  try {
+    await new CostBudgetAuditStore(costBudgetAuditPath(input.args)).append(
+      createRunCostBudgetObservation({
+        observedAt: input.run.finishedAt,
+        run: input.run,
+        task: input.task,
+        agent: input.agent,
+        action: input.action,
+        command: input.command,
+      }),
+    );
+  } catch (err) {
+    console.error(`failed to write budget audit observation: ${errorMessage(err)}`);
+  }
 }
 
 async function writeRemoteActionResultOutbox(args: ParsedArgs, action: RemoteActionRecord): Promise<void> {
@@ -995,6 +1033,7 @@ async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promis
         args,
         taskId: running.taskId,
         repoRoot: running.repoRoot,
+        action: running,
         allocate: true,
         tmux: true,
         tmuxSession,
@@ -1721,6 +1760,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
       actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
       lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
+      budgetObservations: await new CostBudgetAuditStore(costBudgetAuditPath(args)).list(),
     });
   }
   if (command.type === "ops:now") {
@@ -2418,6 +2458,11 @@ async function main(): Promise<void> {
 
   if (args.command === "runs:list") {
     printJson(await new RunIndex(runsPath(args)).list());
+    return;
+  }
+
+  if (args.command === "budget:list") {
+    printJson(await new CostBudgetAuditStore(costBudgetAuditPath(args)).list());
     return;
   }
 

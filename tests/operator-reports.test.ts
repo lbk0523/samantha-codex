@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createCostBudgetAuditRecord } from "../src/lib/cost-budget-audit";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import type { DaemonHealthResult, DaemonHeartbeat } from "../src/lib/daemon";
 import { createDecisionItem } from "../src/lib/decision-store";
@@ -495,6 +496,70 @@ describe("operator reports", () => {
     expect(doctorReport(ops)).toContain("TELEGRAM_BOT_TOKEN: 있음");
     expect(doctorReport(ops)).toContain("최근 원격 명령: type=`status:show`");
     expect(doctorReport(ops)).toContain("최근 reply 실패: remote-b.md attempts=2 error=Telegram error");
+  });
+
+  test("renders budget audit observations without implying enforcement or zero cost", () => {
+    const status = statusReport({
+      runs: [passRun],
+      pendingInboxCount: 0,
+      budgetObservations: [
+        createCostBudgetAuditRecord({
+          observedAt: "2026-05-09T01:00:00.000Z",
+          actor: "samantha",
+          subject: { type: "run", id: "run-pass" },
+          cost: {
+            kind: "unknown",
+            reason: "worker run did not report measured or estimated cost",
+          },
+          context: {
+            runId: "run-pass",
+            projectId: "samantha",
+            model: "gpt-5.5",
+          },
+        }),
+        createCostBudgetAuditRecord({
+          observedAt: "2026-05-09T01:01:00.000Z",
+          actor: "operator",
+          subject: { type: "action", id: "action-zero" },
+          cost: {
+            kind: "measured",
+            amount: 0,
+            currency: "USD",
+            source: "provider receipt",
+          },
+          context: {
+            actionId: "action-zero",
+            runId: "run-pass",
+            model: "gpt-5.5",
+          },
+        }),
+        createCostBudgetAuditRecord({
+          observedAt: "2026-05-09T01:02:00.000Z",
+          actor: "operator",
+          subject: { type: "project", id: "samantha" },
+          cost: {
+            kind: "estimated",
+            amount: 0.125,
+            currency: "USD",
+            basis: "manual token estimate",
+          },
+          context: {
+            projectId: "samantha",
+            model: "gpt-5.5",
+          },
+        }),
+      ],
+    });
+
+    expect(status).toContain("Budget audit:");
+    expect(status).toContain("observations: total=3 measured=1 estimated=1 unknown=1");
+    expect(status).toContain("measured total: USD 0");
+    expect(status).toContain("estimated total: USD 0.125");
+    expect(status).toContain("cost=`estimated USD 0.125`");
+    expect(status).not.toContain("budget stop");
+
+    const empty = statusReport({ runs: [], pendingInboxCount: 0, budgetObservations: [] });
+    expect(empty).toContain("cost total: unavailable (missing cost data is unknown, not zero)");
   });
 
   test("renders task summaries", () => {

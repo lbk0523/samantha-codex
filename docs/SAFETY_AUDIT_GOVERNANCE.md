@@ -272,6 +272,21 @@ Verification focus:
 - missing cost data does not block existing Phase 4 workflows
 - no automatic budget stop is introduced in Phase 5
 
+Outcome:
+
+- Added `src/lib/cost-budget-audit.ts` with a file-backed
+  `state/budget-audit.jsonl` audit store for budget observations.
+- Budget records distinguish `measured`, `estimated`, and `unknown` cost data;
+  unknown observations cannot carry an amount, while measured zero remains a
+  valid explicit value.
+- Worker dispatch now writes best-effort unknown-cost observations with run,
+  action, project, model, and sanitized command context where available. A
+  failed budget audit write is reported to stderr but does not stop dispatch.
+- Operator status reports roll up budget observations and explicitly show
+  missing totals as unavailable rather than zero.
+- G6 does not add external billing API calls, automatic throttling, or budget
+  stop enforcement; those remain deferred to Phase 9.
+
 ## G7: Operator Review And Reconstruction Reports
 
 Goal: let BK or a local operator reconstruct what happened from original

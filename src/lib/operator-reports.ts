@@ -1,5 +1,6 @@
 import type { TaskSpec } from "./contracts";
 import type { CeoStatusSnapshot } from "./ceo-status";
+import { summarizeCostBudgetAuditRecords, type CostBudgetAuditRecord, type CostBudgetTotal } from "./cost-budget-audit";
 import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import { latestCurrentPendingBlockerClarification, type DecisionItem } from "./decision-store";
 import type { RunSummary } from "./ledger";
@@ -142,6 +143,44 @@ function draftLine(draft: TaskDraftRecord): string {
 
 function remoteActionLine(action: RemoteActionRecord): string {
   return `- ${code(action.id)} status=${code(action.status)} kind=${code(action.kind)} task=${code(action.taskId)} created=${code(action.createdAt)}`;
+}
+
+function costAmount(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function costTotalText(totals: CostBudgetTotal[]): string {
+  return totals.length ? totals.map((total) => `${total.currency} ${costAmount(total.amount)}`).join(", ") : "unavailable";
+}
+
+function costDataText(record: CostBudgetAuditRecord): string {
+  if (record.cost.kind === "unknown") return "unknown";
+  return `${record.cost.kind} ${record.cost.currency} ${costAmount(record.cost.amount)}`;
+}
+
+function budgetAuditLines(records: CostBudgetAuditRecord[] | undefined): string[] {
+  if (!records) return [];
+  const summary = summarizeCostBudgetAuditRecords(records);
+  if (summary.total === 0) {
+    return [
+      "",
+      "Budget audit:",
+      "- observations: none recorded",
+      "- cost total: unavailable (missing cost data is unknown, not zero)",
+    ];
+  }
+
+  const latest = summary.latest;
+  return [
+    "",
+    "Budget audit:",
+    `- observations: total=${summary.total} measured=${summary.measured} estimated=${summary.estimated} unknown=${summary.unknown}`,
+    `- measured total: ${costTotalText(summary.measuredTotals)}`,
+    `- estimated total: ${costTotalText(summary.estimatedTotals)}`,
+    latest
+      ? `- latest: subject=${code(`${latest.subject.type}:${latest.subject.id}`)} run=${code(latest.context?.runId ?? "unknown")} action=${code(latest.context?.actionId ?? "unknown")} model=${code(latest.context?.model ?? "unknown")} cost=${code(costDataText(latest))}`
+      : "",
+  ];
 }
 
 function lifecycleText(lifecycle: RunLifecycleRecord | undefined): string {
@@ -1998,6 +2037,7 @@ export function statusReport(input: {
   drafts?: TaskDraftRecord[];
   actions?: RemoteActionRecord[];
   lifecycles?: RunLifecycleRecord[];
+  budgetObservations?: CostBudgetAuditRecord[];
 }): string {
   const latest = input.runs.at(-1);
   const latestLifecycle = latest ? input.lifecycles?.find((record) => record.runId === latest.runId) : undefined;
@@ -2086,6 +2126,7 @@ export function statusReport(input: {
     `- non-passing: ${failureCount}`,
     latest ? `- latest: ${oneLine(runLine(latest).slice(2))}` : "- latest: 없음",
     latest ? `- lifecycle: ${lifecycleText(latestLifecycle)}` : "",
+    ...budgetAuditLines(input.budgetObservations),
   ]
     .filter(Boolean)
     .join("\n");
