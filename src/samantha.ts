@@ -78,6 +78,7 @@ import {
   taskShowReport,
 } from "./lib/operator-reports";
 import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnostics";
+import { operatorReviewReport, type OperatorReviewSubjectType } from "./lib/operator-review-report";
 import { createOrchestratorPlanBlocker, payloadBlockerForPlan, type OrchestratorPlanBlocker } from "./lib/orchestrator-blockers";
 import { runOrchestratorPlan, runOrchestratorQuestionDraft, runOrchestratorSynthesis } from "./lib/orchestrator-agent";
 import { materializeOrchestratorPlan } from "./lib/orchestrator-materializer";
@@ -327,6 +328,21 @@ function decisionResolution(value: string): DecisionResolution {
     return value;
   }
   throw new Error(`unsupported decision resolution: ${value}`);
+}
+
+function operatorReviewSubjectType(value: string): OperatorReviewSubjectType {
+  if (
+    value === "auto" ||
+    value === "request" ||
+    value === "plan" ||
+    value === "decision" ||
+    value === "task" ||
+    value === "action" ||
+    value === "run"
+  ) {
+    return value;
+  }
+  throw new Error(`unsupported review subject: ${value}`);
 }
 
 function decisionSubject(args: ParsedArgs): DecisionSubject | undefined {
@@ -937,6 +953,26 @@ async function readRunLogsForActions(actions: RemoteActionRecord[]): Promise<Wor
     }),
   );
   return logs.filter((log): log is WorkerRunLog => log !== undefined);
+}
+
+async function readRunLogsForReview(actions: RemoteActionRecord[], runs: RunSummary[]): Promise<WorkerRunLog[]> {
+  const paths = new Set<string>();
+  for (const action of actions) {
+    if (action.result?.runLogPath) paths.add(action.result.runLogPath);
+  }
+  for (const run of runs) {
+    if (run.logPath) paths.add(run.logPath);
+  }
+
+  const logs: WorkerRunLog[] = [];
+  for (const path of paths) {
+    try {
+      logs.push(await readWorkerRunLog(path));
+    } catch {
+      // The review report flags missing run logs from the state records.
+    }
+  }
+  return logs;
 }
 
 async function latestRecoverableOrchestratorPlan(args: ParsedArgs): Promise<
@@ -2475,6 +2511,34 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "review:show") {
+    const id = args.positionals[0];
+    if (!id) throw new Error("usage: review:show <id> [--subject=auto|request|plan|decision|task|action|run]");
+    const [requests, plans, decisions, tasks, actions, runs, lifecycles] = await Promise.all([
+      new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
+      new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
+      new DecisionStore(decisionsPath(args)).list(),
+      new TaskStore(tasksPath(args)).list(),
+      new RemoteActionStore(remoteActionsPath(args)).list(),
+      new RunIndex(runsPath(args)).list(),
+      new RunLifecycleStore(runLifecyclePath(args)).list(),
+    ]);
+    console.log(
+      operatorReviewReport({
+        subject: { type: operatorReviewSubjectType(flag(args, "subject", "auto")), id },
+        requests,
+        plans,
+        decisions,
+        tasks,
+        actions,
+        runs,
+        runLogs: await readRunLogsForReview(actions, runs),
+        lifecycles,
+      }),
+    );
+    return;
+  }
+
   if (args.command === "tasks:add") {
     const taskPath = args.positionals[0];
     if (!taskPath) throw new Error("usage: tasks:add <task.json>");
@@ -3207,6 +3271,7 @@ async function main(): Promise<void> {
       "local debug and recovery:",
       "  runs:list",
       "  runs:show <run-id>",
+      "  review:show <id> [--subject=auto|request|plan|decision|task|action|run]",
       "  tasks:add <task.json>",
       "  tasks:list [--include-archived]",
       "  tasks:show <task-id>",

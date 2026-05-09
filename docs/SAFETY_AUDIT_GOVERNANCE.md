@@ -311,6 +311,22 @@ Verification focus:
 - missing or stale records are flagged in the review report
 - routine Telegram output remains compact and does not require ids
 
+Outcome:
+
+- Added a read-only `review:show <id>` CLI path backed by
+  `src/lib/operator-review-report.ts`.
+- The report reconstructs stored request, plan, decision, task, action, run,
+  verify, merge, push, cleanup, and recovery links without mutating historical
+  state.
+- Missing request, decision, task, action, run log, verify, lifecycle, and
+  recovery links are reported as audit gaps instead of being inferred away.
+- Completed, failed/recovered, blocked, and partially integrated states are
+  derived from existing plan/action/run/lifecycle records for local operator
+  review; Telegram remains compact and id-light.
+- Added focused tests for a completed path, a failed source plan fixed by a
+  recovery plan, missing-link audit gaps, partial integration, and the CLI
+  review path.
+
 ## G8: Dangerous Transition Gate Tests
 
 Goal: harden the transitions most likely to cause irreversible damage before
