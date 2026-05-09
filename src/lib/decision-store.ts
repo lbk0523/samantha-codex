@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { compactEntityId } from "./ids";
 import { planPayloadBlockerViolations } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord, OrchestratorQuestionDraftPayload } from "./orchestrator-store";
+import { riskPolicyAllowsTransition } from "./risk-policy";
 
 export type DecisionStatus = "pending" | "resolved" | "archived";
 export type DecisionKind =
@@ -196,7 +197,14 @@ export function decisionFromQuestionDraft(input: {
 }
 
 export function decisionAllowsOrchestratorMaterialization(decision: DecisionItem | undefined): boolean {
-  return decision?.kind === "orchestrator_plan_approval" && decision.status === "resolved" && decision.resolution === "approved";
+  if (decision?.kind !== "orchestrator_plan_approval") return false;
+  return riskPolicyAllowsTransition({
+    subjectType: "plan",
+    subjectId: decision.subject?.type === "orchestrator_plan" ? decision.subject.id : undefined,
+    transitionKind: "materialize",
+    approvalEvidence: [decision],
+    approvedDecisionKinds: ["orchestrator_plan_approval"],
+  }).mayProceed;
 }
 
 export function decisionHasCurrentPlanSubject(decision: DecisionItem, plans: OrchestratorPlanRecord[]): boolean {

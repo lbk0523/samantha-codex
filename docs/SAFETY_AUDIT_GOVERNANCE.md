@@ -146,6 +146,25 @@ Verification focus:
   action
 - existing Phase 4 safe flows still pass without extra manual decisions
 
+Outcome:
+
+- Added `src/lib/risk-policy.ts` with deterministic risk classification for
+  plan materialization, action/task dispatch, profile and capability activation,
+  skill allowance, connector/secret access, merge, push, cleanup, recovery, and
+  other governed taxonomy transitions.
+- Unknown subject, transition, risk class, risk drift, missing subject id, and
+  missing approval evidence fail closed in the shared risk decision helper.
+- High and irreversible transitions now require resolved BK approval evidence;
+  existing orchestrator plan approval remains the explicit evidence for Phase 4
+  plan materialization.
+- `decisionAllowsOrchestratorMaterialization` now uses the shared helper while
+  keeping Phase 4 `/go` behavior compatible.
+- Added `tests/risk-policy.test.ts` for contract coverage, dangerous transition
+  classifications, explicit approval evidence, unknown risk, risk drift, and
+  safe informational flows.
+- G3 does not add profile/capability decision kinds, expand connector/secret
+  authority, change runtime merge/push/cleanup behavior, or change `writerCap`.
+
 ## G4: Agent Profile And Capability Governance
 
 Goal: ensure new roles, profile edits, writer authority, and capability changes
