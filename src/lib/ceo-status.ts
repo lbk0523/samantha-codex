@@ -1,3 +1,4 @@
+import type { GoalPriority, GoalRecord, WorkItemAncestry } from "./ancestry";
 import type { TaskSpec } from "./contracts";
 import {
   decisionAllowsOrchestratorMaterialization,
@@ -18,6 +19,7 @@ import type { RemoteActionRecord } from "./remote-action-store";
 import { recoveryResolvedPlanIds } from "./recovery-continuity";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
 import { buildOperatingSurfaceView } from "./operating-surface";
+import { buildCeoRanking, type CeoRanking } from "./ceo-ranking";
 import {
   buildProjectQueueSnapshot,
   filterProjectQueueRecords,
@@ -42,6 +44,9 @@ export interface CeoStatusItem {
   status: string;
   updatedAt?: string;
   detail?: string;
+  projectId?: string;
+  goalId?: string;
+  priority?: GoalPriority;
 }
 
 export interface CeoDecisionSummary {
@@ -54,6 +59,9 @@ export interface CeoDecisionSummary {
   updatedAt?: string;
   subject?: string;
   options?: string[];
+  projectId?: string;
+  goalId?: string;
+  priority?: GoalPriority;
 }
 
 export type CeoNextActionKind =
@@ -90,6 +98,7 @@ export interface CeoStatusSnapshot {
   needsDecision: CeoDecisionSummary[];
   risks: string[];
   nextAction: CeoNextAction;
+  ranking?: CeoRanking;
   projectQueues?: ProjectQueueSnapshot;
 }
 
@@ -107,6 +116,7 @@ export interface BuildCeoStatusSnapshotInput {
   reports?: CeoReportRecord[];
   governanceEvents?: GovernanceEventRecord[];
   budgetObservations?: CostBudgetAuditRecord[];
+  goals?: GoalRecord[];
   ops?: OpsSnapshot;
 }
 
@@ -127,6 +137,25 @@ function timestamp(value: string | undefined): number {
 
 function itemTimestamp(item: { updatedAt?: string }): number {
   return timestamp(item.updatedAt);
+}
+
+function assignedAncestry(ancestry: WorkItemAncestry | undefined): Extract<WorkItemAncestry, { mode: "assigned" }> | undefined {
+  return ancestry?.mode === "assigned" ? ancestry : undefined;
+}
+
+function goalPriority(ancestry: WorkItemAncestry | undefined, goals: GoalRecord[]): GoalPriority | undefined {
+  const assigned = assignedAncestry(ancestry);
+  if (!assigned) return undefined;
+  return goals.find((goal) => goal.id === assigned.goalId && goal.projectId === assigned.projectId)?.priority;
+}
+
+function rankingContext(record: { ancestry?: WorkItemAncestry }, goals: GoalRecord[]) {
+  const assigned = assignedAncestry(record.ancestry);
+  return {
+    projectId: assigned?.projectId,
+    goalId: assigned?.goalId,
+    priority: goalPriority(record.ancestry, goals),
+  };
 }
 
 function sortRecent<T extends { updatedAt?: string; id: string }>(items: T[]): T[] {
@@ -203,17 +232,18 @@ function latestDecisionBySubject(decisions: DecisionItem[]): Map<string, Decisio
   return bySubject;
 }
 
-function taskItem(task: TaskSpec): CeoStatusItem {
+function taskItem(task: TaskSpec, goals: GoalRecord[] = []): CeoStatusItem {
   return {
     kind: "task",
     id: task.id,
     title: task.title,
     status: task.status,
     detail: `agent=${task.targetAgent}`,
+    ...rankingContext(task, goals),
   };
 }
 
-function runItem(run: RunSummary): CeoStatusItem {
+function runItem(run: RunSummary, goals: GoalRecord[] = []): CeoStatusItem {
   return {
     kind: "run",
     id: run.runId,
@@ -221,6 +251,7 @@ function runItem(run: RunSummary): CeoStatusItem {
     status: run.outcome,
     updatedAt: run.finishedAt,
     detail: run.failureReason ? oneLine(run.failureReason) : run.commit ? `commit=${run.commit.slice(0, 12)}` : undefined,
+    ...rankingContext(run, goals),
   };
 }
 
@@ -452,6 +483,7 @@ function chooseOverall(input: {
 }
 
 export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}): CeoStatusSnapshot {
+  const goals = input.goals ?? [];
   const projectQueues = buildProjectQueueSnapshot({
     requests: input.orchestrationRequests,
     plans: input.orchestratorPlans,
@@ -520,6 +552,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
         status: plan.status,
         updatedAt: planUpdatedAt(plan),
         detail: "approved; waiting for materialization",
+        ...rankingContext(plan, goals),
       })),
   );
 
@@ -533,10 +566,11 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
         status: action.status,
         updatedAt: actionUpdatedAt(action),
         detail: `task=${action.taskId}`,
+        ...rankingContext(action, goals),
       })),
     ...tasks
       .filter((task) => activeTaskStatuses.has(task.status) && !actionTaskIds.has(task.id))
-      .map(taskItem),
+      .map((task) => taskItem(task, goals)),
     ...orchestrationRequests
       .filter((request) => request.status === "pending_plan")
       .map((request) => ({
@@ -546,6 +580,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
         status: request.status,
         updatedAt: request.createdAt,
         detail: "waiting for plan",
+        ...rankingContext(request, goals),
       })),
     ...approvedPlans,
   ];
@@ -566,6 +601,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     updatedAt: decisionUpdatedAt(decision),
     subject: decisionSubjectText(decision),
     options: decision.options,
+    ...rankingContext(decision, goals),
   }));
   const derivedPlanNeeds = orchestratorPlans
     .filter((plan) => plan.status === "planned" || plan.status === "questions")
@@ -582,6 +618,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
           ? `${plan.payload?.questions.length ?? 0} question(s) need BK input.`
           : "Plan needs BK approval, revision, or cancellation.",
       updatedAt: planUpdatedAt(plan),
+      ...rankingContext(plan, goals),
     }));
   const needsDecision: CeoDecisionSummary[] = [
     ...sortRecent(decisionNeeds.filter((decision) => decision.decisionKind === "blocker_clarification")),
@@ -608,6 +645,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
         status: "blocked",
         updatedAt: plan ? planUpdatedAt(plan) : undefined,
         detail: blocker.violations[0] ?? "plan materialization prerequisite failed",
+        ...(plan ? rankingContext(plan, goals) : {}),
       };
     }),
     ...failedActions.map((action) => ({
@@ -617,6 +655,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
       status: action.status,
       updatedAt: actionUpdatedAt(action),
       detail: oneLine(action.result?.failure ?? action.result?.outcome ?? "action failed or reported non-passing result"),
+      ...rankingContext(action, goals),
     })),
     ...failedPlans.map((plan) => ({
       kind: "orchestrator_plan" as const,
@@ -625,11 +664,12 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
       status: plan.status,
       updatedAt: planUpdatedAt(plan),
       detail: blockedPlanDetail(plan),
+      ...rankingContext(plan, goals),
     })),
-    ...blockedTasks.map(taskItem),
+    ...blockedTasks.map((task) => taskItem(task, goals)),
   ];
 
-  const historicalFailures = failedRuns.map(runItem);
+  const historicalFailures = failedRuns.map((run) => runItem(run, goals));
 
   const completed = sortRecent([
     ...actions
@@ -641,9 +681,10 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
         status: action.status,
         updatedAt: action.completedAt ?? action.createdAt,
         detail: action.result?.runId ? `run=${action.result.runId}` : undefined,
+        ...rankingContext(action, goals),
       })),
-    ...runs.filter((run) => run.pass).map(runItem),
-    ...tasks.filter((task) => task.status === "completed").map(taskItem),
+    ...runs.filter((run) => run.pass).map((run) => runItem(run, goals)),
+    ...tasks.filter((task) => task.status === "completed").map((task) => taskItem(task, goals)),
   ]);
 
   const integration = latestRunNeedingIntegration(runs, lifecycles);
@@ -677,9 +718,20 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     integration,
     ops: input.ops,
   });
+  const generatedAt = input.generatedAt ?? new Date().toISOString();
+  const ranking = buildCeoRanking({
+    generatedAt,
+    needsDecision,
+    active: sortedActive,
+    blocked: sortedBlocked,
+    historicalFailures: sortedHistoricalFailures,
+    completed,
+    nextAction,
+    projectQueues,
+  });
 
   return {
-    generatedAt: input.generatedAt ?? new Date().toISOString(),
+    generatedAt,
     projectFilterId: input.projectId,
     overall: chooseOverall({
       active: sortedActive,
@@ -696,6 +748,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     needsDecision,
     risks,
     nextAction,
+    ranking,
     projectQueues,
   };
 }
@@ -721,6 +774,7 @@ export function formatCeoStatusReport(
 ): string {
   const view = buildOperatingSurfaceView(snapshot);
   const completed = snapshot.completed.slice(0, options.completedLimit ?? snapshot.completed.length);
+  const top = snapshot.ranking?.top;
 
   return [
     "# ceo:status",
@@ -730,6 +784,12 @@ export function formatCeoStatusReport(
     `Overall: ${snapshot.overall}`,
     `Summary: ${view.summary}`,
     `Headline: ${view.headline}`,
+    "",
+    "Top recommendation:",
+    top ? `- ${view.primaryAction.label}` : "- none",
+    top?.signal ? `- Ranking signal: ${top.signal}` : "",
+    top?.explanation ? `- Ranking reason: ${top.explanation}` : "",
+    snapshot.ranking?.tieBreaker ? `- Tie-breaker: ${snapshot.ranking.tieBreaker}` : "",
     "",
     "Next safe action:",
     `- ${view.primaryAction.label}`,

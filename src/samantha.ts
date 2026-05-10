@@ -1309,7 +1309,7 @@ async function orchestratorPlanBlockersForReport(
 }
 
 async function nowReportForInbox(args: ParsedArgs): Promise<string> {
-  const [runs, tasks, actions, proposals, drafts, orchestrationRequests, orchestratorPlans, decisions, ops, lifecycles] = await Promise.all([
+  const [runs, tasks, actions, proposals, drafts, orchestrationRequests, orchestratorPlans, decisions, ops, lifecycles, reports, governanceEvents, budgetObservations] = await Promise.all([
     new RunIndex(runsPath(args)).list(),
     new TaskStore(tasksPath(args)).listActive(),
     new RemoteActionStore(remoteActionsPath(args)).list(),
@@ -1320,6 +1320,9 @@ async function nowReportForInbox(args: ParsedArgs): Promise<string> {
     new DecisionStore(decisionsPath(args)).list(),
     collectOps(args),
     new RunLifecycleStore(runLifecyclePath(args)).list(),
+    new CeoReportStore(ceoReportsPath(args)).list(),
+    new GovernanceEventStore(governanceEventsPath(args)).list(),
+    new CostBudgetAuditStore(costBudgetAuditPath(args)).list(),
   ]);
   return nowReport({
     runs,
@@ -1333,6 +1336,9 @@ async function nowReportForInbox(args: ParsedArgs): Promise<string> {
     orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(args, orchestratorPlans),
     ops: withoutActiveInboxCommand(ops),
     lifecycles,
+    reports,
+    governanceEvents,
+    budgetObservations,
   });
 }
 

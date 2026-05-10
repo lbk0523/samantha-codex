@@ -1,5 +1,5 @@
 import type { TaskSpec } from "./contracts";
-import type { CeoStatusSnapshot } from "./ceo-status";
+import { buildCeoStatusSnapshot, type CeoStatusSnapshot } from "./ceo-status";
 import {
   summarizeCostBudgetAuditRollups,
   summarizeCostBudgetAuditRecords,
@@ -377,6 +377,30 @@ function planAdvisoryLines(plan: OrchestratorPlanRecord): string[] {
 function repoName(repoRoot: string | undefined): string {
   const normalized = oneLine(repoRoot ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
   return normalized.split("/").filter(Boolean).at(-1) ?? "unknown";
+}
+
+function compactRankingLines(snapshot: CeoStatusSnapshot): string[] {
+  const view = buildOperatingSurfaceView(snapshot);
+  const top = snapshot.ranking?.top;
+  if (!top) {
+    return [
+      "# ceo-ranking",
+      "",
+      "추천: 지금 바로 필요한 ranked action이 없습니다.",
+      `Tie-breaker: ${snapshot.ranking?.tieBreaker ?? "none"}`,
+    ];
+  }
+
+  return [
+    "# ceo-ranking",
+    "",
+    `추천: ${remoteNotificationText(view.primaryAction.label)}`,
+    `근거: ${remoteNotificationText(view.primaryAction.reason)}`,
+    `Ranking: ${top.signal} score=${top.score}`,
+    `Tie-breaker: ${snapshot.ranking?.tieBreaker ?? "none"}`,
+    `텔레그램: ${code(view.primaryAction.telegramCommand ?? "/check")}`,
+    "이 추천은 실행 승인이 아닙니다.",
+  ];
 }
 
 function repoSummaryLine(repoRoot: string | undefined): string {
@@ -1057,21 +1081,41 @@ export function nowReport(input: {
   orchestratorPlanBlockers?: OrchestratorPlanBlocker[];
   ops?: OpsSnapshot;
   lifecycles?: RunLifecycleRecord[];
+  reports?: CeoReportRecord[];
+  governanceEvents?: GovernanceEventRecord[];
+  budgetObservations?: CostBudgetAuditRecord[];
 }): string {
+  const rankingSnapshot = buildCeoStatusSnapshot({
+    runs: input.runs,
+    tasks: input.tasks,
+    actions: input.actions,
+    decisions: input.decisions,
+    orchestrationRequests: input.orchestrationRequests,
+    orchestratorPlans: input.orchestratorPlans,
+    orchestratorPlanBlockers: input.orchestratorPlanBlockers,
+    ops: input.ops,
+    lifecycles: input.lifecycles,
+    reports: input.reports,
+    governanceEvents: input.governanceEvents,
+    budgetObservations: input.budgetObservations,
+  });
+  const rankingLines = compactRankingLines(rankingSnapshot);
   const currentPlans = (input.orchestratorPlans ?? []).filter((plan) => plan.status === "planned" || plan.status === "questions");
-  if (currentPlans.length > 1) return currentPlanAmbiguityReport({ plans: currentPlans });
+  if (currentPlans.length > 1) return [...rankingLines, "", currentPlanAmbiguityReport({ plans: currentPlans })].join("\n");
 
   const blockerClarification = latestCurrentPendingBlockerClarification(
     input.decisions ?? [],
     input.orchestratorPlans ?? [],
   );
-  if (blockerClarification) return blockerClarificationNowReport(blockerClarification);
+  if (blockerClarification) return [...rankingLines, "", blockerClarificationNowReport(blockerClarification)].join("\n");
 
   const latestByStatus = (status: RemoteActionRecord["status"]) =>
     input.actions.slice().reverse().find((action) => action.status === status);
   const running = latestByStatus("running");
   if (running) {
     return [
+      ...rankingLines,
+      "",
       "# now",
       "",
       "worker가 실행 중입니다.",
@@ -1084,6 +1128,8 @@ export function nowReport(input: {
   const approved = latestByStatus("approved");
   if (approved) {
     return [
+      ...rankingLines,
+      "",
       "# now",
       "",
       "액션이 승인되었고 runner 실행을 기다리는 중입니다.",
@@ -1096,6 +1142,8 @@ export function nowReport(input: {
   const pendingAction = latestByStatus("pending");
   if (pendingAction) {
     return [
+      ...rankingLines,
+      "",
       "# now",
       "",
       "승인 대기 중인 수동 action이 있지만 Telegram `/go`로는 개별 action을 승인하지 않습니다.",
@@ -1110,6 +1158,8 @@ export function nowReport(input: {
   const waitingAction = latestByStatus("waiting");
   if (waitingAction) {
     return [
+      ...rankingLines,
+      "",
       "# now",
       "",
       "선행 action 완료를 기다리는 action이 있습니다.",
@@ -1129,6 +1179,8 @@ export function nowReport(input: {
   if (latestPlan) {
     const blocker = blockerForPlan(input.orchestratorPlanBlockers, latestPlan.id) ?? payloadBlockerForPlan(latestPlan);
     return [
+      ...rankingLines,
+      "",
       "# now",
       "",
       latestPlan.status === "questions"
@@ -1150,6 +1202,8 @@ export function nowReport(input: {
     .find((request) => request.status === "pending_plan");
   if (pendingOrchestrationRequest) {
     return [
+      ...rankingLines,
+      "",
       "# now",
       "",
       "작업 요청이 오케스트레이터 계획 생성을 기다리고 있습니다.",
@@ -1164,10 +1218,14 @@ export function nowReport(input: {
   const archivedTaskIds = new Set(input.tasks.filter((task) => task.status === "archived").map((task) => task.id));
   const pendingIntegrationRun = latestRunNeedingIntegration(input.runs, input.lifecycles);
   if (pendingIntegrationRun) {
-    return nowLinesForPassedRun(
+    return [
+      ...rankingLines,
+      "",
+      ...nowLinesForPassedRun(
       pendingIntegrationRun,
       input.lifecycles?.find((record) => record.runId === pendingIntegrationRun.runId),
-    ).join("\n");
+      ),
+    ].join("\n");
   }
 
   const recoverable = latestRecoverablePlan({
@@ -1177,6 +1235,8 @@ export function nowReport(input: {
   });
   if (recoverable) {
     return [
+      ...rankingLines,
+      "",
       "# now",
       "",
       "실패한 오케스트레이터 계획 결과가 있습니다.",
@@ -1190,12 +1250,14 @@ export function nowReport(input: {
 
   if (input.ops?.failures.length || input.ops?.warnings.length) {
     const issue = input.ops.failures[0] ?? input.ops.warnings[0] ?? "operation needs attention";
-    return ["# now", "", "운영 상태 확인이 필요합니다.", oneLine(issue), "", "다음 액션:", `- 텔레그램: ${code("/problems")}`].join("\n");
+    return [...rankingLines, "", "# now", "", "운영 상태 확인이 필요합니다.", oneLine(issue), "", "다음 액션:", `- 텔레그램: ${code("/problems")}`].join("\n");
   }
 
   const pendingTask = activeTasks.find((task) => task.status === "pending");
   if (pendingTask) {
     return [
+      ...rankingLines,
+      "",
       "# now",
       "",
       "수동 pending task가 있지만 Telegram `/go`는 task를 직접 실행 큐에 등록하지 않습니다.",
@@ -1208,14 +1270,20 @@ export function nowReport(input: {
 
   const latest = input.runs.at(-1);
   if (latest?.pass && latest.commit) {
-    return nowLinesForPassedRun(
+    return [
+      ...rankingLines,
+      "",
+      ...nowLinesForPassedRun(
       latest,
       input.lifecycles?.find((record) => record.runId === latest.runId),
-    ).join("\n");
+      ),
+    ].join("\n");
   }
 
   if (latest && !latest.pass && timestamp(latest.finishedAt) >= primaryWorkflowTimestamp && !archivedTaskIds.has(latest.taskId)) {
     return [
+      ...rankingLines,
+      "",
       "# now",
       "",
       "가장 최근 run이 통과하지 못했습니다.",
@@ -1229,7 +1297,7 @@ export function nowReport(input: {
       .join("\n");
   }
 
-  return ["# now", "", "지금 바로 필요한 원격 액션은 없습니다.", "", "다음 액션:", `- 텔레그램: ${code("/check")}`].join("\n");
+  return [...rankingLines, "", "# now", "", "지금 바로 필요한 원격 액션은 없습니다.", "", "다음 액션:", `- 텔레그램: ${code("/check")}`].join("\n");
 }
 
 export function failuresReport(runs: RunSummary[], limit = 10): string {
@@ -1276,6 +1344,7 @@ export function taskShowReport(taskId: string, task: TaskSpec | undefined): stri
 export function ceoNotificationReport(snapshot: CeoStatusSnapshot): string {
   const view = buildOperatingSurfaceView(snapshot);
   const decision = snapshot.needsDecision[0];
+  const top = snapshot.ranking?.top;
   const nextCommand = view.primaryAction.telegramCommand ?? "/check";
   const canApproveDecision = nextCommand === "/approve";
   const isBlockerClarification = decision?.decisionKind === "blocker_clarification";
@@ -1286,6 +1355,9 @@ export function ceoNotificationReport(snapshot: CeoStatusSnapshot): string {
     `상태: ${snapshot.overall}`,
     `핵심: ${remoteNotificationText(view.headline)}`,
     `요약: ${view.summary}`,
+    top ? `추천: ${remoteNotificationText(view.primaryAction.label)}` : "",
+    top ? `추천 근거: ${remoteNotificationText(view.primaryAction.reason)}` : "",
+    top ? `Ranking: ${top.signal} score=${top.score}` : "",
     decision ? `결정 필요: ${remoteNotificationText(decision.title)}` : "",
     decision ? `이유: ${remoteNotificationText(decision.reason)}` : "",
     "",
@@ -2175,6 +2247,21 @@ export function statusReport(input: {
     orchestratorPlanBlockers: input.orchestratorPlanBlockers,
     globalBlockers: [...(input.ops?.failures ?? []), ...(input.ops?.warnings ?? [])],
   }, { filterProjectId: input.projectId });
+  const ceoRankingSnapshot = buildCeoStatusSnapshot({
+    projectId: input.projectId,
+    runs: input.runs,
+    tasks: input.tasks,
+    decisions: input.decisions,
+    actions: input.actions,
+    orchestrationRequests: input.requests,
+    orchestratorPlans: input.plans,
+    orchestratorPlanBlockers: input.orchestratorPlanBlockers,
+    ops: input.ops,
+    lifecycles: input.lifecycles,
+    reports: input.reports,
+    governanceEvents: input.governanceEvents,
+    budgetObservations: input.budgetObservations,
+  });
   const heartbeat = input.heartbeat
     ? `${input.heartbeat.status} pid=${input.heartbeat.pid} updated=${input.heartbeat.updatedAt} processed=${input.heartbeat.processedTotal}`
     : "missing";
@@ -2237,6 +2324,8 @@ export function statusReport(input: {
     `- non-passing: ${failureCount}`,
     latest ? `- latest: ${oneLine(runLine(latest).slice(2))}` : "- latest: 없음",
     latest ? `- lifecycle: ${lifecycleText(latestLifecycle)}` : "",
+    "",
+    ...compactRankingLines(ceoRankingSnapshot),
     ...budgetAuditLines(input.budgetObservations),
     "",
     ...formatProjectQueueSnapshot(projectQueues),

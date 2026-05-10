@@ -815,6 +815,10 @@ function renderCeoStatus(status: CeoStatusSnapshot | undefined): string {
   const telegram = operating.primaryAction.telegramCommand ? `Telegram: ${operating.primaryAction.telegramCommand}` : "";
   const local = operating.primaryAction.localCommand ? `Local fallback: ${operating.primaryAction.localCommand}` : "";
   const projectQueueLines = status.projectQueues ? formatProjectQueueSnapshot(status.projectQueues) : [];
+  const ranking = status.ranking;
+  const rankedItems = ranking?.candidates.slice(0, 5).map((item) =>
+    `#${item.rank} ${item.action.label} [${item.signal}, score=${item.score}]`,
+  ) ?? [];
 
   return `<section class="panel" aria-label="CEO status review">
   <h2>Daily Review</h2>
@@ -854,13 +858,19 @@ function renderCeoStatus(status: CeoStatusSnapshot | undefined): string {
         <ul class="ceo-list">${ceoList(operating.sections.risks, (risk) => risk)}</ul>
       </div>
       <div class="ceo-block">
-        <h3>Next Safe Action</h3>
+        <h3>Top Recommendation / Next Safe Action</h3>
         <div class="ceo-next">
           <div>${escapeHtml(operating.primaryAction.label)}</div>
           ${telegram ? `<div><code>${escapeHtml(telegram)}</code></div>` : ""}
           ${local ? `<div><code>${escapeHtml(local)}</code></div>` : ""}
           <div class="muted">${escapeHtml(operating.primaryAction.reason)}</div>
+          ${ranking?.top ? `<div class="muted">${escapeHtml(ranking.top.explanation)}</div>` : ""}
         </div>
+      </div>
+      <div class="ceo-block">
+        <h3>CEO Ranking</h3>
+        <ul class="ceo-list">${ceoList(rankedItems, (line) => line, "none", 5)}</ul>
+        ${ranking?.tieBreaker ? `<div class="muted">${escapeHtml(`Tie-breaker: ${ranking.tieBreaker}`)}</div>` : ""}
       </div>
       ${
         projectQueueLines.length

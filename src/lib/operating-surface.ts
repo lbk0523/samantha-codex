@@ -67,11 +67,11 @@ function decisionTelegramCommand(decision: CeoDecisionSummary | undefined): stri
   return "/plan_current";
 }
 
-function telegramCommandForSnapshot(snapshot: CeoStatusSnapshot): string {
+function telegramCommandForSnapshot(snapshot: CeoStatusSnapshot, primaryAction: CeoNextAction): string {
   return (
     decisionTelegramCommand(snapshot.needsDecision[0]) ??
-    singleTelegramCommand(snapshot.nextAction.command) ??
-    fallbackTelegramCommand(snapshot.nextAction)
+    singleTelegramCommand(primaryAction.command) ??
+    fallbackTelegramCommand(primaryAction)
   );
 }
 
@@ -116,8 +116,9 @@ function statusItem(item: CeoStatusItem): OperatingSurfaceItem {
 }
 
 export function buildOperatingSurfaceView(snapshot: CeoStatusSnapshot): OperatingSurfaceView {
-  const telegramCommand = telegramCommandForSnapshot(snapshot);
-  const localCommand = localCommandForNextAction(snapshot.nextAction);
+  const primaryNextAction = snapshot.ranking?.top?.action ?? snapshot.nextAction;
+  const telegramCommand = telegramCommandForSnapshot(snapshot, primaryNextAction);
+  const localCommand = localCommandForNextAction(primaryNextAction);
 
   return {
     generatedAt: snapshot.generatedAt,
@@ -125,12 +126,12 @@ export function buildOperatingSurfaceView(snapshot: CeoStatusSnapshot): Operatin
     headline: headlineFor(snapshot),
     summary: `decisions=${snapshot.needsDecision.length} active=${snapshot.active.length} blocked=${snapshot.blocked.length} historical_failures=${snapshot.historicalFailures.length} completed=${snapshot.completed.length} risks=${snapshot.risks.length}`,
     primaryAction: {
-      kind: snapshot.nextAction.kind,
-      label: snapshot.nextAction.label,
-      reason: snapshot.nextAction.reason,
+      kind: primaryNextAction.kind,
+      label: primaryNextAction.label,
+      reason: primaryNextAction.reason,
       telegramCommand,
       ...(localCommand ? { localCommand } : {}),
-      ...(snapshot.nextAction.targetId ? { auditRef: `${snapshot.nextAction.kind}:${snapshot.nextAction.targetId}` } : {}),
+      ...(primaryNextAction.targetId ? { auditRef: `${primaryNextAction.kind}:${primaryNextAction.targetId}` } : {}),
     },
     sections: {
       needsDecision: snapshot.needsDecision.map(decisionItem),

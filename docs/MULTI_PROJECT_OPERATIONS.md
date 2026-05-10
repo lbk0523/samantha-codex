@@ -450,6 +450,28 @@ Verification focus:
 - blocked recovery remains visible until fixed or explicitly closed
 - CLI, dashboard, and compact remote reports show the same top recommendation
 
+Outcome:
+
+- Added deterministic cross-project CEO ranking in `src/lib/ceo-ranking.ts`
+  with ranked inputs for BK decisions, blocked recovery, active worker state,
+  stale failures, explicit goal priority, recency, audit gaps, and routine
+  completed-work summaries.
+- Ranking is recommendation-only: it produces labels, evidence, scores, and
+  safe inspection commands, but it does not dispatch, merge, push, clean up,
+  enforce budgets, change `writerCap`, or expand role topology.
+- Equal-input ordering is stable and explainable: score descending, then
+  recency descending, project id ascending, ranking signal ascending, and item
+  id ascending.
+- CEO status snapshots now carry `ranking`, and CLI status reports, dashboard
+  Daily Review, compact CEO notifications, `/now`, and remote `/check` status
+  reports read the same ranked top recommendation.
+- Pending BK decisions outrank routine completed-work summaries, blocked
+  recovery remains ranked while unresolved, and compact pending-action ranking
+  avoids presenting `/go` as an individual action approval.
+- Added focused ranking/operator-surface tests in `tests/ceo-ranking.test.ts`
+  plus coverage through existing CEO status, operator report, dashboard, and
+  Telegram compacting tests.
+
 ## M10: Dogfood, Migration, And Exit Review
 
 Goal: prove Phase 6 behavior on real multi-project Samantha use before moving
