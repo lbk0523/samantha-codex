@@ -26,6 +26,8 @@ export const GOVERNANCE_EVENT_KINDS = [
   "transition_approved",
   "transition_rejected",
   "transition_blocked",
+  "transition_superseded",
+  "transition_restored",
   "transition_completed",
   "transition_failed",
   "risk_classified",
@@ -46,6 +48,7 @@ export const GOVERNANCE_TRANSITION_KINDS = [
   "fail",
   "block",
   "archive",
+  "restore",
   "merge",
   "push",
   "cleanup",
@@ -118,7 +121,7 @@ export const GOVERNANCE_ALLOWED_TRANSITIONS = {
   routine: ["propose", "approve", "reject", "activate", "deactivate", "block"],
   policy: ["propose", "approve", "reject", "activate", "deactivate", "block"],
   budget: ["observe", "propose", "approve", "reject", "record_budget", "block"],
-  memory: ["propose", "approve", "reject", "activate", "deactivate", "archive", "block"],
+  memory: ["propose", "approve", "reject", "activate", "deactivate", "archive", "restore", "block"],
 } as const satisfies Record<GovernedSubjectType, readonly GovernanceTransitionKind[]>;
 
 export interface GovernanceTransitionInput {

@@ -14,7 +14,8 @@ export type DecisionKind =
   | "blocker_clarification"
   | "risk_acceptance"
   | "agent_profile_change"
-  | "capability_change";
+  | "capability_change"
+  | "memory_change";
 export type DecisionResolution = "approved" | "rejected" | "needs_revision" | "answered" | "canceled";
 export type DecisionSubjectType =
   | "manual"
@@ -24,7 +25,8 @@ export type DecisionSubjectType =
   | "run"
   | "agent_profile"
   | "capability"
-  | "policy";
+  | "policy"
+  | "memory";
 
 export interface DecisionSubject {
   type: DecisionSubjectType;

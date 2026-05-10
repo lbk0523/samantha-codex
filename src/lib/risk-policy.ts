@@ -14,7 +14,8 @@ export type RiskDecisionKind =
   | "orchestrator_plan_approval"
   | "risk_acceptance"
   | "agent_profile_change"
-  | "capability_change";
+  | "capability_change"
+  | "memory_change";
 
 export interface RiskApprovalEvidenceSubject {
   type: string;
@@ -204,6 +205,7 @@ const RISK_BY_SUBJECT_TRANSITION = {
     activate: "high",
     deactivate: "high",
     archive: "medium",
+    restore: "high",
     block: "low",
   },
 } as const satisfies {

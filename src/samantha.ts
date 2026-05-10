@@ -329,7 +329,8 @@ function decisionKind(value: string): DecisionKind {
     value === "blocker_clarification" ||
     value === "risk_acceptance" ||
     value === "agent_profile_change" ||
-    value === "capability_change"
+    value === "capability_change" ||
+    value === "memory_change"
   ) {
     return value;
   }
@@ -1594,11 +1595,18 @@ async function cancelRejectedApprovalPlan(input: {
 
 async function recordGovernedDecisionApproval(args: ParsedArgs, decision: DecisionItem): Promise<void> {
   if (decision.status !== "resolved" || decision.resolution !== "approved") return;
-  if (decision.kind !== "agent_profile_change" && decision.kind !== "capability_change") return;
+  if (
+    decision.kind !== "agent_profile_change" &&
+    decision.kind !== "capability_change" &&
+    decision.kind !== "memory_change"
+  ) return;
   if (!decision.subject) throw new Error(`${decision.kind} decisions require a subject`);
   if (!decision.risk) throw new Error(`${decision.kind} decisions require a risk class`);
   const subjectType =
-    decision.subject.type === "agent_profile" || decision.subject.type === "capability" || decision.subject.type === "policy"
+    decision.subject.type === "agent_profile" ||
+      decision.subject.type === "capability" ||
+      decision.subject.type === "policy" ||
+      decision.subject.type === "memory"
       ? decision.subject.type
       : undefined;
   if (!subjectType) throw new Error(`${decision.kind} decisions cannot approve subject type: ${decision.subject.type}`);

@@ -24,6 +24,8 @@
     "transition_approved",
     "transition_rejected",
     "transition_blocked",
+    "transition_superseded",
+    "transition_restored",
     "transition_completed",
     "transition_failed",
     "risk_classified",
@@ -41,6 +43,7 @@
     "fail",
     "block",
     "archive",
+    "restore",
     "merge",
     "push",
     "cleanup",
@@ -93,6 +96,6 @@
     "routine": ["propose", "approve", "reject", "activate", "deactivate", "block"],
     "policy": ["propose", "approve", "reject", "activate", "deactivate", "block"],
     "budget": ["observe", "propose", "approve", "reject", "record_budget", "block"],
-    "memory": ["propose", "approve", "reject", "activate", "deactivate", "archive", "block"]
+    "memory": ["propose", "approve", "reject", "activate", "deactivate", "archive", "restore", "block"]
   }
 }

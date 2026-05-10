@@ -440,9 +440,33 @@ Verification focus:
 - LLMs, workers, remote commands, and dashboard views cannot mutate memory
   directly
 
-Outcome placeholder:
+Outcome:
 
-- Fill after M8 implementation and verification.
+- Added `src/lib/memory-store.ts` with an append-only governed memory revision
+  store. Creates, updates, supersedes, archives, and restores go through
+  `GovernedMemoryStore.applyWrite`; rejected changes go through
+  `rejectWrite`.
+- Memory writes now require source citations, actor, timestamp, risk class, and
+  a non-empty diff summary before any durable memory record is appended.
+- Behavior-changing memory and SOP writes require an approved BK
+  `memory_change` or risk-acceptance decision whose subject is the memory id and
+  whose prompt includes the diff summary.
+- Blocked, rejected, approved, superseded, and restored memory changes append
+  governance events without erasing memory history. Restore and supersede replay
+  append-only revisions instead of rewriting old records.
+- LLM, worker, remote-command, and dashboard actors are explicitly blocked from
+  durable memory mutation at the write gate.
+- Extended governance taxonomy and risk policy narrowly for memory restore and
+  supersede/restore audit events, plus `memory_change` decision evidence.
+- Verified with `bun test tests/memory-taxonomy.test.ts
+  tests/project-brief-store.test.ts tests/decision-history-summary.test.ts
+  tests/proposal-store.test.ts tests/context-search.test.ts
+  tests/orchestrator-agent.test.ts tests/policy.test.ts
+  tests/memory-store.test.ts tests/decision-store.test.ts
+  tests/risk-policy.test.ts tests/governance-decision-cli.test.ts
+  tests/governance-event-store.test.ts tests/profile-governance.test.ts` and
+  `bun typecheck`, then with `bun run test:portable` and
+  `bun run verify:docs`.
 
 ## M9: SOP And Skill Document Contract
 
