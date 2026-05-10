@@ -106,7 +106,11 @@ function operationRiskClass(input: {
   behaviorImpact: MemoryBehaviorImpact;
 }): GovernanceRiskClass {
   if (input.operation === "archive") return "medium";
-  if (input.behaviorImpact === "behavior_change" || input.entry.kind === "sop_document") return "high";
+  if (
+    input.behaviorImpact === "behavior_change" ||
+    input.entry.kind === "sop_document" ||
+    input.entry.kind === "skill_document"
+  ) return "high";
   if (input.operation === "restore") return "high";
   if (input.operation === "supersede") return "medium";
   return "medium";
@@ -152,7 +156,7 @@ function validApprovalDecision(input: {
 }
 
 function requiresExplicitBkApproval(entry: DurableMemoryEntry, behaviorImpact: MemoryBehaviorImpact): boolean {
-  return behaviorImpact === "behavior_change" || entry.kind === "sop_document";
+  return behaviorImpact === "behavior_change" || entry.kind === "sop_document" || entry.kind === "skill_document";
 }
 
 function activeMemoryIds(records: GovernedMemoryRecord[]): Set<string> {
@@ -338,7 +342,7 @@ export class GovernedMemoryStore {
     ];
 
     if (requiresExplicitBkApproval(input.entry, behaviorImpact) && !approval) {
-      violations.push("behavior-changing memory and SOP writes require an approved BK memory_change decision with the diff summary");
+      violations.push("behavior-changing memory and SOP/skill writes require an approved BK memory_change decision with the diff summary");
     }
 
     if (violations.length > 0) {

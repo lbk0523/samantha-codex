@@ -114,6 +114,28 @@ treated as a governed capability change, not as an informal prompt edit.
 A blocked orchestration skill remains blocked even if a capability approval
 exists; approvals cannot override the safety policy.
 
+SOP and skill markdown documents use the same non-authority model. A valid
+document must start with frontmatter containing:
+
+- `schemaVersion: 1`
+- `kind: sop_document` or `skill_document`
+- stable `id`, `title`, `owner`, and `updatedAt`
+- project or profile `scope`
+- `status`, `riskClass`, and `behaviorImpact`
+- at least one source citation
+
+The body must include these sections: Preconditions, Workflow Steps, Quality
+Checks, Forbidden Actions, Safety Boundaries, Rollback Notes, and Citations.
+Samantha validates the document deterministically before use. Unsafe authority
+claims fail validation when they attempt to override or bypass safety,
+dispatch, worktree, merge, push, cleanup, recovery, approval, project,
+connector, secret, routine, or budget gates. Blocked skill names remain blocked
+even if a skill document requests them.
+
+Behavior-changing SOP or skill publication remains a governed memory and/or
+capability/profile change. The markdown document can explain methodology; it
+cannot grant runtime authority.
+
 ## Connector And Secret Boundaries
 
 Connector and secret access is unavailable to workers unless an agent profile

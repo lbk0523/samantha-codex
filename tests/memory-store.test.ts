@@ -163,7 +163,7 @@ describe("GovernedMemoryStore", () => {
     ]);
   });
 
-  test("requires explicit BK approval evidence for behavior-changing memory and SOP writes", async () => {
+  test("requires explicit BK approval evidence for behavior-changing memory and SOP/skill writes", async () => {
     const { governancePath, store } = await makeStore();
     const diffSummary = "Change agent planning SOP preference.";
     const sop = memoryEntry({
@@ -183,7 +183,7 @@ describe("GovernedMemoryStore", () => {
     });
     expect(blocked.status).toBe("blocked");
     expect((blocked as { violations: string[] }).violations).toContain(
-      "behavior-changing memory and SOP writes require an approved BK memory_change decision with the diff summary",
+      "behavior-changing memory and SOP/skill writes require an approved BK memory_change decision with the diff summary",
     );
 
     const approved = await store.applyWrite({
@@ -209,6 +209,25 @@ describe("GovernedMemoryStore", () => {
       kind: "transition_approved",
       related: { decisionIds: ["decision-memory-change-approved"] },
     });
+
+    const skill = memoryEntry({
+      id: "memory-skill-review",
+      kind: "skill_document",
+      summary: "Skill documents remain methodology and require BK approval before activation.",
+    });
+    const blockedSkill = await store.applyWrite({
+      operation: "create",
+      entry: skill,
+      actor: "deterministic_operator",
+      timestamp: "2026-05-10T04:22:00.000Z",
+      diffSummary: "Create skill methodology document.",
+      source: { kind: "learning_candidate", id: "learning-candidate-skill" },
+    });
+
+    expect(blockedSkill.status).toBe("blocked");
+    expect((blockedSkill as { violations: string[] }).violations).toContain(
+      "behavior-changing memory and SOP/skill writes require an approved BK memory_change decision with the diff summary",
+    );
   });
 
   test("supersedes, archives, and restores without erasing memory history", async () => {

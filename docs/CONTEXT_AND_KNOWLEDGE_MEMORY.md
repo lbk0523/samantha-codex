@@ -496,9 +496,28 @@ Verification focus:
   budget gates
 - blocked skill names remain blocked even if a document requests them
 
-Outcome placeholder:
+Outcome:
 
-- Fill after M9 implementation and verification.
+- Added a deterministic SOP/skill markdown contract in
+  `src/lib/sop-skill-contract.ts`.
+- SOP and skill documents now require frontmatter with schema version, kind,
+  stable id, title, project or profile scope, status, risk class, owner,
+  updated date, behavior-impact flag, and source citations.
+- SOP and skill bodies now require Preconditions, Workflow Steps, Quality
+  Checks, Forbidden Actions, Safety Boundaries, Rollback Notes, and Citations
+  sections.
+- Added deterministic unsafe-authority scanning for claims that try to override
+  or bypass Samantha safety, dispatch, worktree, merge, push, cleanup,
+  recovery, approval, project, connector, secret, routine, or budget gates.
+- Skill documents are checked against `DEFAULT_SAFETY_POLICY.blockedSkillNames`;
+  blocked skill names remain blocked even if a document requests them.
+- Extended governed memory writes so skill documents, like SOP documents, require
+  approved BK `memory_change` evidence before durable activation.
+- Documented the contract in the architecture Skill Policy section.
+- Verified with `bun test tests/sop-skill-contract.test.ts
+  tests/memory-store.test.ts tests/policy.test.ts
+  tests/profile-governance.test.ts`, `bun typecheck`, `bun run test:portable`,
+  and `bun run verify:docs`.
 
 ## M10: Planning Citation Integration And Exit Review
 
