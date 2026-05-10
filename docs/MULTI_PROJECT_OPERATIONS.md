@@ -315,6 +315,29 @@ Verification focus:
 - unsupported project ids or scope ids fail closed before inbox processing
   writes executable work
 
+Outcome:
+
+- Added project-aware remote current-item selection for pending requests,
+  actionable orchestrator plans, plan approval decisions, blocker
+  clarifications, and recovery candidates.
+- `/plan` now refuses ambiguous pending requests and validates requested
+  project/scope context before running the orchestrator. Unknown projects,
+  unknown scopes, and scope-without-project inputs fail closed before plans,
+  tasks, or actions are created.
+- `/go`, `/approve`, `/answer`, `/revise`, `/cancel`, `/recover`, and
+  `/plan_current` now refuse when more than one current item could match the
+  command. Project-qualified compact commands can narrow the current item
+  without accepting decision, plan, task, action, run, shell, or repo-path ids.
+- `/now` now reports cross-project current-plan ambiguity as a project-specific
+  safest-action summary instead of presenting `/go` as safe.
+- Added compact ambiguity reports that ask BK to specify the project while
+  confirming state was not changed and executable work was not created.
+- Added the local fallback command `orchestrator:current [--project=<id>]` for
+  precise inspection of current requests, plans, and decisions with ids.
+- Added focused remote project selection tests for ambiguous approve/go,
+  stale project context, unsupported project/scope ids, `/now` ambiguity
+  wording, and compact parser behavior.
+
 ## M7: Per-Project Safety Policy
 
 Goal: allow projects to be stricter than the global safety policy without

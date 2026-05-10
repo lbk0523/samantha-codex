@@ -27,6 +27,22 @@ function commandParts(value: string): string[] {
   return value.split(/[,\s]+/).filter(Boolean);
 }
 
+function projectPrefixedArgument(value: string): { projectId?: string; text: string } {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^project:([A-Za-z0-9_-]+)(?:\s+(.+))?$/s);
+  if (!match) return { text: trimmed };
+  return { projectId: match[1], text: (match[2] ?? "").trim() };
+}
+
+function projectOnlyArgument(value: string | undefined): { projectId?: string } {
+  if (value === undefined) return {};
+  const parsed = projectPrefixedArgument(value);
+  if (!parsed.projectId || parsed.text) {
+    throw new Error("unsupported remote command");
+  }
+  return { projectId: parsed.projectId };
+}
+
 function deprecatedReplacement(command: string): string | undefined {
   const replacements: Record<string, string> = {
     "/help_advanced": "/help",
@@ -92,8 +108,13 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   if (text === "/now") {
     return { id: `remote-${commandToken}-now`, type: "ops:now", args: { source: "remote" } };
   }
-  if (text === "/plan_current") {
-    return { id: `remote-${commandToken}-plan-current`, type: "orchestrator:show-current-plan", args: { source: "remote" } };
+  const planCurrentArgs = commandArgument(text, "/plan_current");
+  if (text === "/plan_current" || planCurrentArgs !== undefined) {
+    return {
+      id: `remote-${commandToken}-plan-current`,
+      type: "orchestrator:show-current-plan",
+      args: { ...projectOnlyArgument(planCurrentArgs), source: "remote" },
+    };
   }
   const planArgs = commandArgument(text, "/plan");
   if (text === "/plan" || planArgs !== undefined) {
@@ -109,51 +130,67 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       },
     };
   }
-  if (text === "/go") {
-    return { id: `remote-${commandToken}-go`, type: "actions:go", args: { source: "remote", receivedAt } };
+  const goArgs = commandArgument(text, "/go");
+  if (text === "/go" || goArgs !== undefined) {
+    return {
+      id: `remote-${commandToken}-go`,
+      type: "actions:go",
+      args: { ...projectOnlyArgument(goArgs), source: "remote", receivedAt },
+    };
   }
-  if (text === "/approve") {
-    return { id: `remote-${commandToken}-approve`, type: "decisions:approve-latest", args: { source: "remote", receivedAt } };
+  const approveArgs = commandArgument(text, "/approve");
+  if (text === "/approve" || approveArgs !== undefined) {
+    return {
+      id: `remote-${commandToken}-approve`,
+      type: "decisions:approve-latest",
+      args: { ...projectOnlyArgument(approveArgs), source: "remote", receivedAt },
+    };
   }
   if (text === "/answer") {
     throw new Error("missing answer text");
   }
   if (text.startsWith("/answer ")) {
-    const answer = text.slice("/answer ".length).trim();
+    const parsed = projectPrefixedArgument(text.slice("/answer ".length));
+    const answer = parsed.text;
     if (!answer) throw new Error("missing answer text");
     return {
       id: `remote-${commandToken}-answer`,
       type: "decisions:answer-blocker-clarification",
-      args: { source: "remote", receivedAt, note: answer },
+      args: { ...(parsed.projectId ? { projectId: parsed.projectId } : {}), source: "remote", receivedAt, note: answer },
     };
   }
-  if (text === "/recover") {
+  const recoverArgs = commandArgument(text, "/recover");
+  if (text === "/recover" || recoverArgs !== undefined) {
     return {
       id: `remote-${commandToken}-recover`,
       type: "orchestrator:recover-latest",
-      args: { source: "remote", senderId: input.senderId, receivedAt },
+      args: { ...projectOnlyArgument(recoverArgs), source: "remote", senderId: input.senderId, receivedAt },
     };
   }
   const cancelReason = commandArgument(text, "/cancel");
   if (text === "/cancel" || cancelReason !== undefined) {
+    const parsed = cancelReason === undefined ? { text: "" } : projectPrefixedArgument(cancelReason);
     return {
       id: `remote-${commandToken}-cancel`,
       type: "orchestrator:cancel-current",
       args: {
-        ...(cancelReason ? { reason: cancelReason } : {}),
+        ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
+        ...(parsed.text ? { reason: parsed.text } : cancelReason && !parsed.projectId ? { reason: cancelReason } : {}),
         source: "remote",
         receivedAt,
       },
     };
   }
   if (text.startsWith("/revise ")) {
-    const feedback = text.slice("/revise ".length).trim();
+    const parsed = projectPrefixedArgument(text.slice("/revise ".length));
+    const feedback = parsed.text;
     if (!feedback) throw new Error("missing revision feedback");
     return {
       id: `remote-${commandToken}-revise`,
       type: "orchestrator:revise-latest",
       args: {
         requestId: buildOrchestrationRequestId(receivedAt, "revise"),
+        ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
         feedback,
         senderId: input.senderId,
         source: "remote",
@@ -168,13 +205,15 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
     return { id: `remote-${commandToken}-problems`, type: "ops:doctor", args: { source: "remote" } };
   }
   if (text.startsWith("/work ")) {
-    const requestText = text.slice("/work ".length).trim();
+    const parsed = projectPrefixedArgument(text.slice("/work ".length));
+    const requestText = parsed.text;
     if (!requestText) throw new Error("missing work text");
     return {
       id: `remote-${commandToken}-work`,
       type: "orchestrator:add-request",
       args: {
         requestId: buildOrchestrationRequestId(receivedAt, "work"),
+        ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
         text: requestText,
         senderId: input.senderId,
         source: "remote",

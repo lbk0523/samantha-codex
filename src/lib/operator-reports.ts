@@ -73,6 +73,31 @@ function timestamp(value: string | undefined): number {
   return value ? Date.parse(value) || 0 : 0;
 }
 
+function recordProjectLabel(record: { ancestry?: { mode: string; projectId?: string } }): string {
+  return record.ancestry?.mode === "assigned" && record.ancestry.projectId ? record.ancestry.projectId : "unassigned";
+}
+
+function currentProjectAction(plan: OrchestratorPlanRecord): string {
+  const project = recordProjectLabel(plan);
+  if (plan.status === "questions") return `${project}: 확인 답변 또는 계획 수정 필요`;
+  return `${project}: 계획 검토 후 승인 또는 수정 필요`;
+}
+
+function currentPlanAmbiguityReport(input: { plans: OrchestratorPlanRecord[] }): string {
+  return [
+    "# now",
+    "",
+    "여러 프로젝트에 현재 계획이 있어 원격 실행/승인을 보류합니다.",
+    "",
+    "프로젝트별 안전 액션:",
+    ...input.plans.map((plan) => `- ${currentProjectAction(plan)}`),
+    "",
+    "다음 액션:",
+    `- 프로젝트를 지정해서 다시 요청하세요.`,
+    `- 텔레그램: ${code("/check")}`,
+  ].join("\n");
+}
+
 function latestPrimaryWorkflowTimestamp(input: {
   runs: RunSummary[];
   actions: RemoteActionRecord[];
@@ -826,6 +851,26 @@ export function remoteApprovalRedirectReport(input: { reason: string }): string 
   ].join("\n");
 }
 
+export function remoteProjectAmbiguityReport(input: {
+  command: string;
+  reason: string;
+  example?: string;
+}): string {
+  return [
+    `# ${input.command.replace(/^\//, "")}`,
+    "",
+    remoteNotificationText(input.reason),
+    "",
+    "state는 변경하지 않았고 실행 가능한 work도 만들지 않았습니다.",
+    "",
+    "다음 액션:",
+    input.example ? `- 프로젝트 지정: ${code(input.example)}` : "- 프로젝트를 지정해서 다시 요청하세요.",
+    `- 텔레그램: ${code("/now")}`,
+    "",
+    "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
+  ].join("\n");
+}
+
 export function remoteAnswerRecordedReport(): string {
   return [
     "# answer",
@@ -976,6 +1021,9 @@ export function nowReport(input: {
   ops?: OpsSnapshot;
   lifecycles?: RunLifecycleRecord[];
 }): string {
+  const currentPlans = (input.orchestratorPlans ?? []).filter((plan) => plan.status === "planned" || plan.status === "questions");
+  if (currentPlans.length > 1) return currentPlanAmbiguityReport({ plans: currentPlans });
+
   const blockerClarification = latestCurrentPendingBlockerClarification(
     input.decisions ?? [],
     input.orchestratorPlans ?? [],

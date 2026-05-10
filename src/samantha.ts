@@ -13,7 +13,6 @@ import {
   decisionIsCurrentPlanApproval,
   decisionFromQuestionDraft,
   decisionFromOrchestratorPlan,
-  latestCurrentPendingBlockerClarification,
   DecisionStore,
   type DecisionItem,
   type DecisionKind,
@@ -52,6 +51,7 @@ import {
   remoteDeprecatedCommandReport,
   remoteGoNoActionablePlanReport,
   remoteApprovalRedirectReport,
+  remoteProjectAmbiguityReport,
   remoteAnswerRecordedReport,
   remoteAnswerRedirectReport,
   remoteDecisionApprovedReport,
@@ -999,9 +999,10 @@ async function readRunLogsForReview(actions: RemoteActionRecord[], runs: RunSumm
   return logs;
 }
 
-async function latestRecoverableOrchestratorPlan(args: ParsedArgs): Promise<
-  RecoverableOrchestratorPlan | undefined
-> {
+async function recoverableOrchestratorPlanCandidates(
+  args: ParsedArgs,
+  requestedProjectId?: string,
+): Promise<RecoverableOrchestratorPlan[]> {
   const [plans, actions, requests] = await Promise.all([
     new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
     new RemoteActionStore(remoteActionsPath(args)).list(),
@@ -1011,9 +1012,11 @@ async function latestRecoverableOrchestratorPlan(args: ParsedArgs): Promise<
   const requestsById = new Map(requests.map((request) => [request.id, request]));
   const resolvedPlanIds = recoveryResolvedPlanIds({ requests, plans, actions });
 
+  const candidates: RecoverableOrchestratorPlan[] = [];
   for (const plan of plans.slice().reverse()) {
     const actionIds = plan.actionIds ?? [];
     if (plan.status !== "materialized" || !plan.resultReportedAt || actionIds.length === 0) continue;
+    if (!planMatchesProject(plan, requestedProjectId)) continue;
     if (resolvedPlanIds.has(plan.id)) continue;
 
     const planActions = actionIds.map((id) => actionsById.get(id));
@@ -1026,18 +1029,25 @@ async function latestRecoverableOrchestratorPlan(args: ParsedArgs): Promise<
     if (failedActions.length > 0 || synthesisNeedsRecovery) {
       const runLogs = await readRunLogsForActions(finalActions);
       const artifactPreviews = (await Promise.all(runLogs.map((runLog) => collectReportArtifactPreviews(runLog)))).flat();
-      return {
+      candidates.push({
         plan,
         actions: finalActions,
         failedActions,
         request: requestsById.get(plan.requestId),
         runLogs,
         artifactPreviews,
-      };
+      });
     }
   }
 
-  return undefined;
+  return candidates;
+}
+
+async function latestRecoverableOrchestratorPlan(
+  args: ParsedArgs,
+  requestedProjectId?: string,
+): Promise<RecoverableOrchestratorPlan | undefined> {
+  return (await recoverableOrchestratorPlanCandidates(args, requestedProjectId))[0];
 }
 
 function revisionRequestText(input: {
@@ -1416,6 +1426,112 @@ function decisionGateReport(decision: DecisionItem | undefined): string {
     .join("\n");
 }
 
+async function validateRemoteProjectContext(input: {
+  args: ParsedArgs;
+  requestedProjectId?: string;
+  requestedScopeId?: string;
+}): Promise<void> {
+  if (!input.requestedProjectId && input.requestedScopeId) {
+    throw new Error("project id is required when scope id is specified");
+  }
+  if (!input.requestedProjectId) return;
+  const project = await loadProjectProfile(projectProfilesDir(input.args), input.requestedProjectId);
+  if (input.requestedScopeId) {
+    selectProjectRemoteScope(project, { requestedScopeId: input.requestedScopeId });
+  }
+}
+
+function planProjectId(plan: OrchestratorPlanRecord): string | undefined {
+  return selectedProjectIdFromAncestry(plan.ancestry);
+}
+
+function planMatchesProject(plan: OrchestratorPlanRecord, requestedProjectId?: string): boolean {
+  if (!requestedProjectId) return true;
+  return planProjectId(plan) === requestedProjectId;
+}
+
+function decisionMatchesProject(decision: DecisionItem, plans: OrchestratorPlanRecord[], requestedProjectId?: string): boolean {
+  if (!requestedProjectId) return true;
+  const decisionProjectId = selectedProjectIdFromAncestry(decision.ancestry);
+  if (decisionProjectId) return decisionProjectId === requestedProjectId;
+  if (decision.subject?.type !== "orchestrator_plan") return false;
+  const plan = plans.find((item) => item.id === decision.subject?.id);
+  return plan?.ancestry?.mode === "assigned" && plan.ancestry.projectId === requestedProjectId;
+}
+
+function currentActionablePlans(plans: OrchestratorPlanRecord[], requestedProjectId?: string): OrchestratorPlanRecord[] {
+  return plans.filter((plan) => (plan.status === "planned" || plan.status === "questions") && planMatchesProject(plan, requestedProjectId));
+}
+
+async function selectSingleCurrentPlan(input: {
+  args: ParsedArgs;
+  requestedProjectId?: string;
+  command: string;
+  example?: string;
+}): Promise<{ plan?: OrchestratorPlanRecord; report?: string }> {
+  await validateRemoteProjectContext({ args: input.args, requestedProjectId: input.requestedProjectId });
+  const plans = await new OrchestratorPlanStore(orchestratorPlansPath(input.args)).list();
+  const candidates = currentActionablePlans(plans, input.requestedProjectId);
+  if (candidates.length === 0) return {};
+  if (candidates.length > 1) {
+    return {
+      report: remoteProjectAmbiguityReport({
+        command: input.command,
+        reason: "두 개 이상의 현재 계획이 명령 대상이 될 수 있습니다. 잘못된 프로젝트 진행을 막기 위해 실행하지 않았습니다.",
+        example: input.example,
+      }),
+    };
+  }
+  return { plan: candidates[0] };
+}
+
+async function selectPendingRequestForPlan(input: {
+  args: ParsedArgs;
+  requestedProjectId?: string;
+  requestedScopeId?: string;
+}): Promise<{ request?: OrchestrationRequestRecord; report?: string }> {
+  await validateRemoteProjectContext(input);
+  const [requests, projectProfiles] = await Promise.all([
+    new OrchestrationRequestStore(orchestrationRequestsPath(input.args)).list(),
+    loadProjectProfiles(projectProfilesDir(input.args)),
+  ]);
+  const pending = requests
+    .filter((request) => request.status === "pending_plan")
+    .filter((request) => {
+      if (!input.requestedProjectId) return true;
+      const projectId = selectedProjectIdFromAncestry(request.ancestry);
+      return !projectId || projectId === input.requestedProjectId;
+    });
+
+  if (pending.length === 0) return {};
+
+  if (!input.requestedProjectId && pending.length === 1) {
+    const request = pending[0];
+    if (request.ancestry?.mode === "unassigned" && projectProfiles.length > 1) {
+      return {
+        report: remoteProjectAmbiguityReport({
+          command: "/plan",
+          reason: "현재 요청의 프로젝트가 확정되지 않았습니다. 계획을 만들기 전에 프로젝트를 지정해야 합니다.",
+          example: "/plan <project>",
+        }),
+      };
+    }
+    return { request };
+  }
+
+  if (pending.length > 1) {
+    return {
+      report: remoteProjectAmbiguityReport({
+        command: "/plan",
+        reason: "두 개 이상의 현재 작업 요청이 계획 대상이 될 수 있습니다. 프로젝트를 지정해도 여러 요청이 남으면 로컬에서 정확한 요청을 확인하세요.",
+        example: input.requestedProjectId ? undefined : "/plan <project>",
+      }),
+    };
+  }
+
+  return { request: pending[0] };
+}
+
 async function resolveLatestDecision(input: {
   args: ParsedArgs;
   receivedAt: string;
@@ -1504,22 +1620,36 @@ async function resolveLatestRemotePlanApprovalDecision(
   args: ParsedArgs,
   receivedAt: string,
   resolution: "approved" | "rejected",
+  requestedProjectId?: string,
 ): Promise<string> {
+  await validateRemoteProjectContext({ args, requestedProjectId });
   const store = new DecisionStore(decisionsPath(args));
   const planStore = new OrchestratorPlanStore(orchestratorPlansPath(args));
   const plans = await planStore.list();
-  const candidates = (await store.list()).filter((decision) => decisionIsCurrentPlanApproval(decision, plans));
+  const candidates = (await store.list()).filter((decision) =>
+    decisionIsCurrentPlanApproval(decision, plans) && decisionMatchesProject(decision, plans, requestedProjectId)
+  );
 
   if (candidates.length !== 1) {
+    if (candidates.length > 1) {
+      return remoteProjectAmbiguityReport({
+        command: resolution === "approved" ? "/approve" : "/cancel",
+        reason:
+          resolution === "approved"
+            ? "Telegram approval is only allowed when exactly one current plan approval decision is pending. 두 개 이상의 현재 계획 승인 결정이 명령 대상이 될 수 있습니다. 잘못된 프로젝트 승인을 막기 위해 승인하지 않았습니다."
+            : "Telegram rejection is only allowed when exactly one current plan approval decision is pending. 두 개 이상의 현재 계획 승인 결정이 명령 대상이 될 수 있습니다. 잘못된 프로젝트 취소를 막기 위해 거절하지 않았습니다.",
+        example: resolution === "approved" ? "/approve project:<project>" : "/cancel project:<project>",
+      });
+    }
     return remoteApprovalRedirectReport({
       reason:
         resolution === "approved"
           ? candidates.length === 0
             ? "승인할 현재 pending 계획 결정이 없습니다."
-            : "Telegram approval is only allowed when exactly one current plan approval decision is pending."
+            : "Telegram approval is only allowed when exactly one current plan approval decision is pending for the selected project."
           : candidates.length === 0
             ? "거절할 현재 pending 계획 결정이 없습니다."
-            : "Telegram rejection is only allowed when exactly one current plan approval decision is pending.",
+            : "Telegram rejection is only allowed when exactly one current plan approval decision is pending for the selected project.",
     });
   }
 
@@ -1539,24 +1669,34 @@ async function resolveLatestRemotePlanApprovalDecision(
   return resolution === "approved" ? remoteDecisionApprovedReport() : remoteDecisionRejectedReport();
 }
 
-async function approveLatestRemoteDecision(args: ParsedArgs, receivedAt: string): Promise<string> {
-  return resolveLatestRemotePlanApprovalDecision(args, receivedAt, "approved");
+async function approveLatestRemoteDecision(args: ParsedArgs, receivedAt: string, requestedProjectId?: string): Promise<string> {
+  return resolveLatestRemotePlanApprovalDecision(args, receivedAt, "approved", requestedProjectId);
 }
 
-async function answerLatestRemoteBlockerClarification(args: ParsedArgs, receivedAt: string, note: string): Promise<string> {
+async function answerLatestRemoteBlockerClarification(args: ParsedArgs, receivedAt: string, note: string, requestedProjectId?: string): Promise<string> {
   if (!note.trim()) throw new Error("answer text is required");
+  await validateRemoteProjectContext({ args, requestedProjectId });
 
   const store = new DecisionStore(decisionsPath(args));
   const planStore = new OrchestratorPlanStore(orchestratorPlansPath(args));
   const plans = await planStore.list();
-  const candidates = (await store.list()).filter((decision) => decisionIsCurrentBlockerClarification(decision, plans));
+  const candidates = (await store.list()).filter((decision) =>
+    decisionIsCurrentBlockerClarification(decision, plans) && decisionMatchesProject(decision, plans, requestedProjectId)
+  );
 
   if (candidates.length !== 1) {
+    if (candidates.length > 1) {
+      return remoteProjectAmbiguityReport({
+        command: "/answer",
+        reason: "Telegram answer is only allowed when exactly one current blocker clarification is pending. 두 개 이상의 현재 blocker clarification이 명령 대상이 될 수 있습니다. 잘못된 프로젝트에 답변하지 않도록 기록하지 않았습니다.",
+        example: "/answer project:<project> <답변>",
+      });
+    }
     return remoteAnswerRedirectReport({
       reason:
         candidates.length === 0
           ? "답변할 현재 pending blocker clarification이 없습니다."
-          : "Telegram answer is only allowed when exactly one current blocker clarification is pending.",
+          : "Telegram answer is only allowed when exactly one current blocker clarification is pending for the selected project.",
     });
   }
 
@@ -1932,6 +2072,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     if (!text.trim()) throw new Error("orchestration request text is required");
     const requestId = String(command.args?.requestId ?? buildOrchestrationRequestId(receivedAt, command.id));
     const projectProfiles = await loadProjectProfiles(projectProfilesDir(args));
+    const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
+    await validateRemoteProjectContext({ args, requestedProjectId });
     const request: OrchestrationRequestRecord = {
       schemaVersion: 1,
       id: requestId,
@@ -1939,7 +2081,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
         requestId,
         requestText: text,
         projectProfiles,
-        requestedProjectId: typeof command.args?.projectId === "string" ? command.args.projectId : undefined,
+        requestedProjectId,
       }),
       source: command.args?.source === "local" ? "local" : "remote",
       senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
@@ -1953,7 +2095,17 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
   }
   if (command.type === "orchestrator:recover-latest") {
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
-    const recoverable = await latestRecoverableOrchestratorPlan(args);
+    const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
+    await validateRemoteProjectContext({ args, requestedProjectId });
+    const recoverableCandidates = await recoverableOrchestratorPlanCandidates(args, requestedProjectId);
+    if (recoverableCandidates.length > 1) {
+      return remoteProjectAmbiguityReport({
+        command: "/recover",
+        reason: "두 개 이상의 현재 복구 후보가 명령 대상이 될 수 있습니다. 잘못된 프로젝트 복구를 막기 위해 요청을 만들지 않았습니다.",
+        example: "/recover project:<project>",
+      });
+    }
+    const recoverable = recoverableCandidates[0];
     if (!recoverable) return nowReportForInbox(args);
     const recoveryProjectId = selectedProjectIdFromAncestry(recoverable.plan.ancestry);
     const recoveryProject = recoveryProjectId
@@ -1982,13 +2134,18 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     });
   }
   if (command.type === "decisions:approve-latest") {
-    return approveLatestRemoteDecision(args, String(command.args?.receivedAt ?? new Date().toISOString()));
+    return approveLatestRemoteDecision(
+      args,
+      String(command.args?.receivedAt ?? new Date().toISOString()),
+      typeof command.args?.projectId === "string" ? command.args.projectId : undefined,
+    );
   }
   if (command.type === "decisions:answer-blocker-clarification") {
     return answerLatestRemoteBlockerClarification(
       args,
       String(command.args?.receivedAt ?? new Date().toISOString()),
       String(command.args?.note ?? ""),
+      typeof command.args?.projectId === "string" ? command.args.projectId : undefined,
     );
   }
   if (command.type === "decisions:reject-latest") {
@@ -1996,15 +2153,19 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       args,
       String(command.args?.receivedAt ?? new Date().toISOString()),
       "rejected",
+      typeof command.args?.projectId === "string" ? command.args.projectId : undefined,
     );
   }
   if (command.type === "orchestrator:revise-latest") {
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
     const feedback = String(command.args?.feedback ?? "");
     if (!feedback.trim()) throw new Error("revision feedback is required");
+    const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
 
     const planStore = new OrchestratorPlanStore(orchestratorPlansPath(args));
-    const plan = await planStore.latestActionable();
+    const selected = await selectSingleCurrentPlan({ args, requestedProjectId, command: "/revise", example: "/revise project:<project> <feedback>" });
+    if (selected.report) return selected.report;
+    const plan = selected.plan;
     if (!plan) return nowReportForInbox(args);
 
     const requestStore = new OrchestrationRequestStore(orchestrationRequestsPath(args));
@@ -2030,14 +2191,19 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
     const reason = typeof command.args?.reason === "string" ? command.args.reason : undefined;
     const planStore = new OrchestratorPlanStore(orchestratorPlansPath(args));
-    const plan = await planStore.latestActionable();
+    const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
+    const selected = await selectSingleCurrentPlan({ args, requestedProjectId, command: "/cancel", example: "/cancel project:<project>" });
+    if (selected.report) return selected.report;
+    const plan = selected.plan;
     if (plan) {
       const canceled = await planStore.markCanceled(plan.id, { canceledAt: receivedAt, cancelReason: reason });
       return orchestratorCancelReport({ plan: canceled });
     }
 
     const requestStore = new OrchestrationRequestStore(orchestrationRequestsPath(args));
-    const request = await requestStore.latestPending();
+    const requestSelection = await selectPendingRequestForPlan({ args, requestedProjectId });
+    if (requestSelection.report) return requestSelection.report;
+    const request = requestSelection.request;
     if (request) {
       const discarded = await requestStore.markDiscarded(request.id, { discardedAt: receivedAt });
       return orchestratorCancelReport({ request: discarded });
@@ -2048,11 +2214,13 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
   if (command.type === "orchestrator:plan-latest") {
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
     const requestStore = new OrchestrationRequestStore(orchestrationRequestsPath(args));
-    const request = await requestStore.latestPending();
-    if (!request) return nowReportForInbox(args);
-
     const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
     const requestedScopeId = typeof command.args?.scopeId === "string" ? command.args.scopeId : undefined;
+    const selectedRequest = await selectPendingRequestForPlan({ args, requestedProjectId, requestedScopeId });
+    if (selectedRequest.report) return selectedRequest.report;
+    const request = selectedRequest.request;
+    if (!request) return nowReportForInbox(args);
+
     const projectProfiles = await loadProjectProfiles(projectProfilesDir(args));
     const planAncestry = ancestryForPlan({
       request,
@@ -2106,7 +2274,14 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     return orchestratorPlanReport({ request: reportedRequest, plan, blocker });
   }
   if (command.type === "orchestrator:show-current-plan") {
-    const plan = await new OrchestratorPlanStore(orchestratorPlansPath(args)).latestActionable();
+    const selected = await selectSingleCurrentPlan({
+      args,
+      requestedProjectId: typeof command.args?.projectId === "string" ? command.args.projectId : undefined,
+      command: "/plan_current",
+      example: "/plan_current project:<project>",
+    });
+    if (selected.report) return selected.report;
+    const plan = selected.plan;
     if (!plan) return nowReportForInbox(args);
     const request = await new OrchestrationRequestStore(orchestrationRequestsPath(args)).find(plan.requestId);
     const blocker = await blockerForOrchestratorPlan({
@@ -2340,17 +2515,30 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
   if (command.type === "actions:go") {
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
     const orchestratorPlanStore = new OrchestratorPlanStore(orchestratorPlansPath(args));
-    const orchestratorPlan = await orchestratorPlanStore.latestActionable();
+    const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
+    const selected = await selectSingleCurrentPlan({ args, requestedProjectId, command: "/go", example: "/go project:<project>" });
+    if (selected.report) return selected.report;
+    const orchestratorPlan = selected.plan;
     if (orchestratorPlan) {
       if (orchestratorPlan.status !== "planned") {
         return orchestratorGoBlockedReport({ plan: orchestratorPlan });
       }
 
       const decisionStore = new DecisionStore(decisionsPath(args));
-      const currentBlockerClarification = latestCurrentPendingBlockerClarification(
-        await decisionStore.list(),
-        await orchestratorPlanStore.list(),
-      );
+      const currentPlans = await orchestratorPlanStore.list();
+      const blockerClarificationCandidates = (await decisionStore.list())
+        .filter((decision) =>
+          decisionIsCurrentBlockerClarification(decision, currentPlans)
+          && decisionMatchesProject(decision, currentPlans, requestedProjectId)
+        );
+      if (blockerClarificationCandidates.length > 1) {
+        return remoteProjectAmbiguityReport({
+          command: "/go",
+          reason: "두 개 이상의 현재 blocker clarification이 명령 대상이 될 수 있습니다. 먼저 프로젝트를 지정하거나 로컬에서 정확한 항목을 확인하세요.",
+          example: "/go project:<project>",
+        });
+      }
+      const currentBlockerClarification = blockerClarificationCandidates.slice().reverse()[0];
       if (currentBlockerClarification) {
         return decisionGateReport(currentBlockerClarification);
       }
@@ -2400,7 +2588,14 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       });
       return orchestratorGoMaterializedReport({ plan, tasks: materialized.tasks, actions: materializedActions });
     }
-    if (await new OrchestrationRequestStore(orchestrationRequestsPath(args)).latestPending()) {
+    const pendingRequests = (await new OrchestrationRequestStore(orchestrationRequestsPath(args)).list())
+      .filter((request) => request.status === "pending_plan")
+      .filter((request) => {
+        if (!requestedProjectId) return true;
+        const requestProjectId = selectedProjectIdFromAncestry(request.ancestry);
+        return !requestProjectId || requestProjectId === requestedProjectId;
+      });
+    if (pendingRequests.length > 0) {
       return nowReportForInbox(args);
     }
 
@@ -2570,6 +2765,39 @@ async function main(): Promise<void> {
     } else {
       console.log(formatCeoStatusReport(snapshot, { completedLimit: Number(flag(args, "limit", "10")) }));
     }
+    return;
+  }
+
+  if (args.command === "orchestrator:current") {
+    const projectId = flag(args, "project", "") || undefined;
+    await validateRemoteProjectContext({ args, requestedProjectId: projectId });
+    const [requests, plans, decisions] = await Promise.all([
+      new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
+      new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
+      new DecisionStore(decisionsPath(args)).list(),
+    ]);
+    const currentPlans = currentActionablePlans(plans, projectId);
+    const currentRequests = requests
+      .filter((request) => request.status === "pending_plan")
+      .filter((request) => {
+        if (!projectId) return true;
+        const requestProjectId = selectedProjectIdFromAncestry(request.ancestry);
+        return !requestProjectId || requestProjectId === projectId;
+      });
+    const currentDecisions = decisions.filter((decision) =>
+      decision.status === "pending" && decisionHasCurrentPlanSubject(decision, plans) && decisionMatchesProject(decision, plans, projectId)
+    );
+    printJson({
+      projectId: projectId ?? null,
+      ambiguous: {
+        requests: currentRequests.length > 1,
+        plans: currentPlans.length > 1,
+        decisions: currentDecisions.length > 1,
+      },
+      currentRequests,
+      currentPlans,
+      currentDecisions,
+    });
     return;
   }
 
@@ -3392,6 +3620,7 @@ async function main(): Promise<void> {
       "  decisions:reject-latest [--note=<text>]",
       "  decisions:resolve <decision-id> --resolution=<approved|rejected|needs_revision|answered|canceled>",
       "  decisions:archive <decision-id> --reason=<text>",
+      "  orchestrator:current [--project=<id>]",
       "  orchestrator:question-draft --blocker=<text> --subject-type=<type> --subject-id=<id> [--context=<text>]",
       "  next-action",
       "  doctor [--json]",

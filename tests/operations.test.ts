@@ -1255,7 +1255,7 @@ describe("inbox and remote commands", () => {
           id: "omht",
           repoRoot: "/repo/omht",
           setupCommands: [],
-          verifyCommands: [],
+          verifyCommands: ["bun typecheck"],
           forbiddenChanges: ["state/**"],
         },
         null,
@@ -1570,7 +1570,7 @@ describe("inbox and remote commands", () => {
           id: "omht",
           repoRoot: "/repo/omht",
           setupCommands: [],
-          verifyCommands: [],
+          verifyCommands: ["bun typecheck"],
           forbiddenChanges: ["state/**"],
         },
         null,
@@ -1659,7 +1659,7 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const goReport = await readFile(join(outbox, "001-go.md"), "utf8");
     expect(goReport).toContain("오케스트레이터 계획을 실행 큐에 등록하지 못했습니다.");
-    expect(goReport).toContain("verifyCommands must not be empty");
+    expect(goReport).toContain("writer task proposals must include their own verifyCommands");
     expect(goReport).toContain("matches state/**");
     expect(goReport).toContain("dependency references unknown task proposal: missing-task");
     expect(goReport).toContain("repoRoot must not point to a Samantha worker worktree");
