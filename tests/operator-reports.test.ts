@@ -1062,6 +1062,16 @@ describe("operator reports", () => {
           },
         ],
         tradeoffs: ["더 느리지만 deterministic materialization을 유지합니다."],
+        recommendationTrace: [
+          {
+            recommendation: "한 writer task 유지",
+            reason: "이전 BK 결정과 Phase 7 writer-cap gate가 같은 결론을 지지합니다.",
+            citations: [
+              { kind: "decision" as const, id: "decision-writer-cap-1" },
+              { kind: "project_brief" as const, id: "brief-samantha-active" },
+            ],
+          },
+        ],
       },
     };
     const advisoryReport = orchestratorPlanReport({
@@ -1071,6 +1081,9 @@ describe("operator reports", () => {
     expect(advisoryReport).toContain("선택/대안 (advisory, /go 제외):");
     expect(advisoryReport).toContain("선택 접근: 한 writer task에서 구현과 검증을 함께 처리합니다.");
     expect(advisoryReport).toContain("거절한 대안: 대안 task set을 병렬 실행 - writer cap 1을 넘길 수 있고 선택 경로가 아닙니다.");
+    expect(advisoryReport).toContain("추천 근거 trace:");
+    expect(advisoryReport).toContain("한 writer task 유지: 이전 BK 결정과 Phase 7 writer-cap gate가 같은 결론을 지지합니다.");
+    expect(advisoryReport).toContain("citations=`decision:decision-writer-cap-1, project_brief:brief-samantha-active`");
     expect(advisoryReport).toContain("대안/트레이드오프는 advisory이며 `/go` materialization 대상이 아닙니다.");
 
     const recoveryQuestions = orchestratorPlanReport({

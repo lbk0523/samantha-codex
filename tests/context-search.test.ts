@@ -10,6 +10,7 @@ import { createDecisionItem } from "../src/lib/decision-store";
 import { GovernanceEventStore, createGovernanceEvent } from "../src/lib/governance-event-store";
 import type { ProjectBriefRecord } from "../src/lib/project-brief-store";
 import { buildSearchableContext, searchContext } from "../src/lib/context-search";
+import type { GovernedMemoryRecord } from "../src/lib/memory-store";
 import type { WorkerRunLog } from "../src/lib/run-log";
 
 let tmpRoots: string[] = [];
@@ -151,6 +152,30 @@ function ceoReport(input: Partial<CeoReportRecord> = {}): CeoReportRecord {
   };
 }
 
+function memoryRecord(input: Partial<GovernedMemoryRecord> = {}): GovernedMemoryRecord {
+  return {
+    schemaVersion: 1,
+    id: "memory-planning-preference",
+    kind: "preference",
+    claimKind: "bk_decision",
+    summary: "Planning should use the smallest source-backed context snippets.",
+    ancestry,
+    citations: [{ kind: "decision", id: "decision-memory-strategy", ancestry }],
+    revisionId: "memory-revision-planning-preference",
+    status: "active",
+    operation: "create",
+    actor: "deterministic_operator",
+    createdAt: "2026-05-10T01:11:00.000Z",
+    updatedAt: "2026-05-10T01:11:00.000Z",
+    riskClass: "medium",
+    diffSummary: "Create planning preference memory.",
+    source: { kind: "decision", id: "decision-memory-strategy" },
+    behaviorImpact: "none",
+    governanceEventIds: ["gov-event-memory-risk"],
+    ...input,
+  };
+}
+
 afterEach(async () => {
   await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
   tmpRoots = [];
@@ -206,6 +231,7 @@ describe("searchable context surface", () => {
       runLogs: [reportRunLog()],
       decisionSummaries: [summary],
       projectBriefs: [projectBrief()],
+      memoryRecords: [memoryRecord()],
       governanceEvents: [governanceEvent],
     };
 
@@ -246,6 +272,17 @@ describe("searchable context surface", () => {
     });
     expect(artifact.results[0].snippet.length).toBeLessThanOrEqual(283);
     expect(artifact.results[0].citations).toContainEqual({ kind: "run_log", id: "run-report-context", ancestry });
+
+    const preference = searchContext(input, { memoryKind: "preference", projectId: "samantha" });
+    expect(preference.results).toHaveLength(1);
+    expect(preference.results[0]).toMatchObject({
+      kind: "memory",
+      sourceKind: "memory",
+      sourceId: "memory-planning-preference",
+      status: "ok",
+    });
+    expect(preference.results[0].citations).toContainEqual({ kind: "memory", id: "memory-planning-preference", ancestry });
+    expect(preference.results[0].citations).toContainEqual({ kind: "decision", id: "decision-memory-strategy", ancestry });
   });
 
   test("reports missing artifacts and malformed records as searchable results", () => {

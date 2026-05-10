@@ -19,6 +19,7 @@ import {
   type DecisionResolution,
   type DecisionSubject,
 } from "./lib/decision-store";
+import { buildDecisionHistorySummary } from "./lib/decision-history-summary";
 import { writeDashboard, type LiveRunEvent, type LiveRunStatus } from "./lib/dashboard";
 import { GovernanceEventStore } from "./lib/governance-event-store";
 import { parseGovernanceRiskClass } from "./lib/governance-taxonomy";
@@ -80,7 +81,13 @@ import {
 import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnostics";
 import { operatorReviewReport, type OperatorReviewSubjectType } from "./lib/operator-review-report";
 import { createOrchestratorPlanBlocker, payloadBlockerForPlan, type OrchestratorPlanBlocker } from "./lib/orchestrator-blockers";
-import { runOrchestratorPlan, runOrchestratorQuestionDraft, runOrchestratorSynthesis } from "./lib/orchestrator-agent";
+import {
+  planningMemoryFromContextResults,
+  runOrchestratorPlan,
+  runOrchestratorQuestionDraft,
+  runOrchestratorSynthesis,
+  type PlanningMemorySnippet,
+} from "./lib/orchestrator-agent";
 import { ancestryForPlan, ancestryForRequestIntake, selectedProjectIdFromAncestry } from "./lib/orchestration-ancestry";
 import { materializeOrchestratorPlan } from "./lib/orchestrator-materializer";
 import {
@@ -103,6 +110,9 @@ import {
   selectProjectRemoteScope,
   type ProjectProfile,
 } from "./lib/project-profile";
+import { ProjectBriefStore } from "./lib/project-brief-store";
+import { searchContext } from "./lib/context-search";
+import { GovernedMemoryStore } from "./lib/memory-store";
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
 import {
   createRecoveryDrillOutcomeEvent,
@@ -218,6 +228,14 @@ function ceoReportsPath(args: ParsedArgs): string {
   return join(stateDir(args), "ceo-reports.jsonl");
 }
 
+function projectBriefsPath(args: ParsedArgs): string {
+  return join(stateDir(args), "project-briefs.jsonl");
+}
+
+function memoryPath(args: ParsedArgs): string {
+  return join(stateDir(args), "memory.jsonl");
+}
+
 function decisionsPath(args: ParsedArgs): string {
   return join(stateDir(args), "decisions.jsonl");
 }
@@ -232,6 +250,50 @@ function costBudgetAuditPath(args: ParsedArgs): string {
 
 function recoveryDrillsPath(args: ParsedArgs): string {
   return resolve(flag(args, "drills", join(root, "references/governance/recovery-drills.json")));
+}
+
+async function planningMemoryForRequest(input: {
+  args: ParsedArgs;
+  request: OrchestrationRequestRecord;
+  projectProfiles: ProjectProfile[];
+  generatedAt: string;
+}): Promise<PlanningMemorySnippet[]> {
+  const projectId = selectedProjectIdFromAncestry(input.request.ancestry);
+  if (!projectId) return [];
+
+  const [
+    decisions,
+    governanceEvents,
+    reports,
+    plans,
+    projectBriefRead,
+    activeMemory,
+  ] = await Promise.all([
+    new DecisionStore(decisionsPath(input.args)).list(),
+    new GovernanceEventStore(governanceEventsPath(input.args)).list(),
+    new CeoReportStore(ceoReportsPath(input.args)).list(),
+    new OrchestratorPlanStore(orchestratorPlansPath(input.args)).list(),
+    new ProjectBriefStore(projectBriefsPath(input.args), { profiles: input.projectProfiles }).readProjectBrief(projectId),
+    new GovernedMemoryStore(memoryPath(input.args), new GovernanceEventStore(governanceEventsPath(input.args))).listActive(),
+  ]);
+
+  const decisionSummary = buildDecisionHistorySummary({
+    decisions,
+    governanceEvents,
+    reports,
+    plans,
+    generatedAt: input.generatedAt,
+    scope: { projectId },
+  });
+  const results = searchContext({
+    ceoReports: reports,
+    decisionSummaries: [decisionSummary],
+    projectBriefReads: [projectBriefRead],
+    memoryRecords: activeMemory,
+    governanceEvents,
+  }, { projectId, limit: 12 }).results;
+
+  return planningMemoryFromContextResults(results, { projectId, limit: 6 });
 }
 
 function actionRunnerLockPath(args: ParsedArgs): string {
@@ -2253,6 +2315,12 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       ...request,
       ancestry: planAncestry,
     };
+    const planningMemory = await planningMemoryForRequest({
+      args,
+      request: planRequest,
+      projectProfiles,
+      generatedAt: receivedAt,
+    });
     const result = await runOrchestratorPlan({
       request: planRequest,
       agent: await loadAgentProfile(args, "codex-orchestrator"),
@@ -2260,6 +2328,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       projectProfiles,
       requestedProjectId,
       requestedScopeId,
+      planningMemory,
       codexBin: codexBin(args),
     });
     const plan: OrchestratorPlanRecord = {

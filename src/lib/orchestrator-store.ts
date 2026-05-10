@@ -43,6 +43,41 @@ export interface OrchestratorRejectedAlternative {
   tradeoffs?: string[];
 }
 
+export type OrchestratorContextCitationKind =
+  | "decision"
+  | "governance_event"
+  | "orchestrator_plan"
+  | "task"
+  | "remote_action"
+  | "run_lifecycle"
+  | "run_log"
+  | "recovery_context"
+  | "project_profile"
+  | "agent_profile"
+  | "safety_policy"
+  | "budget_observation"
+  | "ceo_status"
+  | "ceo_report"
+  | "operator_report"
+  | "dashboard_view"
+  | "telegram_summary"
+  | "report_artifact"
+  | "decision_history_summary"
+  | "project_brief"
+  | "memory";
+
+export interface OrchestratorContextCitation {
+  kind: OrchestratorContextCitationKind;
+  id: string;
+  ancestry?: WorkItemAncestry;
+}
+
+export interface OrchestratorRecommendationTrace {
+  recommendation: string;
+  reason: string;
+  citations: OrchestratorContextCitation[];
+}
+
 export interface OrchestratorPlanPayload {
   summary: string;
   assumptions: string[];
@@ -55,6 +90,7 @@ export interface OrchestratorPlanPayload {
   selectedApproach?: string;
   rejectedAlternatives?: OrchestratorRejectedAlternative[];
   tradeoffs?: string[];
+  recommendationTrace?: OrchestratorRecommendationTrace[];
   tasks: OrchestratorTaskProposal[];
   batches: string[][];
   userMessage: string;

@@ -2,7 +2,8 @@ import type { WorkItemAncestry } from "./ancestry";
 import type { CeoReportRecord } from "./ceo-report-store";
 import type { DecisionHistoryCitation, DecisionHistorySummary } from "./decision-history-summary";
 import type { GovernanceEventRecord, GovernanceEventSourceKind } from "./governance-event-store";
-import type { MemoryEntryKind, MemorySourceCitation } from "./memory-taxonomy";
+import type { GovernedMemoryRecord } from "./memory-store";
+import { isMemoryEntryKind, type MemoryEntryKind, type MemorySourceCitation } from "./memory-taxonomy";
 import type { ProjectBriefReadResult, ProjectBriefRecord, ProjectBriefSectionName } from "./project-brief-store";
 import type { WorkerRunLog } from "./run-log";
 
@@ -13,6 +14,7 @@ export type ContextSearchSourceKind =
   | "report_artifact"
   | "decision_history_summary"
   | "project_brief"
+  | "memory"
   | "governance_event";
 
 export type ContextSearchResultKind =
@@ -21,6 +23,7 @@ export type ContextSearchResultKind =
   | "report_artifact"
   | "decision_summary"
   | "project_brief"
+  | "memory"
   | "governance_event"
   | "missing_artifact"
   | "malformed_record";
@@ -62,6 +65,7 @@ export interface ContextSearchInput {
   decisionSummaries?: unknown[];
   projectBriefs?: unknown[];
   projectBriefReads?: ProjectBriefReadResult[];
+  memoryRecords?: unknown[];
   governanceEvents?: unknown[];
 }
 
@@ -508,6 +512,39 @@ function indexProjectBriefRead(read: ProjectBriefReadResult): ContextSearchResul
   }];
 }
 
+function indexMemoryRecord(value: unknown): ContextSearchResult[] {
+  if (!isObject(value)) {
+    return [malformedResult({ id: "unknown", sourceKind: "memory", reason: "memory record must be an object" })];
+  }
+  const record = value as Partial<GovernedMemoryRecord>;
+  const id = requiredString(record.id);
+  if (record.schemaVersion !== 1 || !id || !isMemoryEntryKind(record.kind) || !requiredString(record.summary)) {
+    return [malformedResult({ id: String(record.id ?? "unknown"), sourceKind: "memory", reason: "memory record is missing schemaVersion 1, id, kind, or summary" })];
+  }
+  const status: ContextSearchResultStatus = record.status === "active" ? "ok" : "stale";
+  return [{
+    kind: "memory",
+    status,
+    id,
+    title: `${record.kind} ${id}`,
+    snippet: compactSnippet(record.summary),
+    sourceKind: "memory",
+    sourceId: id,
+    generatedAt: record.updatedAt,
+    memoryKind: record.kind,
+    ancestry: record.ancestry,
+    citations: uniqueCitations([
+      { kind: "memory", id, ancestry: record.ancestry },
+      ...((record.citations ?? []) as MemorySourceCitation[]).map((citation) => ({
+        kind: citation.kind,
+        id: citation.id,
+        ancestry: citation.ancestry,
+      })),
+      ...(record.approvalDecisionId ? [{ kind: "decision" as const, id: record.approvalDecisionId, ancestry: record.ancestry }] : []),
+    ]),
+  }];
+}
+
 function indexGovernanceEvent(value: unknown): ContextSearchResult[] {
   if (!isObject(value)) {
     return [malformedResult({ id: "unknown", sourceKind: "governance_event", reason: "governance event must be an object" })];
@@ -546,6 +583,7 @@ export function buildSearchableContext(input: ContextSearchInput): ContextSearch
     ...(input.decisionSummaries ?? []).flatMap(indexDecisionSummary),
     ...(input.projectBriefs ?? []).flatMap(indexProjectBriefValue),
     ...(input.projectBriefReads ?? []).flatMap(indexProjectBriefRead),
+    ...(input.memoryRecords ?? []).flatMap(indexMemoryRecord),
     ...(input.governanceEvents ?? []).flatMap(indexGovernanceEvent),
   ];
 }

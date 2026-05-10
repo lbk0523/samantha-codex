@@ -287,7 +287,7 @@ Detailed stages:
 
 ### 8. Context And Knowledge Memory
 
-Status: in progress.
+Status: implemented.
 
 Objective: give Samantha durable project memory so BK does not have to restate
 strategic context, product decisions, recurring preferences, or known risks.

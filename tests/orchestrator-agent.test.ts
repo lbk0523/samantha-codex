@@ -7,6 +7,7 @@ import {
   parseOrchestratorMemorySynthesisPayload,
   parseOrchestratorPlanPayload,
   parseOrchestratorQuestionDraftPayload,
+  planningMemoryFromContextResults,
   type MemorySynthesisEvidence,
 } from "../src/lib/orchestrator-agent";
 import type { OrchestrationRequestRecord } from "../src/lib/orchestrator-store";
@@ -89,6 +90,127 @@ describe("orchestrator agent prompt", () => {
     expect(prompt).toContain("- goalId: goal-omht-operations");
     expect(prompt).toContain("- workItemId: request-1");
     expect(prompt).toContain("All executable task proposals must set projectId exactly to omht.");
+  });
+
+  test("injects selected citation-backed memory for active project planning and preserves recommendation trace", () => {
+    const request: OrchestrationRequestRecord = {
+      schemaVersion: 1,
+      id: "request-memory-plan",
+      ancestry: {
+        mode: "assigned",
+        projectId: "samantha",
+        goalId: "goal-memory",
+        workItemId: "request-memory-plan",
+      },
+      source: "remote",
+      text: "사만다 다음 메모리 작업 계획",
+      senderId: "bk",
+      status: "pending_plan",
+      createdAt: "2026-05-10T05:00:00.000Z",
+    };
+    const projects: ProjectProfile[] = [
+      {
+        schemaVersion: 1,
+        id: "samantha",
+        repoRoot: "/repo/samantha",
+        setupCommands: [],
+        verifyCommands: ["bun typecheck"],
+        forbiddenChanges: ["state/**"],
+      },
+      {
+        schemaVersion: 1,
+        id: "omht",
+        repoRoot: "/repo/omht",
+        setupCommands: [],
+        verifyCommands: ["bun typecheck"],
+        forbiddenChanges: [".env"],
+      },
+    ];
+    const memory = planningMemoryFromContextResults([
+      {
+        kind: "memory",
+        status: "ok",
+        id: "memory-prefer-small-plans",
+        title: "preference memory-prefer-small-plans",
+        snippet: "BK prefers the smallest safe plan with explicit citation trace.",
+        sourceKind: "memory",
+        sourceId: "memory-prefer-small-plans",
+        memoryKind: "preference",
+        ancestry: request.ancestry,
+        citations: [
+          { kind: "memory", id: "memory-prefer-small-plans", ancestry: request.ancestry },
+          { kind: "decision", id: "decision-small-plans", ancestry: request.ancestry },
+        ],
+      },
+      {
+        kind: "project_brief",
+        status: "ok",
+        id: "brief-omht:currentStrategy:0",
+        title: "omht currentStrategy",
+        snippet: "OMHT context must not leak into Samantha planning.",
+        sourceKind: "project_brief",
+        sourceId: "brief-omht",
+        memoryKind: "strategy_context",
+        ancestry: {
+          mode: "assigned",
+          projectId: "omht",
+          goalId: "goal-omht",
+          workItemId: "brief-omht",
+        },
+        citations: [{ kind: "project_brief", id: "brief-omht" }],
+      },
+    ], { projectId: "samantha" });
+
+    const prompt = buildOrchestratorPrompt({
+      request,
+      projectProfiles: projects,
+      planningMemory: memory,
+    });
+
+    expect(prompt).toContain("Selected source-backed memory context:");
+    expect(prompt).toContain("kind=preference status=ok id=memory-prefer-small-plans");
+    expect(prompt).toContain("decision:decision-small-plans");
+    expect(prompt).not.toContain("OMHT context must not leak");
+    expect(prompt).toContain("include it in `recommendationTrace` with exact citations");
+    expect(prompt).toContain("If no selected memory snippet influences the recommendation, set `recommendationTrace` to an empty array.");
+
+    const payload = {
+      summary: "메모리 기반 계획",
+      assumptions: [],
+      questions: [],
+      scope: ["작은 계획"],
+      nonScope: ["multi-writer"],
+      risks: [],
+      selectedApproach: "기존 선호에 따라 작은 단일 writer 계획을 제안한다.",
+      rejectedAlternatives: [],
+      tradeoffs: [],
+      recommendationTrace: [{
+        recommendation: "단일 writer 작업으로 제한",
+        reason: "BK의 작은 계획 선호와 writer cap 1 정책을 따른다.",
+        citations: [{ kind: "decision" as const, id: "decision-small-plans" }],
+      }],
+      tasks: [{
+        id: "memory-plan-write",
+        title: "Implement memory planning trace",
+        targetAgent: "codex-worker",
+        projectId: "samantha",
+        resultMode: "write",
+        targetFiles: ["src/lib/orchestrator-agent.ts"],
+        forbiddenChanges: ["state/**"],
+        setupCommands: [],
+        verifyCommands: ["bun typecheck"],
+        instructions: "Implement the trace.",
+        dependencies: [],
+      }],
+      batches: [["memory-plan-write"]],
+      userMessage: "계획",
+    };
+    const parsed = parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify(payload)}`);
+    expect(parsed.recommendationTrace).toEqual(payload.recommendationTrace);
+    expect(() => parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify({
+      ...payload,
+      recommendationTrace: [{ recommendation: "bad", reason: "bad", citations: [] }],
+    })}`)).toThrow("recommendationTrace[0].citations must include at least one source citation");
   });
 
   test("rejects unsafe or ambiguous plan payloads before state mutation", () => {

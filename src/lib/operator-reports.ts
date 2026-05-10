@@ -382,6 +382,19 @@ function planAdvisoryLines(plan: OrchestratorPlanRecord): string[] {
   return lines.filter((line) => line !== "");
 }
 
+function planRecommendationTraceLines(plan: OrchestratorPlanRecord): string[] {
+  const trace = plan.payload?.recommendationTrace ?? [];
+  if (!trace.length) return [];
+  return [
+    "",
+    "추천 근거 trace:",
+    ...trace.map((item) => {
+      const citations = item.citations.map((citation) => `${citation.kind}:${citation.id}`).join(", ");
+      return `- ${telegramSafeLine(item.recommendation)}: ${telegramSafeLine(item.reason)} citations=${code(citations)}`;
+    }),
+  ];
+}
+
 function repoName(repoRoot: string | undefined): string {
   const normalized = oneLine(repoRoot ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
   return normalized.split("/").filter(Boolean).at(-1) ?? "unknown";
@@ -1571,6 +1584,7 @@ export function orchestratorPlanReport(input: {
     "",
     payload?.summary ? `요약: ${telegramSafeLine(payload.summary)}` : "",
     ...planAdvisoryLines(plan),
+    ...planRecommendationTraceLines(plan),
     payload?.questions.length ? "" : "",
     ...(payload?.questions.length ? ["확인 질문:", ...payload.questions.map((question) => `- ${telegramSafeLine(question)}`)] : []),
     payload?.scope.length ? "" : "",

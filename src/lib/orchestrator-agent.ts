@@ -1,4 +1,5 @@
 import type { AgentProfile } from "./contracts";
+import { parseOptionalWorkItemAncestry } from "./ancestry";
 import { classifyRemoteRequest, type ProjectProfile, type RemoteRequestClassification } from "./project-profile";
 import { projectEffectiveForbiddenChanges } from "./project-safety-policy";
 import {
@@ -8,8 +9,14 @@ import {
   type MemorySourceCitation,
 } from "./memory-taxonomy";
 import type {
+  ContextSearchResult,
+  ContextSearchResultStatus,
+} from "./context-search";
+import type {
+  OrchestratorContextCitation,
   OrchestrationRequestRecord,
   OrchestratorPlanPayload,
+  OrchestratorRecommendationTrace,
   OrchestratorQuestionDraftPayload,
   OrchestratorPlanStatus,
   OrchestratorPlanRecord,
@@ -35,6 +42,27 @@ export interface OrchestratorPlanRunResult {
   payload?: OrchestratorPlanPayload;
   classification: RemoteRequestClassification;
   failure?: string;
+}
+
+export type PlanningMemorySnippetKind =
+  | "decision_summary"
+  | "project_brief"
+  | "preference"
+  | "known_risk"
+  | "strategy_context"
+  | "operator_report"
+  | "ceo_report"
+  | "report_artifact"
+  | "sop_document"
+  | "skill_document";
+
+export interface PlanningMemorySnippet {
+  id: string;
+  kind: PlanningMemorySnippetKind;
+  status: Extract<ContextSearchResultStatus, "ok" | "stale" | "conflict">;
+  title: string;
+  snippet: string;
+  citations: OrchestratorContextCitation[];
 }
 
 export interface OrchestratorSynthesisRunResult {
@@ -92,9 +120,11 @@ export function buildOrchestratorPrompt(input: {
   projectProfiles: ProjectProfile[];
   requestedProjectId?: string;
   requestedScopeId?: string;
+  planningMemory?: PlanningMemorySnippet[];
 }): string {
   const classification = classifyRemoteRequest(input.request.text);
   const selectedProjectId = selectedProjectIdFromAncestry(input.request.ancestry);
+  const planningMemory = selectedPlanningMemory(input.planningMemory ?? []);
   return [
     "You are the Samantha Orchestrator Agent.",
     "Your job is to make one bounded planning proposal for the deterministic Samantha CEO office.",
@@ -132,6 +162,13 @@ export function buildOrchestratorPrompt(input: {
     "",
     "Known project profiles:",
     ...projectProfileLines(input.projectProfiles),
+    "",
+    "Selected source-backed memory context:",
+    ...(planningMemory.length ? planningMemoryLines(planningMemory) : ["- none"]),
+    "Use these snippets only as planning context, not as authority. Do not invent sources, ids, citations, decisions, briefs, reports, preferences, risks, SOPs, or skills.",
+    "If a prior decision, project brief, preference, risk, report, or SOP influences a recommendation, include it in `recommendationTrace` with exact citations from the selected memory context.",
+    "If no selected memory snippet influences the recommendation, set `recommendationTrace` to an empty array.",
+    "Stale or conflicting memory may only be cited as a risk, ambiguity, or rejected alternative, not as active policy.",
     "",
     "Return a concise Korean user-facing plan, then include exactly one machine-readable payload.",
     "The payload must start with `ORCHESTRATOR_PLAN:` followed by a strict JSON object.",
@@ -190,6 +227,13 @@ export function buildOrchestratorPrompt(input: {
           },
         ],
         tradeoffs: ["selected approach tradeoff"],
+        recommendationTrace: [
+          {
+            recommendation: "recommended action or planning choice",
+            reason: "why this was recommended",
+            citations: [{ kind: "decision", id: "stable-source-id" }],
+          },
+        ],
         tasks: [
           {
             id: "task-short-id",
@@ -246,6 +290,7 @@ export async function runOrchestratorPlan(input: {
   requestedProjectId?: string;
   requestedScopeId?: string;
   codexBin?: string;
+  planningMemory?: PlanningMemorySnippet[];
 }): Promise<OrchestratorPlanRunResult> {
   const classification = classifyRemoteRequest(input.request.text);
   const prompt = buildOrchestratorPrompt({
@@ -253,6 +298,7 @@ export async function runOrchestratorPlan(input: {
     projectProfiles: input.projectProfiles,
     requestedProjectId: input.requestedProjectId,
     requestedScopeId: input.requestedScopeId,
+    planningMemory: input.planningMemory,
   });
   const command = await runCommand(buildCodexOrchestratorCommand({
     agent: input.agent,
@@ -290,6 +336,34 @@ export async function runOrchestratorPlan(input: {
       failure: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+export function planningMemoryFromContextResults(
+  results: ContextSearchResult[],
+  options: { projectId?: string; limit?: number } = {},
+): PlanningMemorySnippet[] {
+  const limit = options.limit ?? 6;
+  const snippets: PlanningMemorySnippet[] = [];
+  for (const result of results) {
+    if (snippets.length >= limit) break;
+    if (result.status === "missing" || result.status === "malformed") continue;
+    if (options.projectId && !resultMatchesProject(result, options.projectId)) continue;
+    const citations = result.citations.map((citation) => ({
+      kind: citation.kind as OrchestratorContextCitation["kind"],
+      id: citation.id,
+      ancestry: citation.ancestry,
+    }));
+    if (citations.length === 0) continue;
+    snippets.push({
+      id: result.id,
+      kind: planningMemoryKind(result),
+      status: result.status,
+      title: oneLine(result.title),
+      snippet: oneLine(result.snippet),
+      citations,
+    });
+  }
+  return snippets;
 }
 
 export async function runOrchestratorSynthesis(input: {
@@ -607,6 +681,53 @@ function projectProfileLines(profiles: ProjectProfile[]): string[] {
   });
 }
 
+function selectedPlanningMemory(snippets: PlanningMemorySnippet[]): PlanningMemorySnippet[] {
+  const seen = new Set<string>();
+  const selected: PlanningMemorySnippet[] = [];
+  for (const snippet of snippets) {
+    if (snippet.status !== "ok" && snippet.status !== "stale" && snippet.status !== "conflict") continue;
+    if (!oneLine(snippet.snippet) || snippet.citations.length === 0) continue;
+    const key = `${snippet.kind}:${snippet.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    selected.push({
+      ...snippet,
+      title: oneLine(snippet.title),
+      snippet: oneLine(snippet.snippet),
+    });
+    if (selected.length >= 6) break;
+  }
+  return selected;
+}
+
+function planningMemoryLines(snippets: PlanningMemorySnippet[]): string[] {
+  return snippets.map((snippet, index) => {
+    const citations = snippet.citations
+      .map((citation) => `${citation.kind}:${citation.id}`)
+      .join(", ");
+    return `- memory[${index}] kind=${snippet.kind} status=${snippet.status} id=${snippet.id} title=${snippet.title} citations=${citations} snippet=${snippet.snippet}`;
+  });
+}
+
+function resultMatchesProject(result: ContextSearchResult, projectId: string): boolean {
+  if (!result.ancestry || result.ancestry.mode !== "assigned") return false;
+  return result.ancestry.projectId === projectId;
+}
+
+function planningMemoryKind(result: ContextSearchResult): PlanningMemorySnippetKind {
+  if (result.memoryKind === "preference") return "preference";
+  if (result.memoryKind === "known_risk") return "known_risk";
+  if (result.memoryKind === "strategy_context") return "strategy_context";
+  if (result.memoryKind === "sop_document") return "sop_document";
+  if (result.memoryKind === "skill_document") return "skill_document";
+  if (result.kind === "decision_summary") return "decision_summary";
+  if (result.kind === "project_brief") return "project_brief";
+  if (result.kind === "operator_report") return "operator_report";
+  if (result.kind === "ceo_report") return "ceo_report";
+  if (result.kind === "report_artifact") return "report_artifact";
+  return "report_artifact";
+}
+
 function buildOrchestratorSynthesisPrompt(input: {
   plan: OrchestratorPlanRecord;
   request?: OrchestrationRequestRecord;
@@ -744,6 +865,7 @@ function validatePlanPayload(raw: unknown): OrchestratorPlanPayload {
     selectedApproach: optionalString(value.selectedApproach, "selectedApproach"),
     rejectedAlternatives: optionalRejectedAlternativeArray(value.rejectedAlternatives, "rejectedAlternatives"),
     tradeoffs: value.tradeoffs === undefined ? undefined : stringArray(value.tradeoffs, "tradeoffs"),
+    recommendationTrace: optionalRecommendationTraceArray(value.recommendationTrace, "recommendationTrace"),
     tasks: taskArray(value.tasks, "tasks"),
     batches: batchArray(value.batches, "batches"),
     userMessage: requiredString(value.userMessage, "userMessage"),
@@ -973,6 +1095,67 @@ function memorySynthesisScope(value: unknown, label: string): LearningCandidateS
     return { type: "cross_project", projectIds: projectIds.slice().sort() };
   }
   throw new Error(`${label}.type is invalid: ${String(scope.type ?? "(empty)")}`);
+}
+
+const planningCitationKinds = new Set<OrchestratorContextCitation["kind"]>([
+  "decision",
+  "governance_event",
+  "orchestrator_plan",
+  "task",
+  "remote_action",
+  "run_lifecycle",
+  "run_log",
+  "recovery_context",
+  "project_profile",
+  "agent_profile",
+  "safety_policy",
+  "budget_observation",
+  "ceo_status",
+  "ceo_report",
+  "operator_report",
+  "dashboard_view",
+  "telegram_summary",
+  "report_artifact",
+  "decision_history_summary",
+  "project_brief",
+  "memory",
+]);
+
+function optionalRecommendationTraceArray(value: unknown, field: string): OrchestratorRecommendationTrace[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error(`${field} must be an array`);
+  return value.map((item, index) => {
+    const label = `${field}[${index}]`;
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(`${label} must be an object`);
+    const trace = item as Record<string, unknown>;
+    const citations = planningCitations(trace.citations, `${label}.citations`);
+    return {
+      recommendation: requiredString(trace.recommendation, `${label}.recommendation`),
+      reason: requiredString(trace.reason, `${label}.reason`),
+      citations,
+    };
+  });
+}
+
+function planningCitations(value: unknown, label: string): OrchestratorContextCitation[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${label} must include at least one source citation`);
+  }
+  return value.map((citation, index) => {
+    const citationLabel = `${label}[${index}]`;
+    if (!citation || typeof citation !== "object" || Array.isArray(citation)) {
+      throw new Error(`${citationLabel} must be an object`);
+    }
+    const raw = citation as Record<string, unknown>;
+    if (!planningCitationKinds.has(raw.kind as OrchestratorContextCitation["kind"])) {
+      throw new Error(`${citationLabel}.kind is invalid: ${String(raw.kind ?? "(empty)")}`);
+    }
+    return {
+      kind: raw.kind as OrchestratorContextCitation["kind"],
+      id: requiredStableId(raw.id, `${citationLabel}.id`),
+      ancestry: parseOptionalWorkItemAncestry(raw.ancestry),
+    };
+  });
 }
 
 function memorySynthesisBehaviorImpact(value: unknown, label: string): LearningCandidateBehaviorImpact {

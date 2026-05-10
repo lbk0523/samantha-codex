@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-10
 
-Status: in progress.
+Status: implemented.
 
 This document contains the execution stages for roadmap Phase 8:
 [Context And Knowledge Memory](CEO_OFFICE_ROADMAP.md#8-context-and-knowledge-memory).
@@ -550,9 +550,108 @@ Verification focus:
 - `bun run verify:docs` and `bun run verify:mac` pass unless only docs changed
   in the exit review
 
-Outcome placeholder:
+Outcome:
 
-- Fill after M10 implementation, dogfood evidence, and exit verification.
+- Integrated project-scoped planning memory into the bounded orchestrator
+  planning path. When a request has assigned project ancestry, Samantha builds
+  compact selected snippets from CEO reports, derived decision-history
+  summaries, project briefs, active governed memory records, and governance
+  events before running `codex-orchestrator`.
+- Added `PlanningMemorySnippet` selection in `src/lib/orchestrator-agent.ts`.
+  Missing or malformed context is excluded from prompt injection, stale or
+  conflicting context can only be used as risk/ambiguity/rejected-alternative
+  evidence, and the prompt repeats that snippets are context rather than
+  authority.
+- Added `recommendationTrace` to `ORCHESTRATOR_PLAN` payloads so plans can
+  explain why a recommendation was made with citations to prior decisions,
+  briefs, preferences, risks, reports, artifacts, SOPs, skills, or governance
+  records.
+- Added the local "why was this recommended?" surface in operator plan reports:
+  `orchestratorPlanReport` renders recommendation traces and citation ids
+  without materializing tasks, actions, merge, push, cleanup, recovery, or
+  approval.
+- Extended read-only context search to index active governed memory records
+  such as preferences, known risks, strategy context, SOP documents, and skill
+  documents. Search remains caller-provided and read-only.
+- Dogfooded the M10 planning context with the two active bundled project
+  profiles, `samantha` and `omht`, and a memory-influenced Samantha plan. The
+  test proves OMHT memory does not leak into Samantha planning context.
+- Updated roadmap and architecture docs only for implemented behavior.
+- Left authority unchanged: `DEFAULT_SAFETY_POLICY.writerCap` remains `1`; no
+  multi-writer execution, connector, secret, routine, budget, merge, push,
+  cleanup, recovery, approval, runtime, or host authority was added.
+
+## Phase 8 Exit Review
+
+| Exit criterion | Status | Evidence |
+| --- | --- | --- |
+| Samantha can cite prior decisions when planning new work. | Met. Planning prompts now include selected project-scoped memory snippets, and plan payloads can preserve `recommendationTrace` citations. | M4/M6/M10 outcomes above; [src/lib/orchestrator-agent.ts](../src/lib/orchestrator-agent.ts); [tests/orchestrator-agent.test.ts](../tests/orchestrator-agent.test.ts) |
+| Memory updates are explicit, reviewable, and reversible. | Met. Durable memory writes go through append-only governed revisions with citations, diff summaries, actor/timestamp/risk metadata, approval checks for behavior-changing entries, and restore/supersede history. | M8 outcome above; [src/lib/memory-store.ts](../src/lib/memory-store.ts); [tests/memory-store.test.ts](../tests/memory-store.test.ts) |
+| LLM-generated summaries cannot silently overwrite source-of-truth state. | Met. Memory synthesis output becomes only pending review candidates, and planning consumes selected existing context without granting write authority. | M5/M7 outcomes above; [src/lib/proposal-store.ts](../src/lib/proposal-store.ts); [tests/proposal-store.test.ts](../tests/proposal-store.test.ts); [tests/orchestrator-agent.test.ts](../tests/orchestrator-agent.test.ts) |
+| SOP or skill documents can guide agents but cannot override safety, worktree, dispatch, merge, push, cleanup, recovery, approval, or project gates. | Met. SOP/skill markdown validation rejects unsafe authority claims, and behavior-changing SOP/skill activation requires governed memory approval evidence. | M9 outcome above; [src/lib/sop-skill-contract.ts](../src/lib/sop-skill-contract.ts); [tests/sop-skill-contract.test.ts](../tests/sop-skill-contract.test.ts); [docs/ARCHITECTURE.md](ARCHITECTURE.md#skill-policy) |
+| BK can ask why a recommendation was made and trace it to stored context. | Met. Plan reports render recommendation traces with citation ids, giving a local "why was this recommended?" surface. | M10 outcome above; [src/lib/operator-reports.ts](../src/lib/operator-reports.ts); [tests/operator-reports.test.ts](../tests/operator-reports.test.ts) |
+
+## Dogfood Evidence
+
+| Requirement | Evidence | Result |
+| --- | --- | --- |
+| At least two active project profiles | The M10 planning-context test uses the active profile baseline from [references/project-profiles/samantha.json](../references/project-profiles/samantha.json) and [references/project-profiles/omht.json](../references/project-profiles/omht.json). | Met. Planning memory is filtered by assigned project ancestry. |
+| At least one plan influenced by prior memory | `tests/orchestrator-agent.test.ts` builds a Samantha planning prompt from an active preference memory and parses a plan whose `recommendationTrace` cites the prior decision supporting that preference. | Met. The plan recommendation is explicitly memory-influenced and citation-backed. |
+| No cross-project memory leak | The same test includes an OMHT strategy-context result and verifies it is omitted from the Samantha prompt. | Met. Prompt context stays project-scoped. |
+| Local why trace | `tests/operator-reports.test.ts` verifies plan reports render the recommendation reason and citations. | Met. BK can inspect the reason without raw state-file chasing. |
+| Active governed memory searchable | `tests/context-search.test.ts` verifies active memory records are indexed by `memoryKind`, project ancestry, source id, and citations. | Met. Preferences, risks, SOPs, and skills can be selected only after durable activation. |
+
+## Authority Review
+
+- Writer authority: `DEFAULT_SAFETY_POLICY.writerCap` remains `1`; Phase 8 did
+  not add multi-writer execution or mutate the default safety policy.
+- Planning authority: memory snippets and `recommendationTrace` are advisory
+  context. `/go` still materializes only validated selected tasks from an
+  approved current plan.
+- Memory authority: LLM synthesis, workers, remote commands, and dashboard views
+  cannot directly mutate durable memory. Active governed memory exists only
+  after deterministic write-gate approval.
+- SOP/skill authority: SOP and skill documents are methodology only and cannot
+  override safety policy, project policy, dispatch, worktree, merge, push,
+  cleanup, recovery, approval, connector, secret, routine, or budget gates.
+- Runtime authority: M10 touched planning context, reporting, tests, and docs.
+  It did not add daemon/watch/poll/reply/service-template behavior, host
+  runtime processes, connector access, secret access, routines, budget
+  enforcement, merge, push, cleanup, recovery, or approval authority.
+
+## Verification Run
+
+Required Mac-side verification for M10:
+
+```bash
+bun run verify:docs
+bun run verify:mac
+```
+
+M10 Mac-side run on 2026-05-10:
+
+- `bun test tests/orchestrator-agent.test.ts tests/context-search.test.ts
+  tests/operator-reports.test.ts` passed.
+- `bun typecheck` passed.
+- `bun run verify:docs` passed.
+- `bun run verify:mac` passed, including TypeScript typecheck, portable tests,
+  and docs verification. Portable test result: 368 passed, 0 failed across 54
+  files.
+
+Phase 8 M10 did not change host-owned daemon/watch/poll/reply/service-template
+behavior or runtime state. Ubuntu-host `bun run verify:host` is not required
+for this M10 review; run it later only if a host-owned runtime change is made
+on the active automation host.
+
+## Phase 9 Handoff Notes
+
+- Routine triggers, trigger coalescing, host lifecycle hardening, backup/restore
+  automation, queue backpressure, and budget enforcement remain Phase 9 work.
+- Phase 9 routines may read memory as context only after they pass the same
+  deterministic project, approval, dispatch, and safety gates as ordinary work.
+- Budget stops, quotas, throttles, provider-billing reconciliation, and
+  continuous-cost enforcement should build on existing audit records and must
+  not become hidden LLM judgment.
 
 ## Stage Handoff Prompts
 

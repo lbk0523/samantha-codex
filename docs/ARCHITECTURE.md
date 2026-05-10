@@ -73,8 +73,13 @@ Future expansion should stay governance-first:
 - Phase 7 added an advisory role graph and stronger non-writer parallelism, but
   role relationships do not grant execution authority by themselves and
   `writerCap` remains `1`.
-- Phase 8 may add durable SOP/skill memory, but those documents cannot override
-  safety policy or execution gates.
+- Phase 8 added source-backed memory for planning: project briefs, derived
+  decision-history summaries, active governed memory records, searchable
+  reports/artifacts, bounded memory synthesis candidates, deterministic memory
+  write gates, and SOP/skill document validation. Planning prompts receive only
+  selected compact snippets, and recommendation traces cite stored context
+  when memory influences a plan. Memory and SOP/skill documents remain context
+  only; they cannot override safety policy or execution gates.
 - Phase 9 may add routine coalescing and budget enforcement only after the
   underlying audit and policy hooks exist.
 
@@ -135,6 +140,20 @@ even if a skill document requests them.
 Behavior-changing SOP or skill publication remains a governed memory and/or
 capability/profile change. The markdown document can explain methodology; it
 cannot grant runtime authority.
+
+## Planning Memory Context
+
+The orchestrator planning path may include a small selected memory context when
+a request has assigned project ancestry. Samantha derives that context from
+project-scoped search over CEO reports, derived decision-history summaries,
+active project briefs, active governed memory records, and governance events.
+
+The planning prompt treats these snippets as advisory context only. If a prior
+decision, project brief, preference, known risk, report, or SOP affects the
+recommendation, the plan payload must record a `recommendationTrace` entry with
+the reason and citations. Operator plan reports render that trace as the local
+"why was this recommended?" surface. Stale or conflicting memory can be cited
+only as risk, ambiguity, or a rejected alternative.
 
 ## Connector And Secret Boundaries
 
