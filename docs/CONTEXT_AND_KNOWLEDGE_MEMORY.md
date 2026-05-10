@@ -335,9 +335,30 @@ Verification focus:
 - missing artifacts and malformed records are reported clearly
 - search is read-only and cannot mutate memory, state, profiles, or policies
 
-Outcome placeholder:
+Outcome:
 
-- Fill after M6 implementation and verification.
+- Added a read-only searchable context surface in
+  `src/lib/context-search.ts`.
+- Search indexes already-loaded CEO reports, operator reports, report-only run
+  artifacts, explicit artifact previews, derived decision-history summaries,
+  project briefs, project-brief absence records, and governance events.
+- Results are compact snippets with citation metadata, source kind, source id,
+  optional ancestry, status, and memory kind where applicable.
+- Search supports project id, goal id, work-item id, memory kind, source id,
+  source kind, text, and result limit filters.
+- Report-only run logs are exposed as `artifact_reference` results when they
+  contain agent output, and as explicit missing-artifact results when artifact
+  content is absent.
+- Malformed records are surfaced as searchable `malformed_record` results
+  instead of hidden failures.
+- Search is pure over caller-provided records and does not mutate memory,
+  source-of-truth ledgers, project profiles, policies, connectors, secrets,
+  network, schedulers, routines, or budgets.
+- Added focused tests in `tests/context-search.test.ts`.
+- Verified with `bun test tests/context-search.test.ts`, `bun typecheck`, and
+  `bun test tests/ceo-report-store.test.ts tests/operator-reports.test.ts
+  tests/run-log.test.ts tests/governance-event-store.test.ts
+  tests/project-queues.test.ts tests/context-search.test.ts`.
 
 ## M7: Bounded Memory Synthesis Worker
 
