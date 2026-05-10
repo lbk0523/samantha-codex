@@ -1,10 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { WorkItemAncestry } from "./ancestry";
 import type { WorkerRunLog } from "./run-log";
 
 export interface RunLifecycleRecord {
   schemaVersion: 1;
   runId: string;
+  ancestry?: WorkItemAncestry;
   taskId: string;
   repoRoot: string;
   runLogPath: string;

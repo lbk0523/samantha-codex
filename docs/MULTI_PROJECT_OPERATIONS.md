@@ -168,6 +168,31 @@ Verification focus:
 - cross-project materialization is blocked unless it has an explicit approved
   contract
 
+Outcome:
+
+- Added the M3 ancestry contract in `src/lib/ancestry.ts`, including minimal
+  goal records with stable id, project id, title, status, created timestamp,
+  optional priority, and optional parent context.
+- Defined a common optional `ancestry` field contract for requests, plans,
+  decisions, tasks, actions, runs, lifecycle records, recovery requests,
+  reports, governance events, and budget observations.
+- Kept old records compatible by normalizing missing ancestry to explicit
+  `legacy` records and allowing explicit `unassigned` records when BK has not
+  selected project or goal context. M3 does not infer project or goal from
+  prose, paths, latest active work, or profile defaults.
+- Added validation helpers that reject unknown goals, project/goal mismatches,
+  unstable path-like ids, duplicate ancestry records, and materialized
+  execution plans whose task/action/run/lifecycle ancestry differs from the
+  plan's project, goal, or work item.
+- Preserved governance event and budget observation ancestry through their
+  existing create/parse helpers without changing planner prompts,
+  materializer runtime behavior, store migration behavior, cross-project
+  execution support, or `writerCap`.
+- Added focused M3 tests in `tests/ancestry.test.ts` for goal validation,
+  legacy/unassigned handling, deterministic mismatch rejection, same-project
+  materialized execution ancestry, full request-to-run traceability, and
+  governance/budget ancestry preservation.
+
 ## M4: Ancestry Propagation Through Planning And Materialization
 
 Goal: carry project, goal, and work-item ancestry through the existing

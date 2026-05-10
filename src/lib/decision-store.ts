@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { WorkItemAncestry } from "./ancestry";
 import { compactEntityId } from "./ids";
 import { planPayloadBlockerViolations } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord, OrchestratorQuestionDraftPayload } from "./orchestrator-store";
@@ -33,6 +34,7 @@ export interface DecisionSubject {
 export interface DecisionItem {
   schemaVersion: 1;
   id: string;
+  ancestry?: WorkItemAncestry;
   status: DecisionStatus;
   kind: DecisionKind;
   title: string;

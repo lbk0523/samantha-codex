@@ -1,5 +1,6 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { parseOptionalWorkItemAncestry, type WorkItemAncestry } from "./ancestry";
 import type { AgentProfile, TaskSpec } from "./contracts";
 import { compactEntityId } from "./ids";
 import type { RunSummary } from "./ledger";
@@ -56,6 +57,7 @@ export type CostBudgetData = MeasuredCostData | EstimatedCostData | UnknownCostD
 export interface CostBudgetAuditRecord {
   schemaVersion: 1;
   id: string;
+  ancestry?: WorkItemAncestry;
   observedAt: string;
   actor: string;
   subject: CostBudgetSubject;
@@ -66,6 +68,7 @@ export interface CostBudgetAuditRecord {
 
 export interface CreateCostBudgetAuditRecordInput {
   observedAt: string;
+  ancestry?: WorkItemAncestry;
   actor: string;
   subject: CostBudgetSubject;
   cost?: CostBudgetData;
@@ -269,6 +272,7 @@ export function commandContextForBudgetAudit(
 
 export function createCostBudgetAuditRecord(input: CreateCostBudgetAuditRecordInput): CostBudgetAuditRecord {
   const observedAt = requireTimestamp(input.observedAt);
+  const ancestry = parseOptionalWorkItemAncestry(input.ancestry);
   const actor = requireString(input.actor, "actor");
   const subject = normalizeSubject(input.subject);
   const cost = normalizeCost(input.cost);
@@ -287,6 +291,7 @@ export function createCostBudgetAuditRecord(input: CreateCostBudgetAuditRecordIn
   return {
     schemaVersion: 1,
     id,
+    ancestry,
     observedAt,
     actor,
     subject,
@@ -341,6 +346,7 @@ export function parseCostBudgetAuditRecord(value: unknown): CostBudgetAuditRecor
   }
   return createCostBudgetAuditRecord({
     id: requireString(record.id, "id"),
+    ancestry: parseOptionalWorkItemAncestry(record.ancestry),
     observedAt: requireTimestamp(record.observedAt),
     actor: requireString(record.actor, "actor"),
     subject: normalizeSubject(record.subject),

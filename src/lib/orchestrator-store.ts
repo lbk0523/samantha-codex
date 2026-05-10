@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { WorkItemAncestry } from "./ancestry";
 import type { CommandRunResult } from "./worker-dispatch";
 import { compactEntityId } from "./ids";
 import type { RemoteRequestClassification } from "./project-profile";
@@ -10,6 +11,7 @@ export type OrchestratorPlanStatus = "planned" | "questions" | "failed" | "appro
 export interface OrchestrationRequestRecord {
   schemaVersion: 1;
   id: string;
+  ancestry?: WorkItemAncestry;
   source: "remote" | "local";
   senderId?: string;
   text: string;
@@ -77,6 +79,7 @@ export interface OrchestratorQuestionDraftPayload {
 export interface OrchestratorPlanRecord {
   schemaVersion: 1;
   id: string;
+  ancestry?: WorkItemAncestry;
   requestId: string;
   status: OrchestratorPlanStatus;
   createdAt: string;

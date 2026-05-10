@@ -1,11 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { WorkItemAncestry } from "./ancestry";
 import type { CeoOverall, CeoNextActionKind } from "./ceo-status";
 import { compactEntityId } from "./ids";
 
 export interface CeoReportRecord {
   schemaVersion: 1;
   id: string;
+  ancestry?: WorkItemAncestry;
   kind: "ceo_notify";
   generatedAt: string;
   outboxFile: string;

@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { WorkItemAncestry } from "./ancestry";
 import type { TaskSpec } from "./contracts";
 import { compactEntityId } from "./ids";
 
@@ -19,6 +20,7 @@ export interface RemoteActionResult {
 export interface RemoteActionRecord {
   schemaVersion: 1;
   id: string;
+  ancestry?: WorkItemAncestry;
   kind: RemoteActionKind;
   status: RemoteActionStatus;
   createdAt: string;

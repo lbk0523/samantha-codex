@@ -1,5 +1,6 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { parseOptionalWorkItemAncestry, type WorkItemAncestry } from "./ancestry";
 import { compactEntityId } from "./ids";
 import {
   DERIVED_VIEW_KINDS,
@@ -35,6 +36,7 @@ export interface GovernanceRelatedRefs {
 export interface GovernanceEventRecord {
   schemaVersion: 1;
   id: string;
+  ancestry?: WorkItemAncestry;
   timestamp: string;
   actor: string;
   source: GovernanceEventSource;
@@ -47,6 +49,7 @@ export interface GovernanceEventRecord {
 
 export interface CreateGovernanceEventInput {
   timestamp: string;
+  ancestry?: WorkItemAncestry;
   actor: string;
   source: GovernanceEventSource;
   subject: GovernanceEventSubject;
@@ -188,6 +191,7 @@ export function buildGovernanceEventId(input: Omit<CreateGovernanceEventInput, "
 
 export function createGovernanceEvent(input: CreateGovernanceEventInput): GovernanceEventRecord {
   const timestamp = requireTimestamp(input.timestamp);
+  const ancestry = parseOptionalWorkItemAncestry(input.ancestry);
   const actor = requireString(input.actor, "actor");
   const source = normalizeSource(input.source);
   const subject = normalizeSubject(input.subject);
@@ -210,6 +214,7 @@ export function createGovernanceEvent(input: CreateGovernanceEventInput): Govern
   return {
     schemaVersion: 1,
     id,
+    ancestry,
     timestamp,
     actor,
     source,
@@ -228,6 +233,7 @@ export function parseGovernanceEventRecord(value: unknown): GovernanceEventRecor
   }
   return createGovernanceEvent({
     id: requireString(record.id, "id"),
+    ancestry: parseOptionalWorkItemAncestry(record.ancestry),
     timestamp: requireTimestamp(record.timestamp),
     actor: requireString(record.actor, "actor"),
     source: normalizeSource(record.source),

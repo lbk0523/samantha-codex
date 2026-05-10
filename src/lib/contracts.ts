@@ -1,3 +1,5 @@
+import type { WorkItemAncestry } from "./ancestry";
+
 export type AgentRole = "writer" | "reviewer" | "evaluator" | "spec" | "researcher" | "content" | "operations";
 export type WriterClass = "writer" | "non-writer";
 export type WorktreePolicy = "per-task" | "none";
@@ -42,6 +44,7 @@ export interface AgentProfile {
 
 export interface TaskSpec {
   id: string;
+  ancestry?: WorkItemAncestry;
   title: string;
   targetAgent: string;
   projectId?: string;

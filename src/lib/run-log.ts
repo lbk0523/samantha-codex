@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { WorkItemAncestry } from "./ancestry";
 import type { AgentProfile, TaskSpec } from "./contracts";
 import type { WorkerDispatchExecution } from "./worker-dispatch";
 import { sanitizeTaskId } from "./worktree";
@@ -24,6 +25,7 @@ export interface WorkerRunLogWrite {
 export interface WorkerRunLog {
   schemaVersion: 1;
   runId: string;
+  ancestry?: WorkItemAncestry;
   startedAt: string;
   finishedAt: string;
   task: TaskSpec;

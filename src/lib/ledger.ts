@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { WorkItemAncestry } from "./ancestry";
 import type { WorkerRunLogInput } from "./run-log";
 
 export type RunOutcome =
@@ -17,6 +18,7 @@ export type RunOutcome =
 export interface RunSummary {
   schemaVersion: 1;
   runId: string;
+  ancestry?: WorkItemAncestry;
   taskId: string;
   taskTitle: string;
   agentId: string;
