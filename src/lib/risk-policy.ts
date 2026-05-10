@@ -197,6 +197,15 @@ const RISK_BY_SUBJECT_TRANSITION = {
     record_budget: "informational",
     block: "low",
   },
+  memory: {
+    propose: "medium",
+    approve: "high",
+    reject: "low",
+    activate: "high",
+    deactivate: "high",
+    archive: "medium",
+    block: "low",
+  },
 } as const satisfies {
   [Subject in GovernedSubjectType]: {
     [Transition in (typeof GOVERNANCE_ALLOWED_TRANSITIONS)[Subject][number]]: GovernanceRiskClass;

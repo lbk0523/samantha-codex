@@ -66,7 +66,9 @@ describe("governance taxonomy", () => {
   });
 
   test("unknown taxonomy values throw instead of defaulting to safe", () => {
-    expect(() => parseGovernedSubjectType("memory")).toThrow("unknown governed subject type: memory");
+    expect(() => parseGovernedSubjectType("memory_auto_update")).toThrow(
+      "unknown governed subject type: memory_auto_update",
+    );
     expect(() => parseGovernanceEventKind("event_store_append")).toThrow(
       "unknown governance event kind: event_store_append",
     );
@@ -78,14 +80,14 @@ describe("governance taxonomy", () => {
 
   test("unknown subject transition and risk fail closed", () => {
     const result = validateGovernanceTransition({
-      subjectType: "memory",
+      subjectType: "memory_auto_update",
       transitionKind: "automerge",
       riskClass: "safe",
     });
 
     expect(result.allowed).toBe(false);
     expect(result.violations).toEqual([
-      "unknown governed subject type: memory",
+      "unknown governed subject type: memory_auto_update",
       "unknown governance transition kind: automerge",
       "unknown governance risk class: safe",
     ]);

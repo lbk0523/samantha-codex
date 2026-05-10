@@ -1,0 +1,36 @@
+{
+  "memoryEntryKinds": [
+    "project_brief",
+    "decision_summary",
+    "preference",
+    "strategy_context",
+    "known_risk",
+    "artifact_reference",
+    "sop_document",
+    "skill_document"
+  ],
+  "memoryClaimKinds": [
+    "observed_fact",
+    "bk_decision",
+    "llm_summary",
+    "operator_note"
+  ],
+  "memorySourceKinds": [
+    "decision",
+    "governance_event",
+    "orchestrator_plan",
+    "task",
+    "remote_action",
+    "run_lifecycle",
+    "run_log",
+    "recovery_context",
+    "project_profile",
+    "agent_profile",
+    "safety_policy",
+    "budget_observation",
+    "ceo_status",
+    "operator_report",
+    "dashboard_view",
+    "telegram_summary"
+  ]
+}

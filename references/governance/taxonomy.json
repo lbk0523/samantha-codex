@@ -15,7 +15,8 @@
     "connector",
     "routine",
     "policy",
-    "budget"
+    "budget",
+    "memory"
   ],
   "governanceEventKinds": [
     "record_created",
@@ -90,6 +91,7 @@
     "connector": ["propose", "approve", "reject", "activate", "deactivate", "block"],
     "routine": ["propose", "approve", "reject", "activate", "deactivate", "block"],
     "policy": ["propose", "approve", "reject", "activate", "deactivate", "block"],
-    "budget": ["observe", "propose", "approve", "reject", "record_budget", "block"]
+    "budget": ["observe", "propose", "approve", "reject", "record_budget", "block"],
+    "memory": ["propose", "approve", "reject", "activate", "deactivate", "archive", "block"]
   }
 }

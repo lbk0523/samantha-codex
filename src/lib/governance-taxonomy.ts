@@ -15,6 +15,7 @@ export const GOVERNED_SUBJECT_TYPES = [
   "routine",
   "policy",
   "budget",
+  "memory",
 ] as const;
 
 export type GovernedSubjectType = (typeof GOVERNED_SUBJECT_TYPES)[number];
@@ -116,6 +117,7 @@ export const GOVERNANCE_ALLOWED_TRANSITIONS = {
   routine: ["propose", "approve", "reject", "activate", "deactivate", "block"],
   policy: ["propose", "approve", "reject", "activate", "deactivate", "block"],
   budget: ["observe", "propose", "approve", "reject", "record_budget", "block"],
+  memory: ["propose", "approve", "reject", "activate", "deactivate", "archive", "block"],
 } as const satisfies Record<GovernedSubjectType, readonly GovernanceTransitionKind[]>;
 
 export interface GovernanceTransitionInput {

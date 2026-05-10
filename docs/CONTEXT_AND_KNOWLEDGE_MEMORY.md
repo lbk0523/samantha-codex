@@ -106,7 +106,7 @@ Verification focus:
   placeholders
 - `bun run verify:docs` passes
 
-Outcome placeholder:
+Outcome:
 
 - Added this Phase 8 execution document.
 - Linked Phase 8 from the roadmap phase document list and Phase 8 section.
@@ -142,9 +142,30 @@ Verification focus:
 - source references preserve project/goal/work-item ancestry where available
 - `writerCap` remains `1`
 
-Outcome placeholder:
+Outcome:
 
-- Fill after M2 implementation and verification.
+- Added a governed `memory` subject to the governance taxonomy with explicit
+  propose, approve, reject, activate, deactivate, archive, and block
+  transitions.
+- Added the minimal Phase 8 durable memory taxonomy in
+  `src/lib/memory-taxonomy.ts`: project briefs, decision summaries,
+  preferences, strategy context, known risks, artifact references, SOP
+  documents, and skill documents.
+- Memory entries now distinguish observed facts, BK decisions, LLM summaries,
+  and operator notes, and every durable memory entry requires at least one
+  source citation.
+- Source citations use stable source kinds, stable record ids, and optional
+  project/goal/work-item ancestry; path-like ids fail closed where stable ids
+  are required.
+- Added `references/memory/taxonomy.json` and focused tests covering fixture
+  sync, every memory kind, every source kind, unknown kind/source/transition
+  failure, missing citations, ancestry preservation, and `writerCap` staying
+  `1`.
+- Left runtime behavior and orchestrator prompts unchanged.
+- Verified with `bun test tests/governance-taxonomy.test.ts
+  tests/risk-policy.test.ts tests/governance-event-store.test.ts
+  tests/ancestry.test.ts tests/memory-taxonomy.test.ts`, `bun typecheck`,
+  `bun run test:portable`, and `bun run verify:docs`.
 
 ## M3: Durable Project Briefs
 
