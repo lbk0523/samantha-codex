@@ -1,6 +1,12 @@
 import type { AgentProfile } from "./contracts";
 import { classifyRemoteRequest, type ProjectProfile, type RemoteRequestClassification } from "./project-profile";
 import { projectEffectiveForbiddenChanges } from "./project-safety-policy";
+import {
+  parseMemoryEntryKind,
+  validateMemorySourceCitation,
+  type MemoryEntryKind,
+  type MemorySourceCitation,
+} from "./memory-taxonomy";
 import type {
   OrchestrationRequestRecord,
   OrchestratorPlanPayload,
@@ -14,6 +20,13 @@ import type { RemoteActionRecord } from "./remote-action-store";
 import { advisoryRoleTopologyPromptLines } from "./role-topology";
 import type { WorkerRunLog } from "./run-log";
 import { runCommand, type CommandRunResult } from "./worker-dispatch";
+import {
+  buildLearningCandidateId,
+  parseLearningCandidateRecord,
+  type LearningCandidateBehaviorImpact,
+  type LearningCandidateRecord,
+  type LearningCandidateScope,
+} from "./proposal-store";
 
 export interface OrchestratorPlanRunResult {
   status: OrchestratorPlanStatus;
@@ -35,6 +48,42 @@ export interface OrchestratorQuestionDraftRunResult {
   command: CommandRunResult;
   rawOutput: string;
   payload?: OrchestratorQuestionDraftPayload;
+  failure?: string;
+}
+
+export type MemorySynthesisEvidenceStatus = "ok" | "stale" | "conflict" | "missing" | "malformed";
+
+export interface MemorySynthesisEvidence {
+  citation: MemorySourceCitation;
+  snippet: string;
+  status?: MemorySynthesisEvidenceStatus;
+  staleReason?: string;
+}
+
+export interface OrchestratorMemorySynthesisProposal {
+  proposedMemoryKind: MemoryEntryKind;
+  scope: LearningCandidateScope;
+  summary: string;
+  proposedContent: string;
+  citations: MemorySourceCitation[];
+  confidence: number;
+  staleSourceNotes: string[];
+  behaviorImpact: LearningCandidateBehaviorImpact;
+  behaviorImpactReviewRequired: boolean;
+}
+
+export interface OrchestratorMemorySynthesisPayload {
+  summary: string;
+  proposals: OrchestratorMemorySynthesisProposal[];
+  rejectedEvidence: string[];
+  userMessage: string;
+}
+
+export interface OrchestratorMemorySynthesisRunResult {
+  command: CommandRunResult;
+  rawOutput: string;
+  payload?: OrchestratorMemorySynthesisPayload;
+  candidates?: LearningCandidateRecord[];
   failure?: string;
 }
 
@@ -338,6 +387,111 @@ export async function runOrchestratorQuestionDraft(input: {
   }
 }
 
+export function buildOrchestratorMemorySynthesisPrompt(input: {
+  evidence: MemorySynthesisEvidence[];
+  projectId?: string;
+  goalId?: string;
+  workItemId?: string;
+}): string {
+  const evidenceLines = input.evidence.flatMap((item, index) => {
+    const ancestry = item.citation.ancestry?.mode === "assigned"
+      ? ` project=${item.citation.ancestry.projectId} goal=${item.citation.ancestry.goalId} workItem=${item.citation.ancestry.workItemId}`
+      : ` ancestry=${item.citation.ancestry?.mode ?? "none"}`;
+    return [
+      `- source[${index}]: kind=${item.citation.kind} id=${item.citation.id} status=${item.status ?? "ok"}${ancestry}`,
+      item.staleReason ? `  staleReason=${item.staleReason}` : "",
+      `  snippet=${oneLine(item.snippet) || "(empty)"}`,
+    ].filter(Boolean);
+  });
+
+  return [
+    "You are the Samantha Orchestrator Agent in bounded memory-synthesis mode.",
+    "Your job is to propose concise memory review candidates from Samantha-provided source evidence only.",
+    "Do not edit files. Do not write memory. Do not overwrite project briefs, SOPs, skills, profiles, policies, tasks, actions, runs, or reports.",
+    "Do not dispatch workers. Do not run merge, push, cleanup, recovery, connector, secret, routine, budget, or policy commands.",
+    "Do not claim any execution authority. Do not claim that memory was accepted, activated, approved, written, or promoted.",
+    "The deterministic CEO office may validate your payload and store valid proposals only as pending_review candidates.",
+    "A later deterministic memory write gate and explicit review must approve any durable memory update.",
+    "Cite only the exact source kind/id pairs listed below. Do not invent sources, ids, citations, files, decisions, runs, or reports.",
+    "If evidence is stale or conflicting, include a staleSourceNotes entry and keep confidence conservative.",
+    "If a proposal changes future agent behavior, SOPs, skills, preferences, policy interpretation, or operating defaults, set behaviorImpact to `behavior_change` and behaviorImpactReviewRequired to true.",
+    "Never propose loosening safety policy, writer caps, worktree allocation, dispatch, merge, push, cleanup, recovery, approval, project, connector, secret, routine, or budget gates.",
+    "",
+    "Requested synthesis scope:",
+    input.projectId ? `- projectId: ${input.projectId}` : "- projectId: none",
+    input.goalId ? `- goalId: ${input.goalId}` : "- goalId: none",
+    input.workItemId ? `- workItemId: ${input.workItemId}` : "- workItemId: none",
+    "",
+    "Samantha-provided source evidence:",
+    ...(evidenceLines.length ? evidenceLines : ["- none"]),
+    "",
+    "Return a concise Korean explanation, then include exactly one machine-readable payload.",
+    "The payload must start with `ORCHESTRATOR_MEMORY_SYNTHESIS:` followed by a strict JSON object.",
+    "Keep `proposals` empty if the evidence is insufficient.",
+    "",
+    "Payload shape:",
+    JSON.stringify(
+      {
+        summary: "short Korean summary",
+        proposals: [
+          {
+            proposedMemoryKind: "preference|strategy_context|known_risk|project_brief|decision_summary|artifact_reference|sop_document|skill_document",
+            scope: { type: "project", projectId: "project id" },
+            summary: "one-line candidate summary",
+            proposedContent: "candidate text for human review",
+            citations: [{ kind: "operator_report", id: "stable-source-id" }],
+            confidence: 0.7,
+            staleSourceNotes: [],
+            behaviorImpact: "none|behavior_change",
+            behaviorImpactReviewRequired: false,
+          },
+        ],
+        rejectedEvidence: ["why evidence was not enough"],
+        userMessage: "Korean message to show BK",
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+}
+
+export async function runOrchestratorMemorySynthesis(input: {
+  evidence: MemorySynthesisEvidence[];
+  agent: AgentProfile;
+  repoRoot: string;
+  createdAt: string;
+  projectId?: string;
+  goalId?: string;
+  workItemId?: string;
+  synthesisRunId?: string;
+  codexBin?: string;
+}): Promise<OrchestratorMemorySynthesisRunResult> {
+  const prompt = buildOrchestratorMemorySynthesisPrompt(input);
+  const command = await runCommand(buildCodexOrchestratorCommand({
+    agent: input.agent,
+    repoRoot: input.repoRoot,
+    prompt,
+    codexBin: input.codexBin,
+  }));
+  const rawOutput = [command.stdout, command.stderr].filter(Boolean).join("\n");
+
+  if (command.exitCode !== 0) {
+    return { command, rawOutput, failure: `orchestrator memory synthesis command failed with exit ${command.exitCode}` };
+  }
+
+  try {
+    const payload = parseOrchestratorMemorySynthesisPayload(rawOutput, { evidence: input.evidence });
+    const candidates = memorySynthesisPayloadToLearningCandidates(payload, {
+      agent: input.agent,
+      createdAt: input.createdAt,
+      synthesisRunId: input.synthesisRunId,
+    });
+    return { command, rawOutput, payload, candidates };
+  } catch (err) {
+    return { command, rawOutput, failure: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export function parseOrchestratorPlanPayload(output: string): OrchestratorPlanPayload {
   const messages = extractAgentMessages(output);
   const candidates = [...messages.slice().reverse(), output];
@@ -387,6 +541,57 @@ export function parseOrchestratorQuestionDraftPayload(output: string): Orchestra
   }
   if (parseError) throw parseError;
   throw new Error("ORCHESTRATOR_QUESTION_DRAFT payload not found");
+}
+
+export function parseOrchestratorMemorySynthesisPayload(
+  output: string,
+  options: { evidence: MemorySynthesisEvidence[] },
+): OrchestratorMemorySynthesisPayload {
+  const messages = extractAgentMessages(output);
+  const candidates = [...messages.slice().reverse(), output];
+  let parseError: unknown;
+  for (const candidate of candidates) {
+    const json = extractMarkedJson(candidate, "ORCHESTRATOR_MEMORY_SYNTHESIS:");
+    if (!json) continue;
+    try {
+      return validateMemorySynthesisPayload(JSON.parse(json), options);
+    } catch (err) {
+      parseError = err;
+    }
+  }
+  if (parseError) throw parseError;
+  throw new Error("ORCHESTRATOR_MEMORY_SYNTHESIS payload not found");
+}
+
+export function memorySynthesisPayloadToLearningCandidates(
+  payload: OrchestratorMemorySynthesisPayload,
+  input: { agent: AgentProfile; createdAt: string; synthesisRunId?: string },
+): LearningCandidateRecord[] {
+  return payload.proposals.map((proposal, index) => parseLearningCandidateRecord({
+    schemaVersion: 1,
+    id: buildLearningCandidateId({
+      createdAt: input.createdAt,
+      kind: "memory_synthesis",
+      summary: proposal.summary,
+      disambiguator: index + 1,
+    }),
+    kind: "memory_synthesis",
+    proposedMemoryKind: proposal.proposedMemoryKind,
+    claimKind: "llm_summary",
+    scope: proposal.scope,
+    summary: proposal.summary,
+    proposedContent: proposal.proposedContent,
+    evidence: proposal.citations,
+    confidence: proposal.confidence,
+    attribution: { kind: "llm", agentId: input.agent.id, model: input.agent.model },
+    status: "pending_review",
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    ...(proposal.staleSourceNotes.length ? { staleSourceNotes: proposal.staleSourceNotes } : {}),
+    behaviorImpact: proposal.behaviorImpact,
+    behaviorImpactReviewRequired: proposal.behaviorImpactReviewRequired,
+    ...(input.synthesisRunId ? { synthesisRunId: input.synthesisRunId } : {}),
+  }));
 }
 
 function projectProfileLines(profiles: ProjectProfile[]): string[] {
@@ -601,6 +806,248 @@ function validateQuestionDraftPayload(raw: unknown): OrchestratorQuestionDraftPa
     risk: conciseString(value.risk, "risk", 240),
     userMessage: conciseString(value.userMessage, "userMessage", 240),
   };
+}
+
+const memorySynthesisForbiddenMutationFields = new Set([
+  "memory",
+  "memoryWrite",
+  "memoryPatch",
+  "memoryMutation",
+  "durableMemoryEntry",
+  "projectBriefWrite",
+  "projectBriefPatch",
+  "sopWrite",
+  "sopPatch",
+  "skillWrite",
+  "skillPatch",
+  "profileWrite",
+  "profilePatch",
+  "policyWrite",
+  "policyPatch",
+  "connectorGrant",
+  "secretGrant",
+  "taskWrite",
+  "taskPatch",
+  "actionWrite",
+  "actionPatch",
+  "runWrite",
+  "runPatch",
+  "dispatch",
+  "merge",
+  "push",
+  "cleanup",
+]);
+
+const behaviorChangingPatterns = [
+  /\b(?:must|should|always|never|require|prefer)\b.*\b(?:agent|worker|sop|skill|profile|policy|dispatch|merge|push|cleanup|approval|default|gate)\b/i,
+  /\b(?:agent|worker|sop|skill|profile|policy|dispatch|merge|push|cleanup|approval|default|gate)\b.*\b(?:must|should|always|never|require|prefer)\b/i,
+  /(앞으로|항상|절대|기본값|정책|프로필|승인|게이트|디스패치|머지|푸시|클린업|SOP|스킬)/i,
+];
+
+const blockedExecutionAuthorityPatterns = [
+  /\b(?:override|bypass|loosen|disable|skip)\b.*\b(?:safety|policy|approval|gate|writerCap|writer cap)\b/i,
+  /\b(?:dispatch|merge|push|cleanup|recover|approve|activate|write memory|overwrite)\b.*\b(?:without|directly|automatically|no approval)\b/i,
+  /(승인 없이|게이트 없이|직접 (?:디스패치|머지|푸시|클린업|복구|승인|활성화|메모리 쓰기)|안전 정책.*(?:우회|완화|무시))/i,
+];
+
+function validateMemorySynthesisPayload(
+  raw: unknown,
+  options: { evidence: MemorySynthesisEvidence[] },
+): OrchestratorMemorySynthesisPayload {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("ORCHESTRATOR_MEMORY_SYNTHESIS must be an object");
+  }
+  const value = raw as Record<string, unknown>;
+  const directMutation = forbiddenMemorySynthesisFields(value);
+  if (directMutation.length > 0) throw new Error(directMutation[0]);
+  const proposals = memorySynthesisProposalArray(value.proposals, "proposals", options);
+  return {
+    summary: requiredString(value.summary, "summary"),
+    proposals,
+    rejectedEvidence: stringArray(value.rejectedEvidence, "rejectedEvidence"),
+    userMessage: requiredString(value.userMessage, "userMessage"),
+  };
+}
+
+function memorySynthesisProposalArray(
+  value: unknown,
+  field: string,
+  options: { evidence: MemorySynthesisEvidence[] },
+): OrchestratorMemorySynthesisProposal[] {
+  if (!Array.isArray(value)) throw new Error(`${field} must be an array`);
+  return value.map((item, index) => {
+    const label = `${field}[${index}]`;
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`${label} must be an object`);
+    }
+    const proposal = item as Record<string, unknown>;
+    const directMutation = forbiddenMemorySynthesisFields(proposal, label);
+    if (directMutation.length > 0) throw new Error(directMutation[0]);
+    const proposedMemoryKind = parseMemoryEntryKind(proposal.proposedMemoryKind);
+    const citations = memorySynthesisCitations(proposal.citations, `${label}.citations`, options);
+    const staleSourceNotes = stringArray(proposal.staleSourceNotes, `${label}.staleSourceNotes`).map(oneLine);
+    const behaviorImpact = memorySynthesisBehaviorImpact(proposal.behaviorImpact, `${label}.behaviorImpact`);
+    const behaviorImpactReviewRequired = proposal.behaviorImpactReviewRequired;
+    if (typeof behaviorImpactReviewRequired !== "boolean") {
+      throw new Error(`${label}.behaviorImpactReviewRequired must be a boolean`);
+    }
+    const confidence = memorySynthesisConfidence(proposal.confidence, `${label}.confidence`);
+    const summary = requiredString(proposal.summary, `${label}.summary`);
+    const proposedContent = requiredString(proposal.proposedContent, `${label}.proposedContent`);
+    const scope = memorySynthesisScope(proposal.scope, `${label}.scope`);
+    validateMemorySynthesisBehavior({
+      label,
+      proposedMemoryKind,
+      summary,
+      proposedContent,
+      citations,
+      staleSourceNotes,
+      behaviorImpact,
+      behaviorImpactReviewRequired,
+      evidence: options.evidence,
+    });
+
+    return {
+      proposedMemoryKind,
+      scope,
+      summary: oneLine(summary),
+      proposedContent: oneLine(proposedContent),
+      citations,
+      confidence,
+      staleSourceNotes,
+      behaviorImpact,
+      behaviorImpactReviewRequired,
+    };
+  });
+}
+
+function memorySynthesisCitations(
+  value: unknown,
+  label: string,
+  options: { evidence: MemorySynthesisEvidence[] },
+): MemorySourceCitation[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${label} must include at least one source citation`);
+  }
+  return value.map((citation, index) => {
+    const citationLabel = `${label}[${index}]`;
+    const violations = validateMemorySourceCitation(citation as MemorySourceCitation, citationLabel);
+    if (violations.length > 0) throw new Error(violations[0]);
+    const normalized = citation as MemorySourceCitation;
+    if (!evidenceContainsCitation(options.evidence, normalized)) {
+      throw new Error(`${citationLabel} was not provided by Samantha evidence: ${normalized.kind}:${normalized.id}`);
+    }
+    const source = options.evidence.find((item) => item.citation.kind === normalized.kind && item.citation.id === normalized.id);
+    if (source?.status === "missing" || source?.status === "malformed") {
+      throw new Error(`${citationLabel} cannot cite ${source.status} evidence: ${normalized.kind}:${normalized.id}`);
+    }
+    if (
+      normalized.ancestry &&
+      source?.citation.ancestry &&
+      JSON.stringify(normalized.ancestry) !== JSON.stringify(source.citation.ancestry)
+    ) {
+      throw new Error(`${citationLabel}.ancestry must match Samantha-provided evidence`);
+    }
+    return {
+      kind: normalized.kind,
+      id: normalized.id,
+      ancestry: normalized.ancestry,
+    };
+  });
+}
+
+function memorySynthesisScope(value: unknown, label: string): LearningCandidateScope {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const scope = value as Record<string, unknown>;
+  if (scope.type === "project") {
+    return { type: "project", projectId: requiredStableId(scope.projectId, `${label}.projectId`) };
+  }
+  if (scope.type === "cross_project") {
+    if (!Array.isArray(scope.projectIds) || scope.projectIds.length === 0) {
+      throw new Error(`${label}.projectIds must include at least one project id`);
+    }
+    const projectIds = scope.projectIds.map((projectId, index) => requiredStableId(projectId, `${label}.projectIds[${index}]`));
+    if (new Set(projectIds).size !== projectIds.length) throw new Error(`${label}.projectIds must be unique`);
+    return { type: "cross_project", projectIds: projectIds.slice().sort() };
+  }
+  throw new Error(`${label}.type is invalid: ${String(scope.type ?? "(empty)")}`);
+}
+
+function memorySynthesisBehaviorImpact(value: unknown, label: string): LearningCandidateBehaviorImpact {
+  if (value === "none" || value === "behavior_change") return value;
+  throw new Error(`${label} must be none or behavior_change`);
+}
+
+function memorySynthesisConfidence(value: unknown, label: string): number {
+  if (typeof value !== "number" || value <= 0 || value > 1) {
+    throw new Error(`${label} must be greater than 0 and less than or equal to 1`);
+  }
+  return value;
+}
+
+function validateMemorySynthesisBehavior(input: {
+  label: string;
+  proposedMemoryKind: MemoryEntryKind;
+  summary: string;
+  proposedContent: string;
+  citations: MemorySourceCitation[];
+  staleSourceNotes: string[];
+  behaviorImpact: LearningCandidateBehaviorImpact;
+  behaviorImpactReviewRequired: boolean;
+  evidence: MemorySynthesisEvidence[];
+}): void {
+  const text = `${input.summary}\n${input.proposedContent}`;
+  if (blockedExecutionAuthorityPatterns.some((pattern) => pattern.test(text))) {
+    throw new Error(`${input.label} claims execution authority that memory synthesis cannot grant`);
+  }
+  const behaviorChanging =
+    input.proposedMemoryKind === "sop_document" ||
+    input.proposedMemoryKind === "skill_document" ||
+    behaviorChangingPatterns.some((pattern) => pattern.test(text));
+  if (behaviorChanging && (input.behaviorImpact !== "behavior_change" || input.behaviorImpactReviewRequired !== true)) {
+    throw new Error(`${input.label} behavior-changing claims require behaviorImpact=behavior_change and behaviorImpactReviewRequired=true`);
+  }
+  if (input.behaviorImpact === "behavior_change" && input.behaviorImpactReviewRequired !== true) {
+    throw new Error(`${input.label} behavior-changing claims require behaviorImpact=behavior_change and behaviorImpactReviewRequired=true`);
+  }
+  const staleCitations = input.citations.filter((citation) =>
+    input.evidence.some((item) =>
+      item.citation.kind === citation.kind &&
+      item.citation.id === citation.id &&
+      (item.status === "stale" || item.status === "conflict")
+    )
+  );
+  if (staleCitations.length > 0 && input.staleSourceNotes.length === 0) {
+    throw new Error(`${input.label}.staleSourceNotes must explain stale or conflicting source evidence`);
+  }
+}
+
+function evidenceContainsCitation(evidence: MemorySynthesisEvidence[], citation: MemorySourceCitation): boolean {
+  return evidence.some((item) => item.citation.kind === citation.kind && item.citation.id === citation.id);
+}
+
+function forbiddenMemorySynthesisFields(value: unknown, label = "memory synthesis payload"): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => forbiddenMemorySynthesisFields(item, `${label}[${index}]`));
+  }
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, nested]) => {
+    const current = `${label}.${key}`;
+    const violations = memorySynthesisForbiddenMutationFields.has(key)
+      ? [`${current} is not allowed; memory synthesis can only produce review candidates`]
+      : [];
+    return [...violations, ...forbiddenMemorySynthesisFields(nested, current)];
+  });
+}
+
+function requiredStableId(value: unknown, field: string): string {
+  const text = requiredString(value, field);
+  const normalized = oneLine(text);
+  if (normalized !== text) throw new Error(`${field} must be normalized`);
+  if (/[\\/]/.test(normalized)) throw new Error(`${field} must be a stable id, not a path`);
+  return normalized;
 }
 
 function validatePlanPayloadConsistency(payload: OrchestratorPlanPayload): void {

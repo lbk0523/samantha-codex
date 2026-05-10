@@ -385,9 +385,34 @@ Verification focus:
 - synthesis prompt contains explicit non-authority language
 - synthesis cannot overwrite a project brief, SOP, skill, profile, or policy
 
-Outcome placeholder:
+Outcome:
 
-- Fill after M7 implementation and verification.
+- Added a bounded memory-synthesis orchestrator worker mode in
+  `src/lib/orchestrator-agent.ts`.
+- The memory-synthesis prompt lists Samantha-provided source evidence, forbids
+  invented sources, forbids direct memory writes or overwrites, and grants no
+  dispatch, merge, push, cleanup, recovery, profile, connector, secret,
+  routine, budget, approval, or policy authority.
+- Added strict `ORCHESTRATOR_MEMORY_SYNTHESIS` payload validation for malformed
+  payloads, missing citations, unsupported source kinds, citations not present
+  in Samantha evidence, malformed or missing evidence citations, confidence
+  bounds, stale/conflicting source notes, behavior-impact review flags, direct
+  mutation fields, and execution-authority claims.
+- Valid memory-synthesis output is converted only into `memory_synthesis`
+  learning candidates with `pending_review` status, `llm_summary` attribution,
+  source evidence, and optional stale-source and behavior-impact review
+  metadata. It does not create active memory, project briefs, SOPs, skills,
+  profiles, policies, tasks, actions, runs, dispatch, merge, push, or cleanup.
+- Extended the learning candidate contract narrowly to carry memory-synthesis
+  review metadata while preserving the later deterministic memory write gate.
+- Added focused prompt, parser, candidate-conversion, store, and rejection
+  tests in `tests/orchestrator-agent.test.ts` and
+  `tests/proposal-store.test.ts`.
+- Verified with `bun typecheck` and `bun test tests/orchestrator-agent.test.ts
+  tests/policy.test.ts tests/memory-taxonomy.test.ts
+  tests/project-brief-store.test.ts tests/decision-history-summary.test.ts
+  tests/proposal-store.test.ts tests/context-search.test.ts`,
+  `bun run verify:docs`, and `bun run test:portable`.
 
 ## M8: Deterministic Memory Write Gates And Reversibility
 

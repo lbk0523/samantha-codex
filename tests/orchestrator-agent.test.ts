@@ -1,12 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildOrchestratorMemorySynthesisPrompt,
   buildOrchestratorPrompt,
   buildOrchestratorQuestionDraftPrompt,
+  memorySynthesisPayloadToLearningCandidates,
+  parseOrchestratorMemorySynthesisPayload,
   parseOrchestratorPlanPayload,
   parseOrchestratorQuestionDraftPayload,
+  type MemorySynthesisEvidence,
 } from "../src/lib/orchestrator-agent";
 import type { OrchestrationRequestRecord } from "../src/lib/orchestrator-store";
 import type { ProjectProfile } from "../src/lib/project-profile";
+import type { AgentProfile } from "../src/lib/contracts";
 
 describe("orchestrator agent prompt", () => {
   test("warns that dependent worker tasks do not share unmerged writes", () => {
@@ -216,5 +221,186 @@ describe("orchestrator agent prompt", () => {
       ...payload,
       risk: undefined,
     })}`)).toThrow("risk must be a non-empty string");
+  });
+
+  test("builds bounded memory synthesis prompt with explicit non-authority language", () => {
+    const evidence: MemorySynthesisEvidence[] = [{
+      citation: {
+        kind: "operator_report",
+        id: "operator-report-memory-m7",
+      },
+      snippet: "BK repeatedly asked for memory writes to remain review candidates first.",
+      status: "ok",
+    }];
+
+    const prompt = buildOrchestratorMemorySynthesisPrompt({
+      evidence,
+      projectId: "samantha",
+      goalId: "goal-memory",
+      workItemId: "work-item-m7",
+    });
+
+    expect(prompt).toContain("bounded memory-synthesis mode");
+    expect(prompt).toContain("Samantha-provided source evidence");
+    expect(prompt).toContain("kind=operator_report id=operator-report-memory-m7");
+    expect(prompt).toContain("Do not write memory.");
+    expect(prompt).toContain("Do not overwrite project briefs, SOPs, skills, profiles, policies, tasks, actions, runs, or reports.");
+    expect(prompt).toContain("Do not dispatch workers. Do not run merge, push, cleanup");
+    expect(prompt).toContain("Do not claim any execution authority.");
+    expect(prompt).toContain("store valid proposals only as pending_review candidates");
+    expect(prompt).toContain("A later deterministic memory write gate and explicit review must approve any durable memory update.");
+    expect(prompt).toContain("Cite only the exact source kind/id pairs listed below. Do not invent sources");
+    expect(prompt).toContain("ORCHESTRATOR_MEMORY_SYNTHESIS:");
+  });
+
+  test("turns valid memory synthesis output into pending review candidates only", () => {
+    const evidence: MemorySynthesisEvidence[] = [{
+      citation: {
+        kind: "operator_report",
+        id: "operator-report-memory-m7",
+        ancestry: {
+          mode: "assigned",
+          projectId: "samantha",
+          goalId: "goal-memory",
+          workItemId: "work-item-m7",
+        },
+      },
+      snippet: "BK wants memory synthesis to produce review candidates before durable writes.",
+      status: "ok",
+    }];
+    const payload = {
+      summary: "메모리 후보 1건",
+      proposals: [{
+        proposedMemoryKind: "preference",
+        scope: { type: "project", projectId: "samantha" },
+        summary: "Memory synthesis output stays in review.",
+        proposedContent: "Memory synthesis output should be captured as a pending review candidate before any durable write.",
+        citations: [evidence[0].citation],
+        confidence: 0.74,
+        staleSourceNotes: [],
+        behaviorImpact: "behavior_change",
+        behaviorImpactReviewRequired: true,
+      }],
+      rejectedEvidence: [],
+      userMessage: "검토 후보를 만들었습니다.",
+    };
+    const parsed = parseOrchestratorMemorySynthesisPayload(
+      `ORCHESTRATOR_MEMORY_SYNTHESIS: ${JSON.stringify(payload)}`,
+      { evidence },
+    );
+    const agent: AgentProfile = {
+      id: "codex-orchestrator",
+      role: "spec",
+      model: "gpt-5.5",
+      writerClass: "non-writer",
+      worktreePolicy: "none",
+      mergePolicy: "none",
+      skillPolicy: { requiredBundles: [], blockedSkills: [] },
+    };
+    const candidates = memorySynthesisPayloadToLearningCandidates(parsed, {
+      agent,
+      createdAt: "2026-05-10T03:00:00.000Z",
+      synthesisRunId: "memory-synthesis-run-m7",
+    });
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      kind: "memory_synthesis",
+      proposedMemoryKind: "preference",
+      claimKind: "llm_summary",
+      status: "pending_review",
+      evidence: [evidence[0].citation],
+      attribution: { kind: "llm", agentId: "codex-orchestrator", model: "gpt-5.5" },
+      behaviorImpact: "behavior_change",
+      behaviorImpactReviewRequired: true,
+      synthesisRunId: "memory-synthesis-run-m7",
+    });
+    expect(candidates[0]).not.toHaveProperty("memory");
+    expect(candidates[0]).not.toHaveProperty("projectBriefWrite");
+    expect(candidates[0]).not.toHaveProperty("promotionGate");
+  });
+
+  test("fails closed for malformed memory synthesis output, missing or invented citations, and unsupported source kinds", () => {
+    const evidence: MemorySynthesisEvidence[] = [{
+      citation: { kind: "operator_report", id: "operator-report-memory-m7" },
+      snippet: "Source-backed memory candidate.",
+      status: "ok",
+    }];
+    const validProposal = {
+      proposedMemoryKind: "known_risk",
+      scope: { type: "project", projectId: "samantha" },
+      summary: "Memory writes need review.",
+      proposedContent: "Memory writes remain review candidates until approved.",
+      citations: [evidence[0].citation],
+      confidence: 0.7,
+      staleSourceNotes: [],
+      behaviorImpact: "none",
+      behaviorImpactReviewRequired: false,
+    };
+    const raw = (proposal: unknown) => `ORCHESTRATOR_MEMORY_SYNTHESIS: ${JSON.stringify({
+      summary: "후보",
+      proposals: [proposal],
+      rejectedEvidence: [],
+      userMessage: "후보",
+    })}`;
+
+    expect(() => parseOrchestratorMemorySynthesisPayload("ORCHESTRATOR_MEMORY_SYNTHESIS: {\"summary\":\"후보\",\"proposals\":\"bad\",\"rejectedEvidence\":[],\"userMessage\":\"후보\"}", { evidence })).toThrow(
+      "proposals must be an array",
+    );
+    expect(() => parseOrchestratorMemorySynthesisPayload(raw({ ...validProposal, citations: [] }), { evidence })).toThrow(
+      "proposals[0].citations must include at least one source citation",
+    );
+    expect(() => parseOrchestratorMemorySynthesisPayload(raw({
+      ...validProposal,
+      citations: [{ kind: "wiki_page", id: "wiki-memory" }],
+    }), { evidence })).toThrow("proposals[0].citations[0].kind is invalid");
+    expect(() => parseOrchestratorMemorySynthesisPayload(raw({
+      ...validProposal,
+      citations: [{ kind: "operator_report", id: "operator-report-invented" }],
+    }), { evidence })).toThrow("was not provided by Samantha evidence");
+  });
+
+  test("rejects behavior-changing memory claims without review flags and direct overwrite payloads", () => {
+    const evidence: MemorySynthesisEvidence[] = [{
+      citation: { kind: "operator_report", id: "operator-report-memory-m7" },
+      snippet: "Behavior-changing memory must be reviewed.",
+      status: "stale",
+      staleReason: "Report was superseded by a later review.",
+    }];
+    const proposal = {
+      proposedMemoryKind: "sop_document",
+      scope: { type: "project", projectId: "samantha" },
+      summary: "Agents should always use the new SOP.",
+      proposedContent: "Agents should follow this SOP before dispatch decisions.",
+      citations: [evidence[0].citation],
+      confidence: 0.6,
+      staleSourceNotes: ["Source is stale; use only as weak evidence."],
+      behaviorImpact: "behavior_change",
+      behaviorImpactReviewRequired: true,
+    };
+    const raw = (candidate: unknown) => `ORCHESTRATOR_MEMORY_SYNTHESIS: ${JSON.stringify({
+      summary: "후보",
+      proposals: [candidate],
+      rejectedEvidence: [],
+      userMessage: "후보",
+    })}`;
+
+    expect(() => parseOrchestratorMemorySynthesisPayload(raw({
+      ...proposal,
+      behaviorImpact: "none",
+      behaviorImpactReviewRequired: false,
+    }), { evidence })).toThrow("behavior-changing claims require behaviorImpact=behavior_change");
+    expect(() => parseOrchestratorMemorySynthesisPayload(raw({
+      ...proposal,
+      staleSourceNotes: [],
+    }), { evidence })).toThrow("staleSourceNotes must explain stale or conflicting source evidence");
+    expect(() => parseOrchestratorMemorySynthesisPayload(raw({
+      ...proposal,
+      memoryWrite: { id: "memory-direct-overwrite" },
+    }), { evidence })).toThrow("proposals[0].memoryWrite is not allowed");
+    expect(() => parseOrchestratorMemorySynthesisPayload(raw({
+      ...proposal,
+      proposedContent: "Samantha may dispatch workers directly without approval for this SOP.",
+    }), { evidence })).toThrow("claims execution authority that memory synthesis cannot grant");
   });
 });

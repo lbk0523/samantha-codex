@@ -184,6 +184,40 @@ describe("LearningCandidateStore", () => {
     });
   });
 
+  test("stores memory synthesis output only as a pending review candidate", async () => {
+    const root = await makeRoot();
+    const store = new LearningCandidateStore(join(root, "state", "learning-candidates.jsonl"));
+    const synthesisCandidate: LearningCandidateRecord = {
+      ...candidate,
+      id: "learning-candidate-20260510-030000-memory-synthesis",
+      kind: "memory_synthesis",
+      proposedMemoryKind: "sop_document",
+      summary: "SOP-like memory changes require explicit review.",
+      proposedContent: "SOP-like memory candidates should remain pending until a deterministic write gate approves them.",
+      confidence: 0.68,
+      staleSourceNotes: ["Source report is stale; use as weak evidence only."],
+      behaviorImpact: "behavior_change",
+      behaviorImpactReviewRequired: true,
+      synthesisRunId: "memory-synthesis-run-m7",
+      createdAt: "2026-05-10T03:00:00.000Z",
+      updatedAt: "2026-05-10T03:00:00.000Z",
+    };
+
+    const stored = await store.append(synthesisCandidate);
+
+    expect(stored).toMatchObject({
+      id: synthesisCandidate.id,
+      kind: "memory_synthesis",
+      status: "pending_review",
+      behaviorImpact: "behavior_change",
+      behaviorImpactReviewRequired: true,
+      synthesisRunId: "memory-synthesis-run-m7",
+    });
+    expect(stored).not.toHaveProperty("memory");
+    expect(stored).not.toHaveProperty("projectBriefWrite");
+    expect(stored).not.toHaveProperty("promotionGate");
+  });
+
   test("rejects duplicates, missing evidence, and LLM candidates not attributed as summaries", async () => {
     const root = await makeRoot();
     const store = new LearningCandidateStore(join(root, "state", "learning-candidates.jsonl"));
@@ -200,6 +234,15 @@ describe("LearningCandidateStore", () => {
         claimKind: "observed_fact",
       }),
     ).rejects.toThrow("LLM learning candidates must use claimKind llm_summary");
+    await expect(
+      store.append({
+        ...candidate,
+        id: "learning-candidate-behavior-no-review",
+        kind: "memory_synthesis",
+        behaviorImpact: "behavior_change",
+        behaviorImpactReviewRequired: false,
+      }),
+    ).rejects.toThrow("behavior-changing learning candidates must require explicit review");
   });
 
   test("blocks direct mutation payloads for memory, SOPs, skills, profiles, policies, connectors, secrets, tasks, actions, and runs", async () => {

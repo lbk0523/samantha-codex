@@ -14,12 +14,14 @@ import {
 
 export type ProposalStatus = "pending_review" | "accepted" | "rejected";
 export type LearningCandidateKind =
+  | "memory_synthesis"
   | "recurring_preference"
   | "product_heuristic"
   | "repeated_feedback"
   | "known_risk";
 export type LearningCandidateStatus = "pending_review" | "accepted" | "rejected" | "archived";
 export type LearningCandidateReviewActor = "bk" | "deterministic_operator";
+export type LearningCandidateBehaviorImpact = "none" | "behavior_change";
 
 export type LearningCandidateScope =
   | { type: "project"; projectId: string }
@@ -62,6 +64,10 @@ export interface LearningCandidateRecord {
   reviewedAt?: string;
   reviewedBy?: LearningCandidateReviewActor;
   reviewNote?: string;
+  staleSourceNotes?: string[];
+  behaviorImpact?: LearningCandidateBehaviorImpact;
+  behaviorImpactReviewRequired?: boolean;
+  synthesisRunId?: string;
   supersededByCandidateId?: string;
   promotionGate?: "deterministic_memory_write_gate_required";
 }
@@ -142,6 +148,7 @@ function hasValue<T extends string>(values: readonly T[], value: unknown): value
 }
 
 const learningCandidateKinds: readonly LearningCandidateKind[] = [
+  "memory_synthesis",
   "recurring_preference",
   "product_heuristic",
   "repeated_feedback",
@@ -156,6 +163,10 @@ const learningCandidateStatuses: readonly LearningCandidateStatus[] = [
 const learningCandidateReviewActors: readonly LearningCandidateReviewActor[] = [
   "bk",
   "deterministic_operator",
+] as const;
+const learningCandidateBehaviorImpacts: readonly LearningCandidateBehaviorImpact[] = [
+  "none",
+  "behavior_change",
 ] as const;
 const learningCandidateForbiddenMutationFields = new Set([
   "memory",
@@ -330,6 +341,29 @@ export function validateLearningCandidateRecord(value: unknown): string[] {
     violations.push(`candidate.reviewedBy is invalid: ${describeUnknown(candidate.reviewedBy)}`);
   }
   if (candidate.reviewNote !== undefined) violations.push(...textViolations(candidate.reviewNote, "candidate.reviewNote"));
+  if (candidate.staleSourceNotes !== undefined) {
+    if (!Array.isArray(candidate.staleSourceNotes) || candidate.staleSourceNotes.some((note) => typeof note !== "string" || !oneLine(note))) {
+      violations.push("candidate.staleSourceNotes must be a non-empty string array");
+    }
+  }
+  if (candidate.behaviorImpact !== undefined && !hasValue(learningCandidateBehaviorImpacts, candidate.behaviorImpact)) {
+    violations.push(`candidate.behaviorImpact is invalid: ${describeUnknown(candidate.behaviorImpact)}`);
+  }
+  if (
+    candidate.behaviorImpact === "behavior_change" &&
+    candidate.behaviorImpactReviewRequired !== true
+  ) {
+    violations.push("behavior-changing learning candidates must require explicit review");
+  }
+  if (
+    candidate.behaviorImpactReviewRequired !== undefined &&
+    typeof candidate.behaviorImpactReviewRequired !== "boolean"
+  ) {
+    violations.push("candidate.behaviorImpactReviewRequired must be a boolean");
+  }
+  if (candidate.synthesisRunId !== undefined) {
+    violations.push(...stableIdViolations(candidate.synthesisRunId, "candidate.synthesisRunId"));
+  }
   if (candidate.supersededByCandidateId !== undefined) {
     violations.push(...stableIdViolations(candidate.supersededByCandidateId, "candidate.supersededByCandidateId"));
   }
@@ -373,8 +407,16 @@ export function parseLearningCandidateRecord(value: unknown): LearningCandidateR
     reviewedAt: candidate.reviewedAt,
     reviewedBy: candidate.reviewedBy,
     reviewNote: candidate.reviewNote ? oneLine(candidate.reviewNote) : undefined,
+    ...(candidate.staleSourceNotes
+      ? { staleSourceNotes: candidate.staleSourceNotes.map(oneLine) }
+      : {}),
+    ...(candidate.behaviorImpact ? { behaviorImpact: candidate.behaviorImpact } : {}),
+    ...(candidate.behaviorImpactReviewRequired !== undefined
+      ? { behaviorImpactReviewRequired: candidate.behaviorImpactReviewRequired }
+      : {}),
+    ...(candidate.synthesisRunId ? { synthesisRunId: candidate.synthesisRunId } : {}),
     supersededByCandidateId: candidate.supersededByCandidateId,
-    promotionGate: candidate.promotionGate,
+    ...(candidate.promotionGate ? { promotionGate: candidate.promotionGate } : {}),
   };
 }
 
