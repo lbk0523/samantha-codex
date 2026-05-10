@@ -281,14 +281,19 @@ function failedCommandsForRunLog(runLog: WorkerRunLog): string[] {
     .map((result) => result.command) ?? [];
 }
 
-function gateStatusForWriters(
-  writerCount: number,
+function gateStatusForWriterRefs(
+  refs: ParallelismEvidenceRef[],
   lifecycles: RunLifecycleRecord[] | undefined,
   field: "mergedAt" | "cleanedAt",
 ): ParallelismEvidenceGateStatus {
+  const writerRefs = refs.filter((ref) => ref.resultMode === "write" || ref.agentRole === "writer");
+  const writerCount = writerRefs.length;
   if (writerCount === 0) return "not_applicable";
+  if (writerRefs.some((ref) => ref.outcome === "failed")) return field === "mergedAt" ? "failed" : "blocked";
+  if (writerRefs.some((ref) => ref.outcome === "blocked")) return "blocked";
   if (!lifecycles?.length) return "pending";
-  return lifecycles.some((lifecycle) => lifecycle[field]) ? "completed" : "pending";
+  const lifecycleRunIds = new Set(lifecycles.filter((lifecycle) => lifecycle[field]).map((lifecycle) => lifecycle.runId));
+  return writerRefs.every((ref) => ref.runId && lifecycleRunIds.has(ref.runId)) ? "completed" : "pending";
 }
 
 function buildParallelismEvidenceId(input: Omit<CreateParallelismEvidenceInput, "id">): string {
@@ -394,7 +399,6 @@ export function createParallelismEvidenceFromPlanResult(input: {
   });
   const outcome = recordOutcome(refs);
   const failedCommands = uniqueStrings(input.runLogs.flatMap(failedCommandsForRunLog));
-  const writerCount = refs.filter((ref) => ref.resultMode === "write" || ref.agentRole === "writer").length;
 
   return createParallelismEvidenceRecord({
     observedAt: input.observedAt,
@@ -409,8 +413,8 @@ export function createParallelismEvidenceFromPlanResult(input: {
         : `Recorded preserved evidence with outcome ${outcome}.`,
       failedCommands: failedCommands.length ? failedCommands : undefined,
     },
-    mergeStatus: gateStatusForWriters(writerCount, input.lifecycles, "mergedAt"),
-    cleanupStatus: gateStatusForWriters(writerCount, input.lifecycles, "cleanedAt"),
+    mergeStatus: gateStatusForWriterRefs(refs, input.lifecycles, "mergedAt"),
+    cleanupStatus: gateStatusForWriterRefs(refs, input.lifecycles, "cleanedAt"),
     outcome,
     summary: input.summary,
     writerConflictSafety: input.writerConflictSafety,

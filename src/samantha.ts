@@ -1899,6 +1899,7 @@ async function advanceLatestPassedRunIntegration(args: ParsedArgs): Promise<stri
       ok,
       lifecycle: nextLifecycle,
       details: [
+        `merge candidate: ${result.status}`,
         result.gate.alreadyMerged ? "이미 merge된 run입니다." : "",
         result.applied ? "fast-forward merge를 적용했습니다." : "merge는 적용하지 않았습니다.",
         result.verified ? "post-merge 검증을 통과했습니다." : "",
@@ -1920,6 +1921,7 @@ async function advanceLatestPassedRunIntegration(args: ParsedArgs): Promise<stri
         ok: false,
         lifecycle,
         details: [
+          `merge candidate: ${preflight.status}`,
           ...preflight.violations,
           preflight.alreadyMerged ? "" : "run commit이 아직 target repo에 통합되지 않았습니다.",
         ].filter(Boolean),

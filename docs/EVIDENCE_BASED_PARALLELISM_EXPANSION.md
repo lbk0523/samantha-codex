@@ -263,6 +263,19 @@ Verification focus:
 - post-merge verification failures are reported clearly
 - push remains separate from merge
 
+Outcome:
+
+- Added deterministic merge candidate classification for `mergeable`,
+  `already_merged`, `stale_base`, `failed_verification`,
+  `dirty_target_repo`, `missing_commit`, and `blocked`.
+- Added merge queue evaluation that sorts candidates deterministically without
+  creating push commands or changing merge authority.
+- Post-merge verification failure is classified as failed verification in the
+  merge apply result and reported through existing integration output.
+- Parallelism evidence now records failed writer verification as failed merge
+  evidence and blocked cleanup evidence without implying push readiness.
+- Left runtime authority unchanged. Push remains a separate explicit gate.
+
 ## M8: Cleanup And Rollback Drills
 
 Goal: prove cleanup and rollback paths remain safe under higher parallel load.

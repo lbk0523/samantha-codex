@@ -8,9 +8,19 @@ export interface MergeGateInput {
   targetBranch?: string;
 }
 
+export type MergeCandidateStatus =
+  | "mergeable"
+  | "already_merged"
+  | "stale_base"
+  | "failed_verification"
+  | "dirty_target_repo"
+  | "missing_commit"
+  | "blocked";
+
 export interface MergeGateResult {
   mayMerge: boolean;
   alreadyMerged: boolean;
+  status: MergeCandidateStatus;
   targetBranch: string;
   commit: string;
   command?: string[];
@@ -33,6 +43,7 @@ export interface MergeVerifyResult {
 
 export interface MergeApplyResult {
   gate: MergeGateResult;
+  status: MergeCandidateStatus;
   applied: boolean;
   verified: boolean;
   merge?: MergeCommandResult;
@@ -55,6 +66,23 @@ export interface MergePushResult {
   command?: string[];
   push?: MergeCommandResult;
   violations: string[];
+}
+
+export interface MergeQueueCandidateInput extends MergeGateInput {
+  id?: string;
+}
+
+export interface MergeQueueCandidateResult extends MergeGateResult {
+  id: string;
+  runId: string;
+  taskId: string;
+  finishedAt: string;
+  runLogPath: string;
+  repoRoot: string;
+}
+
+export interface MergeQueueResult {
+  candidates: MergeQueueCandidateResult[];
 }
 
 async function gitSucceeds(args: string[], cwd: string): Promise<boolean> {
@@ -96,17 +124,39 @@ export async function readWorkerRunLog(path: string): Promise<WorkerRunLog> {
   return JSON.parse(await readFile(path, "utf8")) as WorkerRunLog;
 }
 
-export async function evaluateMergeGate(input: MergeGateInput): Promise<MergeGateResult> {
-  const log = await readWorkerRunLog(input.runLogPath);
+function classifyMergeCandidate(input: {
+  alreadyMerged: boolean;
+  failedVerification: boolean;
+  missingCommit: boolean;
+  dirtyTargetRepo: boolean;
+  staleBase: boolean;
+  violations: string[];
+}): MergeCandidateStatus {
+  if (input.failedVerification) return "failed_verification";
+  if (input.missingCommit) return "missing_commit";
+  if (input.dirtyTargetRepo) return "dirty_target_repo";
+  if (input.alreadyMerged && input.violations.length === 0) return "already_merged";
+  if (input.staleBase) return "stale_base";
+  if (input.violations.length === 0) return "mergeable";
+  return "blocked";
+}
+
+async function evaluateMergeGateForLog(input: MergeGateInput, log: WorkerRunLog): Promise<MergeGateResult> {
   const targetBranch = input.targetBranch ?? "main";
   const execution = log.result;
   const commit = execution.commit?.commitHash ?? execution.evaluation?.harness?.commit ?? "";
   const violations: string[] = [];
+  let failedVerification = false;
+  let missingCommit = false;
+  let dirtyTargetRepo = false;
+  let staleBase = false;
 
   if (!execution.pass) {
+    failedVerification = true;
     violations.push("run did not pass Samantha evaluation");
   }
   if (!commit) {
+    missingCommit = true;
     violations.push("run did not report a commit");
   }
 
@@ -117,23 +167,28 @@ export async function evaluateMergeGate(input: MergeGateInput): Promise<MergeGat
 
   const status = await gitRaw(["status", "--porcelain"], input.repoRoot);
   if (status.trim().length > 0) {
+    dirtyTargetRepo = true;
     violations.push("target repo has uncommitted changes");
   }
 
   const baseCommit = execution.preparation.allocation?.baseCommit;
   if (!baseCommit) {
+    staleBase = true;
     violations.push("run log has no allocated worktree base commit");
   } else {
     const head = await gitHead(input.repoRoot);
     if (head !== baseCommit) {
+      staleBase = true;
       violations.push("target repo HEAD no longer matches the worker base commit");
     }
   }
 
   if (commit) {
     if (!(await gitSucceeds(["cat-file", "-e", `${commit}^{commit}`], input.repoRoot))) {
+      missingCommit = true;
       violations.push("reported commit does not exist in target repo");
     } else if (baseCommit && !(await gitSucceeds(["merge-base", "--is-ancestor", baseCommit, commit], input.repoRoot))) {
+      staleBase = true;
       violations.push("reported commit is not descended from the worker base commit");
     }
   }
@@ -141,17 +196,75 @@ export async function evaluateMergeGate(input: MergeGateInput): Promise<MergeGat
   const alreadyMerged = commit ? await gitSucceeds(["merge-base", "--is-ancestor", commit, head], input.repoRoot) : false;
   if (alreadyMerged) {
     const baseMismatchIndex = violations.indexOf("target repo HEAD no longer matches the worker base commit");
-    if (baseMismatchIndex !== -1) violations.splice(baseMismatchIndex, 1);
+    if (baseMismatchIndex !== -1) {
+      violations.splice(baseMismatchIndex, 1);
+      staleBase = false;
+    }
   }
+  const candidateStatus = classifyMergeCandidate({
+    alreadyMerged,
+    failedVerification,
+    missingCommit,
+    dirtyTargetRepo,
+    staleBase,
+    violations,
+  });
 
   return {
     mayMerge: violations.length === 0 && !alreadyMerged,
     alreadyMerged,
+    status: candidateStatus,
     targetBranch,
     commit,
     command: violations.length === 0 && !alreadyMerged ? ["git", "merge", "--ff-only", commit] : undefined,
     violations,
   };
+}
+
+export async function evaluateMergeGate(input: MergeGateInput): Promise<MergeGateResult> {
+  const log = await readWorkerRunLog(input.runLogPath);
+  return evaluateMergeGateForLog(input, log);
+}
+
+const mergeQueueStatusOrder: Record<MergeCandidateStatus, number> = {
+  mergeable: 0,
+  already_merged: 1,
+  stale_base: 2,
+  failed_verification: 3,
+  dirty_target_repo: 4,
+  missing_commit: 5,
+  blocked: 6,
+};
+
+function compareMergeQueueCandidates(left: MergeQueueCandidateResult, right: MergeQueueCandidateResult): number {
+  return (
+    mergeQueueStatusOrder[left.status] - mergeQueueStatusOrder[right.status] ||
+    left.targetBranch.localeCompare(right.targetBranch) ||
+    left.repoRoot.localeCompare(right.repoRoot) ||
+    left.finishedAt.localeCompare(right.finishedAt) ||
+    left.runId.localeCompare(right.runId) ||
+    left.runLogPath.localeCompare(right.runLogPath)
+  );
+}
+
+export async function evaluateMergeQueue(input: { candidates: MergeQueueCandidateInput[] }): Promise<MergeQueueResult> {
+  const candidates = await Promise.all(
+    input.candidates.map(async (candidate) => {
+      const log = await readWorkerRunLog(candidate.runLogPath);
+      const gate = await evaluateMergeGateForLog(candidate, log);
+      return {
+        ...gate,
+        id: candidate.id ?? log.runId,
+        runId: log.runId,
+        taskId: log.task.id,
+        finishedAt: log.finishedAt,
+        runLogPath: candidate.runLogPath,
+        repoRoot: candidate.repoRoot,
+      };
+    }),
+  );
+
+  return { candidates: candidates.sort(compareMergeQueueCandidates) };
 }
 
 export async function applyMerge(input: MergeGateInput): Promise<MergeApplyResult> {
@@ -161,6 +274,7 @@ export async function applyMerge(input: MergeGateInput): Promise<MergeApplyResul
   if (!gate.mayMerge || !gate.command) {
     return {
       gate,
+      status: gate.status,
       applied: false,
       verified: gate.alreadyMerged && violations.length === 0,
       verifyResults: [],
@@ -174,6 +288,7 @@ export async function applyMerge(input: MergeGateInput): Promise<MergeApplyResul
   if (merge.exitCode !== 0) {
     return {
       gate,
+      status: "blocked",
       applied: false,
       verified: false,
       merge,
@@ -192,6 +307,7 @@ export async function applyMerge(input: MergeGateInput): Promise<MergeApplyResul
 
   return {
     gate,
+    status: failedVerify ? "failed_verification" : gate.status,
     applied: true,
     verified: !failedVerify,
     merge,

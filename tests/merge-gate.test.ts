@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { git, gitHead } from "../src/lib/git";
-import { applyMerge, evaluateMergeGate, pushMerge } from "../src/lib/merge-gate";
+import { applyMerge, evaluateMergeGate, evaluateMergeQueue, pushMerge } from "../src/lib/merge-gate";
 import type { WorkerRunLog } from "../src/lib/run-log";
 
 let tmpRoots: string[] = [];
@@ -121,6 +121,7 @@ describe("evaluateMergeGate", () => {
 
     expect(result.mayMerge).toBe(true);
     expect(result.alreadyMerged).toBe(false);
+    expect(result.status).toBe("mergeable");
     expect(result.commit).toBe(workerCommit);
     expect(result.command).toEqual(["git", "merge", "--ff-only", workerCommit]);
   });
@@ -134,6 +135,7 @@ describe("evaluateMergeGate", () => {
 
     expect(result.mayMerge).toBe(false);
     expect(result.alreadyMerged).toBe(true);
+    expect(result.status).toBe("already_merged");
     expect(result.command).toBeUndefined();
     expect(result.violations).toEqual([]);
     expect(apply.applied).toBe(false);
@@ -147,6 +149,7 @@ describe("evaluateMergeGate", () => {
     const result = await evaluateMergeGate({ runLogPath: logPath, repoRoot: root });
 
     expect(result.mayMerge).toBe(false);
+    expect(result.status).toBe("dirty_target_repo");
     expect(result.violations).toContain("target repo has uncommitted changes");
   });
 
@@ -160,6 +163,7 @@ describe("evaluateMergeGate", () => {
     const apply = await applyMerge({ runLogPath: logPath, repoRoot: root });
 
     expect(result.mayMerge).toBe(false);
+    expect(result.status).toBe("stale_base");
     expect(result.command).toBeUndefined();
     expect(result.violations).toContain("target repo HEAD no longer matches the worker base commit");
     expect(apply.applied).toBe(false);
@@ -173,6 +177,7 @@ describe("evaluateMergeGate", () => {
     const result = await applyMerge({ runLogPath: logPath, repoRoot: root });
 
     expect(result.applied).toBe(true);
+    expect(result.status).toBe("mergeable");
     expect(result.verified).toBe(true);
     expect(result.merge?.exitCode).toBe(0);
     expect(result.verifyResults[0]?.exitCode).toBe(0);
@@ -188,6 +193,7 @@ describe("evaluateMergeGate", () => {
     const result = await applyMerge({ runLogPath: logPath, repoRoot: root });
 
     expect(result.applied).toBe(true);
+    expect(result.status).toBe("failed_verification");
     expect(result.verified).toBe(false);
     expect(result.verifyResults[0]).toMatchObject({
       command: "grep -q missing allowed.txt",
@@ -203,8 +209,93 @@ describe("evaluateMergeGate", () => {
     const result = await applyMerge({ runLogPath: logPath, repoRoot: root });
 
     expect(result.applied).toBe(false);
+    expect(result.status).toBe("dirty_target_repo");
     expect(result.merge).toBeUndefined();
     expect(await gitHead(root)).toBe(baseCommit);
+  });
+
+  test("classifies failed verification and missing commit candidates before merge", async () => {
+    const failed = await makeRepo();
+    const failedLog = JSON.parse(await readFile(failed.logPath, "utf8")) as WorkerRunLog;
+    const failedEvaluation = failedLog.result.evaluation;
+    if (!failedEvaluation) throw new Error("fixture evaluation missing");
+    failedLog.result.pass = false;
+    failedLog.result.evaluation = {
+      ...failedEvaluation,
+      pass: false,
+      verifyResults: [{ command: "bun typecheck", exitCode: 1, stdout: "", stderr: "TS2322" }],
+    };
+    await writeFile(failed.logPath, `${JSON.stringify(failedLog, null, 2)}\n`, "utf8");
+
+    const missing = await makeRepo();
+    const missingLog = JSON.parse(await readFile(missing.logPath, "utf8")) as WorkerRunLog;
+    const missingEvaluation = missingLog.result.evaluation;
+    if (!missingEvaluation) throw new Error("fixture evaluation missing");
+    missingLog.result.commit = undefined;
+    missingLog.result.evaluation = {
+      ...missingEvaluation,
+      harness: { status: "pass", note: "commit missing", commit: "" },
+    };
+    await writeFile(missing.logPath, `${JSON.stringify(missingLog, null, 2)}\n`, "utf8");
+
+    const failedResult = await evaluateMergeGate({ runLogPath: failed.logPath, repoRoot: failed.root });
+    const missingResult = await evaluateMergeGate({ runLogPath: missing.logPath, repoRoot: missing.root });
+
+    expect(failedResult.status).toBe("failed_verification");
+    expect(failedResult.mayMerge).toBe(false);
+    expect(failedResult.violations).toContain("run did not pass Samantha evaluation");
+    expect(missingResult.status).toBe("missing_commit");
+    expect(missingResult.mayMerge).toBe(false);
+    expect(missingResult.violations).toContain("run did not report a commit");
+  });
+
+  test("classifies non-merge safety blockers separately from push", async () => {
+    const { root, logPath } = await makeRepo();
+
+    const result = await evaluateMergeGate({ runLogPath: logPath, repoRoot: root, targetBranch: "release" });
+
+    expect(result.status).toBe("blocked");
+    expect(result.command).toBeUndefined();
+    expect(result.violations).toContain("target repo is on main, expected release");
+  });
+
+  test("orders multiple merge candidates deterministically without creating push commands", async () => {
+    const mergeable = await makeRepo();
+    const stale = await makeRepo();
+    await writeFile(join(stale.root, "allowed.txt"), "target changed\n", "utf8");
+    await git(["add", "allowed.txt"], stale.root);
+    await git(["commit", "-m", "feat: target change"], stale.root);
+    const failed = await makeRepo();
+    const failedLog = JSON.parse(await readFile(failed.logPath, "utf8")) as WorkerRunLog;
+    const queueFailedEvaluation = failedLog.result.evaluation;
+    if (!queueFailedEvaluation) throw new Error("fixture evaluation missing");
+    failedLog.runId = "run-failed";
+    failedLog.finishedAt = "2026-05-03T10:03:00.000Z";
+    failedLog.result.pass = false;
+    failedLog.result.evaluation = {
+      ...queueFailedEvaluation,
+      pass: false,
+      verifyResults: [{ command: "bun typecheck", exitCode: 1, stdout: "", stderr: "TS2322" }],
+    };
+    await writeFile(failed.logPath, `${JSON.stringify(failedLog, null, 2)}\n`, "utf8");
+
+    const candidates = [
+      { id: "failed", runLogPath: failed.logPath, repoRoot: failed.root },
+      { id: "stale", runLogPath: stale.logPath, repoRoot: stale.root },
+      { id: "mergeable", runLogPath: mergeable.logPath, repoRoot: mergeable.root },
+    ];
+
+    const first = await evaluateMergeQueue({ candidates });
+    const second = await evaluateMergeQueue({ candidates: candidates.slice().reverse() });
+
+    expect(first.candidates.map((candidate) => [candidate.id, candidate.status])).toEqual([
+      ["mergeable", "mergeable"],
+      ["stale", "stale_base"],
+      ["failed", "failed_verification"],
+    ]);
+    expect(second.candidates.map((candidate) => candidate.id)).toEqual(first.candidates.map((candidate) => candidate.id));
+    expect(first.candidates[0]?.command).toEqual(["git", "merge", "--ff-only", mergeable.workerCommit]);
+    expect(first.candidates.flatMap((candidate) => candidate.command ?? []).join(" ")).not.toContain("push");
   });
 
   test("pushes a clean integrated branch explicitly", async () => {

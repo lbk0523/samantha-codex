@@ -367,6 +367,48 @@ describe("parallelism evidence", () => {
     expect(await store.list({ outcome: "mixed" })).toEqual([evidence]);
   });
 
+  test("records failed writer verification as failed merge evidence without implying push readiness", () => {
+    const writeTask = task({
+      id: "task-write",
+      title: "Apply focused change",
+      targetAgent: writer.id,
+      resultMode: "write",
+    });
+    const action = failedAction(writeTask, "run-write");
+    const plan: OrchestratorPlanRecord = {
+      schemaVersion: 1,
+      id: "plan-writer-failed",
+      ancestry,
+      requestId: "request-parallelism",
+      status: "materialized",
+      createdAt: "2026-05-07T09:59:00.000Z",
+      actionIds: [action.id],
+      payload: {
+        summary: "failed writer fixture",
+        assumptions: [],
+        questions: [],
+        scope: [],
+        nonScope: [],
+        risks: [],
+        tasks: [],
+        batches: [["task-write"]],
+        userMessage: "fixture",
+      },
+    };
+
+    const evidence = createParallelismEvidenceFromPlanResult({
+      observedAt: "2026-05-07T10:02:00.000Z",
+      plan,
+      actions: [action],
+      runLogs: [runLog({ task: writeTask, agent: writer, runId: "run-write", commitHash: "abc123", pass: false })],
+    });
+
+    expect(evidence.writerCount).toBe(1);
+    expect(evidence.mergeStatus).toBe("failed");
+    expect(evidence.cleanupStatus).toBe("blocked");
+    expect(evidence.outcome).toBe("failed");
+  });
+
   test("does not expand writer authority through evidence records", () => {
     expect(DEFAULT_SAFETY_POLICY.writerCap).toBe(1);
     expect(() =>
