@@ -119,6 +119,26 @@ Verification focus:
   profile identity
 - invalid profile records fail before planning, materialization, or dispatch
 
+Outcome:
+
+- Added explicit project profile validation in `src/lib/project-profile.ts` for
+  project ids, repo root expressions, keywords, remote scope contracts, default
+  remote scope references, setup commands, verify commands, and forbidden
+  changes.
+- Made profile loading fail closed for duplicate project ids, conflicting
+  project identifiers, invalid default scopes, and invalid path expressions.
+- Kept `repoRoot` as the resolved runtime root for existing single-project
+  flows while adding `repoRootExpression` so source-controlled profile identity
+  remains distinct from host-local execution paths.
+- Kept environment overrides limited to runtime root resolution; overrides do
+  not mutate project id, keywords, default scope, or source repo root
+  expression.
+- Made multi-profile inference fail closed when more than one project keyword
+  matches instead of silently choosing by score.
+- Added focused project-profile tests for stable multi-profile load order,
+  env override identity preservation, duplicate/ambiguous profile identifiers,
+  invalid default scopes, invalid path expressions, and ambiguous inference.
+
 ## M3: Goal And Work-Item Ancestry Contract
 
 Goal: define project -> goal -> work item ancestry before propagating it through

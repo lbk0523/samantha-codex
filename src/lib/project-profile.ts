@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { TaskResultMode } from "./contracts";
 import type { TaskDraftUpdatePatch } from "./task-draft-store";
 
@@ -8,6 +8,7 @@ export interface ProjectProfile {
   schemaVersion: 1;
   id: string;
   repoRoot: string;
+  repoRootExpression?: string;
   keywords?: string[];
   setupCommands: string[];
   verifyCommands: string[];
@@ -51,6 +52,11 @@ export interface RemoteRequestClassification {
 export interface ProjectProfileLoadOptions {
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
+}
+
+interface ProjectProfileValidationInput {
+  source?: string;
+  profile: ProjectProfile;
 }
 
 const classificationDefaults: Record<RemoteRequestIntent, Omit<RemoteRequestClassification, "intent" | "reasons">> = {
@@ -368,6 +374,180 @@ function profileRepoRootEnvName(profileId: string): string {
   return `SAMANTHA_PROJECT_${profileId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_REPO_ROOT`;
 }
 
+function validationPrefix(source: string | undefined): string {
+  return source ? `project profile ${source}` : "project profile";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringArrayViolations(
+  value: unknown,
+  field: string,
+  input: { source?: string; required?: boolean; nonEmpty?: boolean },
+): string[] {
+  const prefix = validationPrefix(input.source);
+  if (value === undefined) {
+    return input.required ? [`${prefix}: ${field} is required`] : [];
+  }
+  if (!Array.isArray(value)) return [`${prefix}: ${field} must be an array`];
+  const violations: string[] = [];
+  value.forEach((item, index) => {
+    if (typeof item !== "string" || item.trim() === "") {
+      violations.push(`${prefix}: ${field}[${index}] must be a non-empty string`);
+    }
+  });
+  if (input.nonEmpty && value.length === 0) violations.push(`${prefix}: ${field} must not be empty`);
+  return violations;
+}
+
+function normalizedToken(value: string): string {
+  return normalizedRequestText(value);
+}
+
+function validateProjectId(value: unknown, source?: string): string[] {
+  const prefix = validationPrefix(source);
+  if (typeof value !== "string" || value.trim() === "") return [`${prefix}: id is required`];
+  if (value !== value.trim()) return [`${prefix}: id must not have leading or trailing whitespace`];
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(value)) {
+    return [`${prefix}: id must use lowercase letters, numbers, hyphen, or underscore`];
+  }
+  return [];
+}
+
+function validateRepoRootExpression(value: unknown, source?: string): string[] {
+  const prefix = validationPrefix(source);
+  if (typeof value !== "string" || value.trim() === "") return [`${prefix}: repoRoot is required`];
+  if (value !== value.trim()) return [`${prefix}: repoRoot must not have leading or trailing whitespace`];
+  if (value.includes("\0")) return [`${prefix}: repoRoot must not contain NUL bytes`];
+  return [];
+}
+
+function validateRemoteScope(value: unknown, source: string | undefined, index: number): string[] {
+  const prefix = `${validationPrefix(source)}: remoteScopes[${index}]`;
+  if (!isRecord(value)) return [`${prefix} must be an object`];
+
+  const violations: string[] = [];
+  const scopeArrayViolations = (arrayValue: unknown, field: string, input: { required?: boolean; nonEmpty?: boolean } = {}) => {
+    if (arrayValue === undefined) return input.required ? [`${prefix}.${field} is required`] : [];
+    if (!Array.isArray(arrayValue)) return [`${prefix}.${field} must be an array`];
+    const fieldViolations: string[] = [];
+    arrayValue.forEach((item, itemIndex) => {
+      if (typeof item !== "string" || item.trim() === "") {
+        fieldViolations.push(`${prefix}.${field}[${itemIndex}] must be a non-empty string`);
+      }
+    });
+    if (input.nonEmpty && arrayValue.length === 0) fieldViolations.push(`${prefix}.${field} must not be empty`);
+    return fieldViolations;
+  };
+  const id = value.id;
+  if (typeof id !== "string" || id.trim() === "") violations.push(`${prefix}.id is required`);
+  if (typeof id === "string" && id !== id.trim()) violations.push(`${prefix}.id must not have leading or trailing whitespace`);
+  for (const field of ["label", "description"] as const) {
+    const fieldValue = value[field];
+    if (typeof fieldValue !== "string" || fieldValue.trim() === "") violations.push(`${prefix}.${field} is required`);
+  }
+  if (value.risk !== "low" && value.risk !== "medium" && value.risk !== "high") {
+    violations.push(`${prefix}.risk must be low, medium, or high`);
+  }
+  if (value.resultMode !== undefined && value.resultMode !== "write" && value.resultMode !== "report") {
+    violations.push(`${prefix}.resultMode must be write or report`);
+  }
+  violations.push(...scopeArrayViolations(value.targetFiles, "targetFiles", { required: true, nonEmpty: true }));
+  violations.push(...scopeArrayViolations(value.setupCommands, "setupCommands"));
+  violations.push(...scopeArrayViolations(value.verifyCommands, "verifyCommands"));
+  violations.push(...scopeArrayViolations(value.forbiddenChanges, "forbiddenChanges"));
+  violations.push(...scopeArrayViolations(value.keywords, "keywords"));
+  violations.push(...scopeArrayViolations(value.planSteps, "planSteps", { required: true, nonEmpty: true }));
+  violations.push(...scopeArrayViolations(value.successCriteria, "successCriteria", { required: true, nonEmpty: true }));
+  return violations;
+}
+
+export function validateProjectProfile(profile: unknown, source?: string): string[] {
+  const prefix = validationPrefix(source);
+  if (!isRecord(profile)) return [`${prefix} must be an object`];
+
+  const violations: string[] = [];
+  if (profile.schemaVersion !== 1) violations.push(`${prefix}: schemaVersion must be 1`);
+  violations.push(...validateProjectId(profile.id, source));
+  violations.push(...validateRepoRootExpression(profile.repoRoot, source));
+  violations.push(...stringArrayViolations(profile.keywords, "keywords", { source }));
+  violations.push(...stringArrayViolations(profile.setupCommands, "setupCommands", { source, required: true }));
+  violations.push(...stringArrayViolations(profile.verifyCommands, "verifyCommands", { source, required: true, nonEmpty: true }));
+  violations.push(...stringArrayViolations(profile.forbiddenChanges, "forbiddenChanges", { source, required: true }));
+
+  if (profile.defaultRemoteScopeId !== undefined && (typeof profile.defaultRemoteScopeId !== "string" || profile.defaultRemoteScopeId.trim() === "")) {
+    violations.push(`${prefix}: defaultRemoteScopeId must be a non-empty string`);
+  }
+
+  if (profile.remoteScopes !== undefined && !Array.isArray(profile.remoteScopes)) {
+    violations.push(`${prefix}: remoteScopes must be an array`);
+  }
+  const remoteScopes = Array.isArray(profile.remoteScopes) ? profile.remoteScopes : [];
+  remoteScopes.forEach((scope, index) => violations.push(...validateRemoteScope(scope, source, index)));
+
+  const scopeIds = remoteScopes
+    .map((scope) => (isRecord(scope) && typeof scope.id === "string" ? scope.id : undefined))
+    .filter((id): id is string => Boolean(id));
+  const seenScopeIds = new Set<string>();
+  for (const scopeId of scopeIds) {
+    if (seenScopeIds.has(scopeId)) violations.push(`${prefix}: remote scope id is duplicated: ${scopeId}`);
+    seenScopeIds.add(scopeId);
+  }
+  if (
+    typeof profile.defaultRemoteScopeId === "string" &&
+    profile.defaultRemoteScopeId.trim() !== "" &&
+    !seenScopeIds.has(profile.defaultRemoteScopeId)
+  ) {
+    violations.push(`${prefix}: defaultRemoteScopeId does not match a remote scope: ${profile.defaultRemoteScopeId}`);
+  }
+
+  const keywordTokens = new Set<string>();
+  const keywords = Array.isArray(profile.keywords) ? profile.keywords : [];
+  for (const keyword of keywords) {
+    if (typeof keyword !== "string" || keyword.trim() === "") continue;
+    const token = normalizedToken(keyword);
+    if (keywordTokens.has(token)) violations.push(`${prefix}: keyword is duplicated: ${keyword}`);
+    keywordTokens.add(token);
+  }
+
+  return violations;
+}
+
+export function validateProjectProfileSet(inputs: ProjectProfileValidationInput[]): string[] {
+  const violations = inputs.flatMap((input) => validateProjectProfile(input.profile, input.source));
+  const ids = new Map<string, string>();
+  const identifiers = new Map<string, { id: string; label: string; source: string | undefined }>();
+
+  for (const input of inputs) {
+    const profile = input.profile;
+    if (typeof profile.id !== "string" || profile.id.trim() === "") continue;
+    const id = profile.id;
+    const previousSource = ids.get(id);
+    if (previousSource) {
+      violations.push(`${validationPrefix(input.source)}: duplicate project id ${id} also appears in ${previousSource}`);
+    } else {
+      ids.set(id, input.source ?? id);
+    }
+
+    for (const label of [profile.id, ...(Array.isArray(profile.keywords) ? profile.keywords : [])]) {
+      if (typeof label !== "string" || label.trim() === "") continue;
+      const token = normalizedToken(label);
+      const previous = identifiers.get(token);
+      if (previous && previous.id !== id) {
+        violations.push(
+          `${validationPrefix(input.source)}: project identifier ${label} conflicts with project ${previous.id} (${previous.label})`,
+        );
+      } else {
+        identifiers.set(token, { id, label, source: input.source });
+      }
+    }
+  }
+
+  return violations;
+}
+
 function expandProfilePath(path: string, options: Required<ProjectProfileLoadOptions>): string {
   let expanded = path;
   if (expanded === "~") expanded = options.homeDir;
@@ -377,6 +557,12 @@ function expandProfilePath(path: string, options: Required<ProjectProfileLoadOpt
     if (name === "HOME") return options.env.HOME?.trim() || options.homeDir;
     return options.env[name]?.trim() || match;
   });
+  if (/\$(\w+)|\$\{([^}]+)\}/.test(expanded)) {
+    throw new Error(`repoRoot contains unresolved environment variable: ${path}`);
+  }
+  if (!isAbsolute(expanded)) {
+    throw new Error(`repoRoot must resolve to an absolute path: ${path}`);
+  }
   return resolve(expanded);
 }
 
@@ -386,20 +572,35 @@ function normalizeProjectProfile(profile: ProjectProfile, options: ProjectProfil
     homeDir: options.homeDir ?? homedir(),
   };
   const override = normalizedOptions.env[profileRepoRootEnvName(profile.id)]?.trim();
+  const repoRootExpression = profile.repoRootExpression ?? profile.repoRoot;
   return {
     ...profile,
-    repoRoot: expandProfilePath(override || profile.repoRoot, normalizedOptions),
+    repoRootExpression,
+    repoRoot: expandProfilePath(override || repoRootExpression, normalizedOptions),
   };
 }
 
 export async function loadProjectProfiles(dir: string, options: ProjectProfileLoadOptions = {}): Promise<ProjectProfile[]> {
   const files = (await readdir(dir)).filter((file) => file.endsWith(".json")).sort();
-  return Promise.all(
-    files.map(async (file) => {
-      const profile = JSON.parse(await readFile(join(dir, file), "utf8")) as ProjectProfile;
-      return normalizeProjectProfile(profile, options);
-    }),
+  const rawProfiles = await Promise.all(
+    files.map(async (file) => ({
+      file,
+      profile: JSON.parse(await readFile(join(dir, file), "utf8")) as ProjectProfile,
+    })),
   );
+  const violations = validateProjectProfileSet(rawProfiles.map((item) => ({ source: item.file, profile: item.profile })));
+  if (violations.length > 0) throw new Error(`invalid project profile configuration:\n${violations.join("\n")}`);
+
+  const normalized: ProjectProfile[] = [];
+  for (const item of rawProfiles) {
+    try {
+      normalized.push(normalizeProjectProfile(item.profile, options));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`invalid project profile configuration:\n${validationPrefix(item.file)}: ${message}`);
+    }
+  }
+  return normalized.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export async function loadProjectProfile(dir: string, id: string, options: ProjectProfileLoadOptions = {}): Promise<ProjectProfile> {
@@ -417,7 +618,7 @@ export function inferProjectProfile(
 
   const scored = profiles
     .map((profile) => {
-      const keywords = [profile.id, ...(profile.keywords ?? [])];
+      const keywords = [...new Set([profile.id, ...(profile.keywords ?? [])].map((keyword) => normalizedRequestText(keyword)))];
       const score = keywords.filter((keyword) => text.includes(normalizedRequestText(keyword))).length;
       return { profile, score };
     })
@@ -426,7 +627,9 @@ export function inferProjectProfile(
 
   const top = scored[0];
   if (!top) return undefined;
-  if (scored[1] && scored[1].score === top.score) return undefined;
+  if (scored.length > 1) {
+    throw new Error(`ambiguous project profile match: ${scored.map((item) => item.profile.id).join(", ")}; specify project id`);
+  }
   return top.profile;
 }
 

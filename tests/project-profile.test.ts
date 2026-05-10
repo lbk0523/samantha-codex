@@ -146,9 +146,35 @@ describe("project profiles", () => {
     expect(inferProjectProfile([profile, samantha], { requestText: "samantha 프로젝트 대시보드 개선 계획 보고" })?.id).toBe("samantha");
     expect(inferProjectProfile([profile, samantha], { requestText: "ohmt 프로젝트 작업 재개 계획 보고" })?.id).toBe("omht");
     expect(inferProjectProfile([profile, samantha], { requestText: "다음 작업 계획 보고" })).toBeUndefined();
+    expect(() => inferProjectProfile([profile, samantha], { requestText: "samantha와 omht 다음 작업 계획 보고" })).toThrow(
+      "ambiguous project profile match: omht, samantha; specify project id",
+    );
   });
 
-  test("expands host-local profile repo roots and env overrides", async () => {
+  test("loads valid multi-profile fixtures in stable project-id order", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-profile-order-"));
+    try {
+      await writeFile(
+        join(root, "z-file.json"),
+        JSON.stringify({ ...profile, id: "zeta", repoRoot: "$HOME/projects/zeta", keywords: ["zeta"] }),
+        "utf8",
+      );
+      await writeFile(
+        join(root, "a-file.json"),
+        JSON.stringify({ ...profile, id: "alpha", repoRoot: "$HOME/projects/alpha", keywords: ["alpha"] }),
+        "utf8",
+      );
+
+      const loaded = await loadProjectProfiles(root, { env: { HOME: "/Users/byung" }, homeDir: "/Users/byung" });
+      expect(loaded.map((item) => item.id)).toEqual(["alpha", "zeta"]);
+      expect(loaded.map((item) => item.repoRoot)).toEqual(["/Users/byung/projects/alpha", "/Users/byung/projects/zeta"]);
+      expect(loaded.map((item) => item.repoRootExpression)).toEqual(["$HOME/projects/alpha", "$HOME/projects/zeta"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("expands host-local profile repo roots and env overrides without changing profile identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-profile-"));
     try {
       await writeFile(join(root, "omht.json"), JSON.stringify({ ...profile, repoRoot: "$HOME/projects/omht" }), "utf8");
@@ -158,6 +184,8 @@ describe("project profiles", () => {
         homeDir: "/Users/byung",
       });
       expect(homeProfile.repoRoot).toBe("/Users/byung/projects/omht");
+      expect(homeProfile.id).toBe("omht");
+      expect(homeProfile.repoRootExpression).toBe("$HOME/projects/omht");
 
       const [overrideProfile] = await loadProjectProfiles(root, {
         env: {
@@ -167,8 +195,78 @@ describe("project profiles", () => {
         homeDir: "/Users/byung",
       });
       expect(overrideProfile.repoRoot).toBe("/Users/byung/work/omht");
+      expect(overrideProfile.id).toBe("omht");
+      expect(overrideProfile.repoRootExpression).toBe("$HOME/projects/omht");
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails closed for duplicate project ids and conflicting project keywords", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-profile-invalid-"));
+    try {
+      await writeFile(
+        join(root, "a.json"),
+        JSON.stringify({ ...profile, id: "omht", repoRoot: "$HOME/projects/omht", keywords: ["shared"] }),
+        "utf8",
+      );
+      await writeFile(
+        join(root, "b.json"),
+        JSON.stringify({ ...profile, id: "omht", repoRoot: "$HOME/projects/other", keywords: ["other"] }),
+        "utf8",
+      );
+
+      await expect(loadProjectProfiles(root, { env: { HOME: "/Users/byung" }, homeDir: "/Users/byung" })).rejects.toThrow(
+        "duplicate project id omht",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+
+    const keywordRoot = await mkdtemp(join(tmpdir(), "samantha-codex-profile-keyword-"));
+    try {
+      await writeFile(
+        join(keywordRoot, "a.json"),
+        JSON.stringify({ ...profile, id: "omht", repoRoot: "$HOME/projects/omht", keywords: ["shared"] }),
+        "utf8",
+      );
+      await writeFile(
+        join(keywordRoot, "b.json"),
+        JSON.stringify({ ...profile, id: "samantha", repoRoot: "$HOME/projects/samantha", keywords: ["shared"] }),
+        "utf8",
+      );
+
+      await expect(loadProjectProfiles(keywordRoot, { env: { HOME: "/Users/byung" }, homeDir: "/Users/byung" })).rejects.toThrow(
+        "project identifier shared conflicts with project omht",
+      );
+    } finally {
+      await rm(keywordRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("fails closed for invalid default scope and invalid repo root expressions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-profile-invalid-scope-"));
+    try {
+      await writeFile(
+        join(root, "omht.json"),
+        JSON.stringify({ ...profile, repoRoot: "$HOME/projects/omht", defaultRemoteScopeId: "missing" }),
+        "utf8",
+      );
+      await expect(loadProjectProfiles(root, { env: { HOME: "/Users/byung" }, homeDir: "/Users/byung" })).rejects.toThrow(
+        "defaultRemoteScopeId does not match a remote scope: missing",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+
+    const pathRoot = await mkdtemp(join(tmpdir(), "samantha-codex-profile-invalid-path-"));
+    try {
+      await writeFile(join(pathRoot, "omht.json"), JSON.stringify({ ...profile, repoRoot: "projects/omht" }), "utf8");
+      await expect(loadProjectProfiles(pathRoot, { env: { HOME: "/Users/byung" }, homeDir: "/Users/byung" })).rejects.toThrow(
+        "repoRoot must resolve to an absolute path: projects/omht",
+      );
+    } finally {
+      await rm(pathRoot, { recursive: true, force: true });
     }
   });
 });
