@@ -70,6 +70,8 @@ North-star criteria are tracked in [NORTH_STAR.md](NORTH_STAR.md).
   [EVIDENCE_BASED_PARALLELISM_EXPANSION.md](EVIDENCE_BASED_PARALLELISM_EXPANSION.md)
 - Phase 8 execution spec:
   [CONTEXT_AND_KNOWLEDGE_MEMORY.md](CONTEXT_AND_KNOWLEDGE_MEMORY.md)
+- Phase 9 execution spec:
+  [CONTINUOUS_24_7_OPERATIONS.md](CONTINUOUS_24_7_OPERATIONS.md)
 - North-star criteria: [NORTH_STAR.md](NORTH_STAR.md)
 
 Future phase execution specs should be added only when Samantha reaches that
@@ -325,7 +327,7 @@ are activated.
 
 ### 9. Continuous 24/7 Operations
 
-Status: planned.
+Status: in progress.
 
 Objective: make Samantha operate continuously with minimal manual host care.
 
@@ -356,7 +358,8 @@ Exit criteria:
 - State can be backed up, restored, and audited.
 - BK can recover the system from another machine with documented steps.
 
-Execution stages: write a phase-specific document when this phase begins.
+Detailed stages:
+[CONTINUOUS_24_7_OPERATIONS.md](CONTINUOUS_24_7_OPERATIONS.md).
 
 ### 10. North Star Achieved
 
