@@ -14,6 +14,12 @@ import {
 } from "../src/lib/profile-governance";
 import { DEFAULT_SAFETY_POLICY, validateDispatch } from "../src/lib/policy";
 import {
+  DEFAULT_ADVISORY_ROLE_TOPOLOGY,
+  advisoryRoleTopologyCapabilityId,
+  advisoryRoleTopologyChangeSummary,
+  validateAdvisoryRoleTopologyGovernance,
+} from "../src/lib/role-topology";
+import {
   projectSafetyPolicyCapabilityId,
   validateProjectSafetyPolicyGovernance,
 } from "../src/lib/project-safety-policy";
@@ -352,6 +358,30 @@ describe("agent profile and capability governance", () => {
         prompt: "Approve safety policy writerCap change.",
       }),
     ]).ok).toBe(true);
+  });
+
+  test("governs advisory topology changes as capability metadata without dispatch authority", () => {
+    const changedTopology = {
+      ...DEFAULT_ADVISORY_ROLE_TOPOLOGY,
+      relationships: [
+        ...DEFAULT_ADVISORY_ROLE_TOPOLOGY.relationships,
+        { from: "reviewer" as const, relation: "advises" as const, to: "writer" as const, description: "Extra advisory metadata." },
+      ],
+    };
+    const missing = validateAdvisoryRoleTopologyGovernance(changedTopology);
+    const approved = validateAdvisoryRoleTopologyGovernance(changedTopology, DEFAULT_ADVISORY_ROLE_TOPOLOGY, [
+      approvedDecision({
+        kind: "capability_change",
+        subjectType: "capability",
+        subjectId: advisoryRoleTopologyCapabilityId(),
+        prompt: advisoryRoleTopologyChangeSummary(changedTopology),
+      }),
+    ]);
+
+    expect(missing.ok).toBe(false);
+    expect(missing.violations[0]).toContain("advisory role topology has unapproved governed capability change");
+    expect(approved.ok).toBe(true);
+    expect(validateDispatch(reportTask, reviewer).mayDispatch).toBe(true);
   });
 
   test("requires governed approval when project policy expands authority", () => {

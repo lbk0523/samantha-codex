@@ -1042,6 +1042,8 @@ describe("operator reports", () => {
     expect(planReport).toContain("batch 1: Implement planning flow (Writer, 구현/수정) - 즉시 후보");
     expect(planReport).toContain("역할 흐름:");
     expect(planReport).toContain("Writer: Implement planning flow: 구현 산출 (구현/수정)");
+    expect(planReport).toContain("advisory topology:");
+    expect(planReport).toContain("reviewed by Reviewer");
     expect(planReport).toContain("계획 다시 보기: `/plan_current`");
     expect(planReport).toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
     expect(planReport).toContain("계획 수정: `/revise <피드백>`");

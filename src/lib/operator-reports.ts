@@ -1,4 +1,4 @@
-import type { TaskSpec } from "./contracts";
+import type { AgentRole, TaskSpec } from "./contracts";
 import { buildCeoStatusSnapshot, type CeoStatusSnapshot } from "./ceo-status";
 import {
   summarizeCostBudgetAuditRollups,
@@ -20,6 +20,7 @@ import { buildProjectQueueSnapshot, formatProjectQueueSnapshot } from "./project
 import { classifyRemoteRequest, projectRemoteScopeRisk, type ProjectProfile, type ProjectRemoteScope, type RemoteRequestClassification } from "./project-profile";
 import type { ProposalRecord } from "./proposal-store";
 import { remoteActionCommand, type RemoteActionRecord } from "./remote-action-store";
+import { advisoryRoleTopologySummaryForRole } from "./role-topology";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
 import type { WorkerRunLog } from "./run-log";
 import type { TaskDraftRecord } from "./task-draft-store";
@@ -301,8 +302,22 @@ function agentRoleLabel(agentId: string | undefined): string {
   return "Agent";
 }
 
+function agentRoleForId(agentId: string | undefined): AgentRole | undefined {
+  if (agentId === "codex-reviewer") return "reviewer";
+  if (agentId === "codex-evaluator") return "evaluator";
+  if (agentId === "codex-spec" || agentId === "codex-orchestrator") return "spec";
+  if (agentId === "codex-researcher") return "researcher";
+  if (agentId === "codex-content") return "content";
+  if (agentId === "codex-operations") return "operations";
+  if (agentId === "codex-worker") return "writer";
+  return undefined;
+}
+
 function roleOutcomeLine(input: { agentId?: string; title: string; mode?: string; outcome: string }): string {
-  return `- ${agentRoleLabel(input.agentId)}: ${oneLine(input.title)}: ${input.outcome} (${resultModeLabel(input.mode)})`;
+  const role = agentRoleForId(input.agentId);
+  const topology = role ? advisoryRoleTopologySummaryForRole(role) : "";
+  const topologyText = topology ? `; advisory topology: ${topology}` : "";
+  return `- ${agentRoleLabel(input.agentId)}: ${oneLine(input.title)}: ${input.outcome} (${resultModeLabel(input.mode)})${topologyText}`;
 }
 
 function taskProposalLine(task: NonNullable<OrchestratorPlanRecord["payload"]>["tasks"][number]): string {

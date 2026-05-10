@@ -138,6 +138,18 @@ Verification focus:
 - topology appears in operator-facing summaries
 - topology alone does not change dispatch policy
 
+Outcome:
+
+- Added an advisory role topology contract for role relationships across
+  reviewer, researcher, evaluator, spec, content, operations, and writer roles.
+- Made the topology explicitly non-authoritative: it grants no dispatch, writer,
+  connector, secret, merge, push, cleanup, approval, or safety-policy authority.
+- Tied topology changes to the existing capability-governance decision baseline.
+- Surfaced topology guidance in orchestrator planning prompts and
+  operator-facing role summaries.
+- Left dispatch authority unchanged. `DEFAULT_SAFETY_POLICY.writerCap` remains
+  `1`.
+
 ## M4: Stronger Non-Writer Parallel Routine
 
 Goal: make report-only non-writer parallel work routine while preserving

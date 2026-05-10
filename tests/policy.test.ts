@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
+import type { AdvisoryRoleTopology, AgentProfile, TaskSpec } from "../src/lib/contracts";
 import { DEFAULT_SAFETY_POLICY, validateAgentProfile, validateDispatch } from "../src/lib/policy";
+import {
+  DEFAULT_ADVISORY_ROLE_TOPOLOGY,
+  validateAdvisoryRoleTopology,
+} from "../src/lib/role-topology";
 
 const worker: AgentProfile = {
   id: "codex-worker",
@@ -45,6 +49,24 @@ const reviewer: AgentProfile = {
 describe("validateDispatch", () => {
   test("keeps the default writer cap at one", () => {
     expect(DEFAULT_SAFETY_POLICY.writerCap).toBe(1);
+  });
+
+  test("validates advisory role topology against known roles without authority grants", () => {
+    const result = validateAdvisoryRoleTopology(DEFAULT_ADVISORY_ROLE_TOPOLOGY);
+    const invalidTopology = {
+      ...DEFAULT_ADVISORY_ROLE_TOPOLOGY,
+      authority: { ...DEFAULT_ADVISORY_ROLE_TOPOLOGY.authority, dispatch: true },
+      relationships: [
+        ...DEFAULT_ADVISORY_ROLE_TOPOLOGY.relationships,
+        { from: "unknown", relation: "reviews", to: "writer" },
+      ],
+    } as unknown as AdvisoryRoleTopology;
+    const invalid = validateAdvisoryRoleTopology(invalidTopology);
+
+    expect(result.ok).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(invalid.violations).toContain("role topology authority.dispatch must be false");
+    expect(invalid.violations).toContain("role topology relationship uses unknown source role: unknown");
   });
 
   test("accepts bundled agent profile contracts", async () => {
@@ -130,6 +152,31 @@ describe("validateDispatch", () => {
       reviewer,
     );
 
+    expect(result.mayDispatch).toBe(false);
+    expect(result.violations).toContain("non-writer tasks must use report resultMode");
+    expect(result.violations).toContain("non-writer report tasks must not declare targetFiles");
+  });
+
+  test("advisory topology alone cannot change dispatch policy", () => {
+    expect(validateAdvisoryRoleTopology({
+      ...DEFAULT_ADVISORY_ROLE_TOPOLOGY,
+      relationships: [
+        ...DEFAULT_ADVISORY_ROLE_TOPOLOGY.relationships,
+        { from: "reviewer", relation: "advises", to: "writer", description: "Extra advisory edge only." },
+      ],
+    }).ok).toBe(true);
+
+    const result = validateDispatch(
+      {
+        ...validTask,
+        targetAgent: "codex-reviewer",
+        resultMode: "write",
+        targetFiles: ["src/lib/policy.ts"],
+      },
+      reviewer,
+    );
+
+    expect(DEFAULT_SAFETY_POLICY.writerCap).toBe(1);
     expect(result.mayDispatch).toBe(false);
     expect(result.violations).toContain("non-writer tasks must use report resultMode");
     expect(result.violations).toContain("non-writer report tasks must not declare targetFiles");

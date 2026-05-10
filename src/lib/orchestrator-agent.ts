@@ -11,6 +11,7 @@ import type {
 } from "./orchestrator-store";
 import { selectedProjectIdFromAncestry } from "./orchestration-ancestry";
 import type { RemoteActionRecord } from "./remote-action-store";
+import { advisoryRoleTopologyPromptLines } from "./role-topology";
 import type { WorkerRunLog } from "./run-log";
 import { runCommand, type CommandRunResult } from "./worker-dispatch";
 
@@ -106,6 +107,7 @@ export function buildOrchestratorPrompt(input: {
     "- Use `codex-content` for report-only content drafting or critique that stays in the final response.",
     "- Use `codex-operations` for report-only operational analysis, runbook checks, prerequisites, or safe next-action reports.",
     "- Use `codex-worker` only for implementation/write tasks that may change files.",
+    ...advisoryRoleTopologyPromptLines(),
     "Non-writer tasks must use `resultMode: \"report\"`, `targetFiles: []`, and no file-writing instructions.",
     "Non-writer tasks must not depend on unmerged files produced by writer tasks.",
     "Do not add extra role tasks unless they reduce concrete risk for the user's request.",

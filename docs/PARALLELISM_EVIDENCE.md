@@ -30,6 +30,7 @@ There is no automatic Phase 7 writer cap increase.
 | Keep parallel reports readable | `tests/parallelism-evidence.test.ts` covers parallel specialist plus single-writer role outcomes without raw action/status noise. | `bun run test:portable` |
 | Keep integration deterministic | `tests/merge-gate.test.ts` covers merge and push gates; `tests/worktree-cleanup.test.ts` covers cleanup gates; `tests/run-lifecycle-store.test.ts` records lifecycle status in `state/run-lifecycle.jsonl`. | `bun run test:portable` |
 | Keep recovery deterministic | `tests/recovery-context.test.ts`, `tests/recovery-continuity.test.ts`, and `tests/operations.test.ts` cover `/recover -> /plan -> /go`, failed-plan evidence, and canonical repo-root instructions. | `bun run test:portable` |
+| Keep role topology advisory | `src/lib/role-topology.ts` defines advisory role relationships and explicitly denies dispatch, writer, connector, secret, merge, push, cleanup, approval, and safety-policy authority. `tests/policy.test.ts`, `tests/profile-governance.test.ts`, `tests/orchestrator-agent.test.ts`, and `tests/operator-reports.test.ts` cover known-role validation, governance approval, planning/reporting visibility, and unchanged dispatch policy. | `bun run test:portable` |
 
 ## Dogfood Notes
 

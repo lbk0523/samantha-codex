@@ -1,6 +1,7 @@
 import type { WorkItemAncestry } from "./ancestry";
 
 export type AgentRole = "writer" | "reviewer" | "evaluator" | "spec" | "researcher" | "content" | "operations";
+export type AdvisoryRoleRelationshipKind = "reviews" | "researches" | "evaluates" | "specifies" | "reports-to" | "advises";
 export type WriterClass = "writer" | "non-writer";
 export type WorktreePolicy = "per-task" | "none";
 export type MergePolicy = "samantha-controlled" | "none";
@@ -27,6 +28,31 @@ export interface ConnectorAccessCapabilityRecord {
 export interface SecretAccessCapabilityRecord {
   secretName: string;
   capabilityId: string;
+}
+
+export interface AdvisoryRoleRelationship {
+  from: AgentRole;
+  relation: AdvisoryRoleRelationshipKind;
+  to: AgentRole;
+  description?: string;
+}
+
+export interface AdvisoryRoleTopologyAuthority {
+  dispatch: false;
+  writer: false;
+  connector: false;
+  secret: false;
+  merge: false;
+  push: false;
+  cleanup: false;
+  approval: false;
+  safetyPolicy: false;
+}
+
+export interface AdvisoryRoleTopology {
+  schemaVersion: 1;
+  relationships: AdvisoryRoleRelationship[];
+  authority: AdvisoryRoleTopologyAuthority;
 }
 
 export interface AgentProfile {
