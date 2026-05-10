@@ -1,8 +1,10 @@
 import type { TaskSpec } from "./contracts";
 import { buildCeoStatusSnapshot, type CeoStatusSnapshot } from "./ceo-status";
 import {
+  evaluateBudgetEnforcement,
   summarizeCostBudgetAuditRollups,
   summarizeCostBudgetAuditRecords,
+  type BudgetPolicyRecord,
   type CostBudgetAuditRecord,
   type CostBudgetAuditRollup,
   type CostBudgetTotal,
@@ -216,8 +218,22 @@ function rollupLine(label: string, rollups: CostBudgetAuditRollup[]): string {
   return `- ${label} rollup: ${visible.join("; ")}${more}`;
 }
 
-function budgetAuditLines(records: CostBudgetAuditRecord[] | undefined): string[] {
+function budgetAuditLines(input: {
+  records?: CostBudgetAuditRecord[];
+  policies?: BudgetPolicyRecord[];
+  decisions?: DecisionItem[];
+  governanceEvents?: GovernanceEventRecord[];
+  projectId?: string;
+}): string[] {
+  const records = input.records;
   if (!records) return [];
+  const budgetGate = evaluateBudgetEnforcement({
+    policies: input.policies,
+    observations: records,
+    context: { projectId: input.projectId },
+    decisions: input.decisions,
+    governanceEvents: input.governanceEvents,
+  });
   const summary = summarizeCostBudgetAuditRecords(records);
   if (summary.total === 0) {
     return [
@@ -225,6 +241,7 @@ function budgetAuditLines(records: CostBudgetAuditRecord[] | undefined): string[
       "Budget audit:",
       "- observations: none recorded",
       "- cost total: unavailable (missing cost data is unknown, not zero)",
+      `- budget gate: ${budgetGate.state}`,
     ];
   }
 
@@ -237,6 +254,7 @@ function budgetAuditLines(records: CostBudgetAuditRecord[] | undefined): string[
     `- known measured total: ${costTotalText(summary.measuredTotals)}`,
     `- known estimated total: ${costTotalText(summary.estimatedTotals)}`,
     "- unknown observations are missing cost data, not zero cost",
+    `- budget gate: ${budgetGate.state}${budgetGate.state === "ok" ? "" : ` - ${budgetGate.reasons.join("; ")}`}`,
     rollupSummary.gaps.length
       ? `- budget audit gaps: ${rollupSummary.gaps.length} records ${gapReasonText(rollupSummary.gaps)}`
       : "- budget audit gaps: none",
@@ -1124,6 +1142,7 @@ export function nowReport(input: {
   reports?: CeoReportRecord[];
   governanceEvents?: GovernanceEventRecord[];
   budgetObservations?: CostBudgetAuditRecord[];
+  budgetPolicies?: BudgetPolicyRecord[];
 }): string {
   const rankingSnapshot = buildCeoStatusSnapshot({
     runs: input.runs,
@@ -1139,6 +1158,7 @@ export function nowReport(input: {
     reports: input.reports,
     governanceEvents: input.governanceEvents,
     budgetObservations: input.budgetObservations,
+    budgetPolicies: input.budgetPolicies,
   });
   const rankingLines = compactRankingLines(rankingSnapshot);
   const currentPlans = (input.orchestratorPlans ?? []).filter((plan) => plan.status === "planned" || plan.status === "questions");
@@ -2257,6 +2277,7 @@ export function statusReport(input: {
   governanceEvents?: GovernanceEventRecord[];
   orchestratorPlanBlockers?: OrchestratorPlanBlocker[];
   budgetObservations?: CostBudgetAuditRecord[];
+  budgetPolicies?: BudgetPolicyRecord[];
 }): string {
   const latest = input.runs.at(-1);
   const latestLifecycle = latest ? input.lifecycles?.find((record) => record.runId === latest.runId) : undefined;
@@ -2296,6 +2317,7 @@ export function statusReport(input: {
     reports: input.reports,
     governanceEvents: input.governanceEvents,
     budgetObservations: input.budgetObservations,
+    budgetPolicies: input.budgetPolicies,
     orchestratorPlanBlockers: input.orchestratorPlanBlockers,
     ops: input.ops,
     globalBlockers: [...(input.ops?.failures ?? []), ...(input.ops?.warnings ?? [])],
@@ -2315,6 +2337,7 @@ export function statusReport(input: {
     reports: input.reports,
     governanceEvents: input.governanceEvents,
     budgetObservations: input.budgetObservations,
+    budgetPolicies: input.budgetPolicies,
   });
   const heartbeat = input.heartbeat
     ? `${input.heartbeat.status} pid=${input.heartbeat.pid} updated=${input.heartbeat.updatedAt} processed=${input.heartbeat.processedTotal}`
@@ -2380,7 +2403,13 @@ export function statusReport(input: {
     latest ? `- lifecycle: ${lifecycleText(latestLifecycle)}` : "",
     "",
     ...compactRankingLines(ceoRankingSnapshot),
-    ...budgetAuditLines(input.budgetObservations),
+    ...budgetAuditLines({
+      records: input.budgetObservations,
+      policies: input.budgetPolicies,
+      decisions: input.decisions,
+      governanceEvents: input.governanceEvents,
+      projectId: input.projectId,
+    }),
     "",
     ...formatProjectQueueSnapshot(projectQueues),
   ]

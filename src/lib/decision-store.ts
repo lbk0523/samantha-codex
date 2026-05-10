@@ -16,7 +16,8 @@ export type DecisionKind =
   | "agent_profile_change"
   | "capability_change"
   | "routine_change"
-  | "memory_change";
+  | "memory_change"
+  | "budget_change";
 export type DecisionResolution = "approved" | "rejected" | "needs_revision" | "answered" | "canceled";
 export type DecisionSubjectType =
   | "manual"
@@ -28,7 +29,8 @@ export type DecisionSubjectType =
   | "capability"
   | "routine"
   | "policy"
-  | "memory";
+  | "memory"
+  | "budget";
 
 export interface DecisionSubject {
   type: DecisionSubjectType;

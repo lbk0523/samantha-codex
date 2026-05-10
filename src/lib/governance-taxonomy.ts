@@ -92,6 +92,7 @@ export const SOURCE_OF_TRUTH_RECORD_KINDS = [
   "routine_trigger",
   "project_profile",
   "safety_policy",
+  "budget_policy",
 ] as const;
 
 export type SourceOfTruthRecordKind = (typeof SOURCE_OF_TRUTH_RECORD_KINDS)[number];

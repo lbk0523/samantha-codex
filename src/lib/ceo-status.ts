@@ -13,7 +13,7 @@ import type { OpsSnapshot } from "./ops-diagnostics";
 import type { OrchestratorPlanBlocker } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "./orchestrator-store";
 import type { CeoReportRecord } from "./ceo-report-store";
-import type { CostBudgetAuditRecord } from "./cost-budget-audit";
+import { evaluateBudgetEnforcement, type BudgetPolicyRecord, type CostBudgetAuditRecord } from "./cost-budget-audit";
 import type { GovernanceEventRecord } from "./governance-event-store";
 import type { RemoteActionRecord } from "./remote-action-store";
 import { recoveryResolvedPlanIds } from "./recovery-continuity";
@@ -119,6 +119,7 @@ export interface BuildCeoStatusSnapshotInput {
   reports?: CeoReportRecord[];
   governanceEvents?: GovernanceEventRecord[];
   budgetObservations?: CostBudgetAuditRecord[];
+  budgetPolicies?: BudgetPolicyRecord[];
   goals?: GoalRecord[];
   ops?: OpsSnapshot;
 }
@@ -528,6 +529,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     reports: input.reports,
     governanceEvents: input.governanceEvents,
     budgetObservations: input.budgetObservations,
+    budgetPolicies: input.budgetPolicies,
     orchestratorPlanBlockers: input.orchestratorPlanBlockers,
     ops: input.ops,
     globalBlockers: [...(input.ops?.failures ?? []), ...(input.ops?.warnings ?? [])],
@@ -544,6 +546,13 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     : input.orchestratorPlanBlockers ?? [];
   const blockedPlanIds = new Set(orchestratorPlanBlockers.map((blocker) => blocker.planId));
   const lifecycles = filterProjectQueueRecords(input.lifecycles ?? [], input.projectId);
+  const budget = evaluateBudgetEnforcement({
+    policies: input.budgetPolicies,
+    observations: input.budgetObservations,
+    context: { projectId: input.projectId },
+    decisions: input.decisions,
+    governanceEvents: input.governanceEvents,
+  });
   const resolvedPlanIds = recoveryResolvedPlanIds({
     requests: orchestrationRequests,
     plans: orchestratorPlans,
@@ -738,6 +747,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     ...(input.ops?.failures ?? []),
     ...(input.ops?.warnings ?? []),
     ...failedRuns.map((run) => `Historical failed run ${run.runId}: ${run.failureReason ?? run.outcome}`),
+    ...(budget.state === "ok" ? [] : budget.reasons.map((reason) => `Budget gate ${budget.state}: ${reason}`)),
   ]);
 
   const sortedActive = sortRecent(active);

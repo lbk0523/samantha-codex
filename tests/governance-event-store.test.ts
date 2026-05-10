@@ -124,6 +124,24 @@ describe("GovernanceEventStore", () => {
     expect(await store.list({ subject: event.subject })).toEqual([event]);
   });
 
+  test("accepts budget policy records as governed budget event sources", async () => {
+    const { store } = await makeStore();
+    const event = createGovernanceEvent({
+      timestamp: "2026-05-10T01:10:00.000Z",
+      actor: "bk",
+      source: { kind: "budget_policy", id: "budget-policy-samantha" },
+      subject: { type: "budget", id: "budget-policy-samantha" },
+      kind: "transition_blocked",
+      riskClass: "low",
+      summary: "Budget gate blocked intake after deterministic local policy evaluation.",
+    });
+
+    await store.append(event);
+
+    expect(await store.list({ source: event.source })).toEqual([event]);
+    expect(await store.list({ subject: event.subject })).toEqual([event]);
+  });
+
   test("reports malformed JSON with line context", async () => {
     const { path, store } = await makeStore();
     await mkdir(dirname(path), { recursive: true });

@@ -16,7 +16,8 @@ export type RiskDecisionKind =
   | "agent_profile_change"
   | "capability_change"
   | "routine_change"
-  | "memory_change";
+  | "memory_change"
+  | "budget_change";
 
 export interface RiskApprovalEvidenceSubject {
   type: string;
@@ -194,7 +195,7 @@ const RISK_BY_SUBJECT_TRANSITION = {
   budget: {
     observe: "informational",
     propose: "low",
-    approve: "medium",
+    approve: "high",
     reject: "low",
     record_budget: "informational",
     block: "low",

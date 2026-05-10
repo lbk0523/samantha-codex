@@ -1,7 +1,7 @@
 import { normalizeRecordAncestry, type WorkItemAncestry } from "./ancestry";
 import type { CeoReportRecord } from "./ceo-report-store";
 import type { TaskSpec } from "./contracts";
-import type { CostBudgetAuditRecord } from "./cost-budget-audit";
+import type { BudgetPolicyRecord, CostBudgetAuditRecord } from "./cost-budget-audit";
 import type { DecisionItem } from "./decision-store";
 import type { GovernanceEventRecord } from "./governance-event-store";
 import type { RunSummary } from "./ledger";
@@ -76,6 +76,7 @@ export interface ProjectQueueInput {
   reports?: CeoReportRecord[];
   governanceEvents?: GovernanceEventRecord[];
   budgetObservations?: CostBudgetAuditRecord[];
+  budgetPolicies?: BudgetPolicyRecord[];
   orchestratorPlanBlockers?: OrchestratorPlanBlocker[];
   ops?: OpsSnapshot;
   globalBlockers?: string[];
@@ -415,6 +416,8 @@ export function buildProjectQueueSnapshot(input: ProjectQueueInput, options: { f
       runs: input.runs,
       lifecycles: input.lifecycles,
       budgetObservations: input.budgetObservations,
+      budgetPolicies: input.budgetPolicies,
+      governanceEvents: input.governanceEvents,
       orchestratorPlanBlockers: input.orchestratorPlanBlockers,
       ops: input.ops,
     }, { projectId: options.filterProjectId }),

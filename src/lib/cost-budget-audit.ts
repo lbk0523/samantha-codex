@@ -2,6 +2,8 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { parseOptionalWorkItemAncestry, type AssignedWorkItemAncestry, type WorkItemAncestry } from "./ancestry";
 import type { AgentProfile, TaskSpec } from "./contracts";
+import type { DecisionItem } from "./decision-store";
+import type { GovernanceEventRecord } from "./governance-event-store";
 import { compactEntityId } from "./ids";
 import type { RunSummary } from "./ledger";
 import type { RemoteActionRecord } from "./remote-action-store";
@@ -128,6 +130,84 @@ export interface CostBudgetAuditRollupSummary {
   summary: CostBudgetAuditSummary;
   gaps: CostBudgetAuditGap[];
   rollups: Record<CostBudgetRollupDimension, CostBudgetAuditRollup[]>;
+}
+
+export type BudgetPolicyScopeType = "project" | "goal" | "work_item" | "run" | "action" | "model" | "provider";
+export type BudgetPolicyStatus = "proposed" | "active" | "disabled";
+export type BudgetEnforcementState = "ok" | "watch" | "defer" | "block" | "needs_bk";
+
+export interface BudgetPolicyScope {
+  type: BudgetPolicyScopeType;
+  id: string;
+}
+
+export interface BudgetPolicyThresholds {
+  currency: string;
+  watchAtAmount?: number;
+  deferAtAmount?: number;
+  blockAtAmount?: number;
+  unknownCost?: Exclude<BudgetEnforcementState, "ok">;
+}
+
+export interface BudgetPolicyGovernanceEvidence {
+  decisionId: string;
+  governanceEventId: string;
+  approvedBy: "bk";
+  approvedAt: string;
+  summary: string;
+}
+
+export interface BudgetPolicyRecord {
+  schemaVersion: 1;
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  status: BudgetPolicyStatus;
+  scope: BudgetPolicyScope;
+  thresholds: BudgetPolicyThresholds;
+  includesEstimated: boolean;
+  supersedesPolicyId?: string;
+  governance?: BudgetPolicyGovernanceEvidence;
+  summary?: string;
+}
+
+export interface CreateBudgetPolicyRecordInput {
+  id?: string;
+  createdAt: string;
+  updatedAt?: string;
+  status?: BudgetPolicyStatus;
+  scope: BudgetPolicyScope;
+  thresholds: BudgetPolicyThresholds;
+  includesEstimated?: boolean;
+  supersedesPolicyId?: string;
+  governance?: BudgetPolicyGovernanceEvidence;
+  summary?: string;
+}
+
+export interface BudgetEvaluationContext {
+  projectId?: string;
+  goalId?: string;
+  workItemId?: string;
+  runId?: string;
+  actionId?: string;
+  model?: string;
+  provider?: string;
+}
+
+export interface BudgetPolicyEvaluation {
+  policy: BudgetPolicyRecord;
+  state: BudgetEnforcementState;
+  reasons: string[];
+  knownTotals: CostBudgetTotal[];
+  unknownObservations: number;
+  matchedObservations: number;
+}
+
+export interface BudgetEnforcementDecision {
+  state: BudgetEnforcementState;
+  reasons: string[];
+  policyEvaluations: BudgetPolicyEvaluation[];
+  governanceViolations: string[];
 }
 
 function oneLine(value: string): string {
@@ -265,6 +345,120 @@ function normalizeCost(value: unknown): CostBudgetData {
   };
 }
 
+function parseBudgetPolicyScopeType(value: unknown): BudgetPolicyScopeType {
+  if (
+    value === "project" ||
+    value === "goal" ||
+    value === "work_item" ||
+    value === "run" ||
+    value === "action" ||
+    value === "model" ||
+    value === "provider"
+  ) {
+    return value;
+  }
+  throw new Error(`unknown budget policy scope type: ${describeUnknown(value)}`);
+}
+
+function parseBudgetPolicyStatus(value: unknown): BudgetPolicyStatus {
+  if (value === "proposed" || value === "active" || value === "disabled") return value;
+  throw new Error(`unknown budget policy status: ${describeUnknown(value)}`);
+}
+
+function parseBudgetEnforcementState(value: unknown): Exclude<BudgetEnforcementState, "ok"> {
+  if (value === "watch" || value === "defer" || value === "block" || value === "needs_bk") return value;
+  throw new Error(`unknown unknown-cost budget state: ${describeUnknown(value)}`);
+}
+
+function normalizeBudgetScope(value: unknown): BudgetPolicyScope {
+  const scope = requireRecord(value, "scope");
+  return {
+    type: parseBudgetPolicyScopeType(scope.type),
+    id: requireString(scope.id, "scope.id"),
+  };
+}
+
+function optionalNonNegativeAmount(value: unknown, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  return requireNonNegativeAmount(value, label);
+}
+
+function normalizeBudgetThresholds(value: unknown): BudgetPolicyThresholds {
+  const thresholds = requireRecord(value, "thresholds");
+  const normalized: BudgetPolicyThresholds = {
+    currency: requireString(thresholds.currency, "thresholds.currency").toUpperCase(),
+    watchAtAmount: optionalNonNegativeAmount(thresholds.watchAtAmount, "thresholds.watchAtAmount"),
+    deferAtAmount: optionalNonNegativeAmount(thresholds.deferAtAmount, "thresholds.deferAtAmount"),
+    blockAtAmount: optionalNonNegativeAmount(thresholds.blockAtAmount, "thresholds.blockAtAmount"),
+    unknownCost:
+      thresholds.unknownCost === undefined ? "defer" : parseBudgetEnforcementState(thresholds.unknownCost),
+  };
+  if (
+    normalized.watchAtAmount === undefined &&
+    normalized.deferAtAmount === undefined &&
+    normalized.blockAtAmount === undefined &&
+    normalized.unknownCost === undefined
+  ) {
+    throw new Error("budget policy thresholds require at least one limit");
+  }
+  if (
+    normalized.watchAtAmount !== undefined &&
+    normalized.deferAtAmount !== undefined &&
+    normalized.watchAtAmount > normalized.deferAtAmount
+  ) {
+    throw new Error("thresholds.watchAtAmount must be less than or equal to thresholds.deferAtAmount");
+  }
+  if (
+    normalized.deferAtAmount !== undefined &&
+    normalized.blockAtAmount !== undefined &&
+    normalized.deferAtAmount > normalized.blockAtAmount
+  ) {
+    throw new Error("thresholds.deferAtAmount must be less than or equal to thresholds.blockAtAmount");
+  }
+  if (
+    normalized.watchAtAmount !== undefined &&
+    normalized.blockAtAmount !== undefined &&
+    normalized.watchAtAmount > normalized.blockAtAmount
+  ) {
+    throw new Error("thresholds.watchAtAmount must be less than or equal to thresholds.blockAtAmount");
+  }
+  return normalized;
+}
+
+function normalizeBudgetGovernance(value: unknown): BudgetPolicyGovernanceEvidence | undefined {
+  if (value === undefined) return undefined;
+  const governance = requireRecord(value, "governance");
+  if (governance.approvedBy !== "bk") throw new Error("governance.approvedBy must be bk");
+  return {
+    decisionId: requireString(governance.decisionId, "governance.decisionId"),
+    governanceEventId: requireString(governance.governanceEventId, "governance.governanceEventId"),
+    approvedBy: "bk",
+    approvedAt: requireTimestamp(governance.approvedAt),
+    summary: requireString(governance.summary, "governance.summary"),
+  };
+}
+
+function normalizeOptionalBoolean(value: unknown, label: string, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") throw new Error(`${label} must be a boolean`);
+  return value;
+}
+
+function buildBudgetPolicyId(input: Omit<CreateBudgetPolicyRecordInput, "id">): string {
+  return compactEntityId({
+    prefix: "budget-policy",
+    createdAt: input.createdAt,
+    label: `${input.scope.type}-${input.scope.id}`,
+    source: [
+      input.status ?? "proposed",
+      `${input.scope.type}:${input.scope.id}`,
+      JSON.stringify(input.thresholds),
+      input.includesEstimated ?? true,
+      input.supersedesPolicyId ?? "",
+    ].join("|"),
+  });
+}
+
 function subjectKey(subject: CostBudgetSubject): string {
   return `${subject.type}:${subject.id}`;
 }
@@ -327,6 +521,61 @@ export function createCostBudgetAuditRecord(input: CreateCostBudgetAuditRecordIn
     context,
     summary,
   };
+}
+
+export function createBudgetPolicyRecord(input: CreateBudgetPolicyRecordInput): BudgetPolicyRecord {
+  const createdAt = requireTimestamp(input.createdAt);
+  const updatedAt = input.updatedAt ? requireTimestamp(input.updatedAt) : createdAt;
+  const scope = normalizeBudgetScope(input.scope);
+  const thresholds = normalizeBudgetThresholds(input.thresholds);
+  const status = parseBudgetPolicyStatus(input.status ?? "proposed");
+  const supersedesPolicyId = optionalString(input.supersedesPolicyId, "supersedesPolicyId");
+  const governance = normalizeBudgetGovernance(input.governance);
+  const summary = optionalString(input.summary, "summary");
+  const id = input.id ? requireString(input.id, "id") : buildBudgetPolicyId({
+    createdAt,
+    updatedAt,
+    status,
+    scope,
+    thresholds,
+    includesEstimated: input.includesEstimated,
+    supersedesPolicyId,
+    governance,
+    summary,
+  });
+
+  return {
+    schemaVersion: 1,
+    id,
+    createdAt,
+    updatedAt,
+    status,
+    scope,
+    thresholds,
+    includesEstimated: input.includesEstimated ?? true,
+    supersedesPolicyId,
+    governance,
+    summary,
+  };
+}
+
+export function parseBudgetPolicyRecord(value: unknown): BudgetPolicyRecord {
+  const record = requireRecord(value, "budget policy record");
+  if (record.schemaVersion !== 1) {
+    throw new Error(`unsupported budget policy schemaVersion: ${describeUnknown(record.schemaVersion)}`);
+  }
+  return createBudgetPolicyRecord({
+    id: requireString(record.id, "id"),
+    createdAt: requireTimestamp(record.createdAt),
+    updatedAt: requireTimestamp(record.updatedAt),
+    status: parseBudgetPolicyStatus(record.status),
+    scope: normalizeBudgetScope(record.scope),
+    thresholds: normalizeBudgetThresholds(record.thresholds),
+    includesEstimated: normalizeOptionalBoolean(record.includesEstimated, "includesEstimated", true),
+    supersedesPolicyId: optionalString(record.supersedesPolicyId, "supersedesPolicyId"),
+    governance: normalizeBudgetGovernance(record.governance),
+    summary: optionalString(record.summary, "summary"),
+  });
 }
 
 export function createRunCostBudgetObservation(input: {
@@ -557,6 +806,245 @@ export function summarizeCostBudgetAuditRollups(records: CostBudgetAuditRecord[]
   };
 }
 
+function budgetScopeValueForContext(context: BudgetEvaluationContext, scope: BudgetPolicyScope): string | undefined {
+  if (scope.type === "project") return context.projectId;
+  if (scope.type === "goal") return context.goalId;
+  if (scope.type === "work_item") return context.workItemId;
+  if (scope.type === "run") return context.runId;
+  if (scope.type === "action") return context.actionId;
+  if (scope.type === "model") return context.model;
+  return context.provider;
+}
+
+function budgetScopeValueForRecord(record: CostBudgetAuditRecord, scope: BudgetPolicyScope): string | undefined {
+  if (scope.type === "project") return projectIdForCostBudgetRecord(record);
+  if (scope.type === "goal") return goalIdForCostBudgetRecord(record);
+  if (scope.type === "work_item") return workItemIdForCostBudgetRecord(record);
+  if (scope.type === "run") return runIdForCostBudgetRecord(record);
+  if (scope.type === "action") return actionIdForCostBudgetRecord(record);
+  if (scope.type === "model") return record.context?.model ?? (record.subject.type === "model" ? record.subject.id : undefined);
+  return undefined;
+}
+
+function policyAppliesToContext(policy: BudgetPolicyRecord, context: BudgetEvaluationContext): boolean {
+  return budgetScopeValueForContext(context, policy.scope) === policy.scope.id;
+}
+
+function policyMatchesRecord(policy: BudgetPolicyRecord, record: CostBudgetAuditRecord): boolean {
+  return budgetScopeValueForRecord(record, policy.scope) === policy.scope.id;
+}
+
+function stateOrder(state: BudgetEnforcementState): number {
+  return { ok: 0, watch: 1, defer: 2, block: 3, needs_bk: 4 }[state];
+}
+
+function maxBudgetState(states: BudgetEnforcementState[]): BudgetEnforcementState {
+  return states.sort((left, right) => stateOrder(right) - stateOrder(left))[0] ?? "ok";
+}
+
+function totalForCurrency(records: CostBudgetAuditRecord[], policy: BudgetPolicyRecord): CostBudgetTotal[] {
+  const totals = new Map<string, number>();
+  for (const record of records) {
+    if (record.cost.kind === "unknown") continue;
+    if (record.cost.kind === "estimated" && !policy.includesEstimated) continue;
+    totals.set(record.cost.currency, (totals.get(record.cost.currency) ?? 0) + record.cost.amount);
+  }
+  return [...totals.entries()]
+    .map(([currency, amount]) => ({ currency, amount }))
+    .sort((left, right) => left.currency.localeCompare(right.currency));
+}
+
+function knownAmountForPolicy(records: CostBudgetAuditRecord[], policy: BudgetPolicyRecord): number {
+  let total = 0;
+  for (const record of records) {
+    if (record.cost.kind === "unknown") continue;
+    if (record.cost.currency !== policy.thresholds.currency) continue;
+    if (record.cost.kind === "estimated" && !policy.includesEstimated) continue;
+    total += record.cost.amount;
+  }
+  return total;
+}
+
+function decisionApprovesBudgetPolicy(policy: BudgetPolicyRecord, decisions: DecisionItem[]): boolean {
+  const decisionId = policy.governance?.decisionId;
+  if (!decisionId) return false;
+  return decisions.some((decision) =>
+    decision.id === decisionId &&
+    (decision.kind === "budget_change" || decision.kind === "risk_acceptance") &&
+    decision.status === "resolved" &&
+    decision.resolution === "approved" &&
+    decision.resolvedBy === "bk" &&
+    Boolean(decision.resolvedAt) &&
+    decision.subject?.type === "budget" &&
+    decision.subject.id === policy.id,
+  );
+}
+
+function eventApprovesBudgetPolicy(policy: BudgetPolicyRecord, events: GovernanceEventRecord[]): boolean {
+  const eventId = policy.governance?.governanceEventId;
+  if (!eventId) return false;
+  return events.some((event) =>
+    event.id === eventId &&
+    event.kind === "transition_approved" &&
+    event.subject.type === "budget" &&
+    event.subject.id === policy.id,
+  );
+}
+
+export function validateBudgetPolicyGovernance(input: {
+  policy: BudgetPolicyRecord;
+  decisions?: DecisionItem[];
+  governanceEvents?: GovernanceEventRecord[];
+}): string[] {
+  const policy = input.policy;
+  if (policy.status !== "active") return [];
+  const violations: string[] = [];
+  if (!policy.governance) {
+    violations.push(`budget policy ${policy.id} is active without governance evidence`);
+    return violations;
+  }
+  if (policy.governance.approvedBy !== "bk") {
+    violations.push(`budget policy ${policy.id} governance evidence must be approved by BK`);
+  }
+  if (!decisionApprovesBudgetPolicy(policy, input.decisions ?? [])) {
+    violations.push(`budget policy ${policy.id} is missing approved BK budget_change decision evidence`);
+  }
+  if (!eventApprovesBudgetPolicy(policy, input.governanceEvents ?? [])) {
+    violations.push(`budget policy ${policy.id} is missing transition_approved governance event evidence`);
+  }
+  return violations;
+}
+
+export function evaluateBudgetPolicy(
+  policy: BudgetPolicyRecord,
+  records: CostBudgetAuditRecord[],
+): BudgetPolicyEvaluation {
+  const matched = records.filter((record) => policyMatchesRecord(policy, record));
+  const unknownObservations = matched.filter((record) => record.cost.kind === "unknown").length;
+  const knownAmount = knownAmountForPolicy(matched, policy);
+  const states: BudgetEnforcementState[] = ["ok"];
+  const reasons: string[] = [];
+
+  if (unknownObservations > 0) {
+    states.push(policy.thresholds.unknownCost ?? "defer");
+    reasons.push(`unknown cost observations=${unknownObservations} for ${policy.scope.type}:${policy.scope.id}`);
+  }
+  if (policy.thresholds.blockAtAmount !== undefined && knownAmount >= policy.thresholds.blockAtAmount) {
+    states.push("block");
+    reasons.push(`known ${policy.thresholds.currency} cost ${knownAmount} reached block limit ${policy.thresholds.blockAtAmount}`);
+  } else if (policy.thresholds.deferAtAmount !== undefined && knownAmount >= policy.thresholds.deferAtAmount) {
+    states.push("defer");
+    reasons.push(`known ${policy.thresholds.currency} cost ${knownAmount} reached defer limit ${policy.thresholds.deferAtAmount}`);
+  } else if (policy.thresholds.watchAtAmount !== undefined && knownAmount >= policy.thresholds.watchAtAmount) {
+    states.push("watch");
+    reasons.push(`known ${policy.thresholds.currency} cost ${knownAmount} reached watch limit ${policy.thresholds.watchAtAmount}`);
+  }
+
+  return {
+    policy,
+    state: maxBudgetState(states),
+    reasons: reasons.length ? reasons : [`budget policy ${policy.id} is within deterministic limits`],
+    knownTotals: totalForCurrency(matched, policy),
+    unknownObservations,
+    matchedObservations: matched.length,
+  };
+}
+
+export function evaluateBudgetEnforcement(input: {
+  policies?: BudgetPolicyRecord[];
+  observations?: CostBudgetAuditRecord[];
+  context?: BudgetEvaluationContext;
+  decisions?: DecisionItem[];
+  governanceEvents?: GovernanceEventRecord[];
+}): BudgetEnforcementDecision {
+  const context = input.context ?? {};
+  const policies = (input.policies ?? []).filter((policy) => policy.status !== "disabled" && policyAppliesToContext(policy, context));
+  if (!policies.length) {
+    return {
+      state: "ok",
+      reasons: ["no active budget policy applies"],
+      policyEvaluations: [],
+      governanceViolations: [],
+    };
+  }
+
+  const governanceViolations = policies.flatMap((policy) =>
+    validateBudgetPolicyGovernance({
+      policy,
+      decisions: input.decisions,
+      governanceEvents: input.governanceEvents,
+    }),
+  );
+  if (governanceViolations.length) {
+    return {
+      state: "needs_bk",
+      reasons: governanceViolations,
+      policyEvaluations: [],
+      governanceViolations,
+    };
+  }
+
+  const active = policies.filter((policy) => policy.status === "active");
+  const proposed = policies.filter((policy) => policy.status === "proposed");
+  const policyEvaluations = active.map((policy) => evaluateBudgetPolicy(policy, input.observations ?? []));
+  const states = policyEvaluations.map((evaluation) => evaluation.state);
+  const reasons = policyEvaluations.flatMap((evaluation) =>
+    evaluation.state === "ok" ? [] : evaluation.reasons.map((reason) => `${evaluation.policy.id}: ${reason}`),
+  );
+  if (proposed.length > 0 && active.length === 0) {
+    return {
+      state: "needs_bk",
+      reasons: proposed.map((policy) => `budget policy ${policy.id} is proposed and needs BK approval before enforcement`),
+      policyEvaluations,
+      governanceViolations: [],
+    };
+  }
+
+  const state = maxBudgetState(states);
+  return {
+    state,
+    reasons: reasons.length ? reasons : ["budget policy limits are ok"],
+    policyEvaluations,
+    governanceViolations: [],
+  };
+}
+
+export async function loadBudgetPolicyRecords(path: string): Promise<BudgetPolicyRecord[]> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+
+  const records: BudgetPolicyRecord[] = [];
+  const seenIds = new Set<string>();
+  raw.split("\n").forEach((line, index) => {
+    if (!line.trim()) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      throw new Error(`malformed budget policy record at line ${index + 1}: invalid JSON`);
+    }
+
+    let record: BudgetPolicyRecord;
+    try {
+      record = parseBudgetPolicyRecord(parsed);
+    } catch (err) {
+      throw new Error(`malformed budget policy record at line ${index + 1}: ${(err as Error).message}`);
+    }
+
+    if (seenIds.has(record.id)) {
+      throw new Error(`malformed budget policy record at line ${index + 1}: duplicate budget policy id: ${record.id}`);
+    }
+    seenIds.add(record.id);
+    records.push(record);
+  });
+  return records;
+}
+
 export class CostBudgetAuditStore {
   constructor(private readonly path: string) {}
 
@@ -588,5 +1076,38 @@ export class CostBudgetAuditStore {
 
   async create(input: CreateCostBudgetAuditRecordInput): Promise<CostBudgetAuditRecord> {
     return this.append(createCostBudgetAuditRecord(input));
+  }
+}
+
+export class BudgetPolicyStore {
+  constructor(private readonly path: string) {}
+
+  async list(): Promise<BudgetPolicyRecord[]> {
+    return loadBudgetPolicyRecords(this.path);
+  }
+
+  async find(id: string): Promise<BudgetPolicyRecord | undefined> {
+    return (await this.list()).find((record) => record.id === id);
+  }
+
+  async load(id: string): Promise<BudgetPolicyRecord> {
+    const record = await this.find(id);
+    if (!record) throw new Error(`budget policy not found: ${id}`);
+    return record;
+  }
+
+  async append(record: BudgetPolicyRecord): Promise<BudgetPolicyRecord> {
+    const normalized = parseBudgetPolicyRecord(record);
+    const records = await this.list();
+    const existing = records.find((item) => item.id === normalized.id);
+    if (existing) return existing;
+
+    await mkdir(dirname(this.path), { recursive: true });
+    await appendFile(this.path, `${JSON.stringify(normalized)}\n`, "utf8");
+    return normalized;
+  }
+
+  async create(input: CreateBudgetPolicyRecordInput): Promise<BudgetPolicyRecord> {
+    return this.append(createBudgetPolicyRecord(input));
   }
 }

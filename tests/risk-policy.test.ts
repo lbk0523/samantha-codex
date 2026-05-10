@@ -52,6 +52,7 @@ describe("risk policy contracts", () => {
     expect(classifyGovernanceRisk({ subjectType: "cleanup", transitionKind: "cleanup" }).riskClass).toBe("irreversible");
     expect(classifyGovernanceRisk({ subjectType: "recovery", transitionKind: "recover" }).riskClass).toBe("high");
     expect(classifyGovernanceRisk({ subjectType: "policy", transitionKind: "activate" }).riskClass).toBe("high");
+    expect(classifyGovernanceRisk({ subjectType: "budget", transitionKind: "approve" }).riskClass).toBe("high");
   });
 
   test("unknown risk and risk drift fail closed", () => {
@@ -135,5 +136,33 @@ describe("risk policy contracts", () => {
       requiresApproval: false,
       violations: [],
     });
+  });
+
+  test("budget policy approval requires explicit BK budget_change evidence", () => {
+    const approvedBudgetDecision: RiskApprovalEvidence = {
+      kind: "budget_change",
+      status: "resolved",
+      resolution: "approved",
+      resolvedAt: "2026-05-10T01:00:00.000Z",
+      resolvedBy: "bk",
+      subject: { type: "budget", id: "budget-policy-1" },
+    };
+    const missing = riskPolicyAllowsTransition({
+      subjectType: "budget",
+      subjectId: "budget-policy-1",
+      transitionKind: "approve",
+      approvedDecisionKinds: ["budget_change", "risk_acceptance"],
+    });
+    const approved = riskPolicyAllowsTransition({
+      subjectType: "budget",
+      subjectId: "budget-policy-1",
+      transitionKind: "approve",
+      approvalEvidence: [approvedBudgetDecision],
+      approvedDecisionKinds: ["budget_change", "risk_acceptance"],
+    });
+
+    expect(missing.mayProceed).toBe(false);
+    expect(missing.blockedReason).toContain("approved BK decision evidence is required for high budget.approve");
+    expect(approved.mayProceed).toBe(true);
   });
 });

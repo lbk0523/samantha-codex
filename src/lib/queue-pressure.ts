@@ -1,7 +1,14 @@
 import type { WorkItemAncestry } from "./ancestry";
 import type { TaskSpec } from "./contracts";
-import type { CostBudgetAuditRecord } from "./cost-budget-audit";
+import {
+  evaluateBudgetEnforcement,
+  type BudgetEnforcementDecision,
+  type BudgetEvaluationContext,
+  type BudgetPolicyRecord,
+  type CostBudgetAuditRecord,
+} from "./cost-budget-audit";
 import type { DecisionItem } from "./decision-store";
+import type { GovernanceEventRecord } from "./governance-event-store";
 import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import type { OrchestratorPlanBlocker } from "./orchestrator-blockers";
@@ -38,6 +45,7 @@ export interface QueuePressureSnapshot {
   pressureClass: QueuePressureClass;
   metrics: QueuePressureMetrics;
   reasons: string[];
+  budget?: BudgetEnforcementDecision;
 }
 
 export interface QueuePressureInput {
@@ -50,6 +58,8 @@ export interface QueuePressureInput {
   runs?: RunSummary[];
   lifecycles?: RunLifecycleRecord[];
   budgetObservations?: CostBudgetAuditRecord[];
+  budgetPolicies?: BudgetPolicyRecord[];
+  governanceEvents?: GovernanceEventRecord[];
   orchestratorPlanBlockers?: OrchestratorPlanBlocker[];
   ops?: OpsSnapshot;
 }
@@ -179,6 +189,33 @@ function classFromMetrics(metrics: QueuePressureMetrics): { pressureClass: Queue
   };
 }
 
+function pressureClassFromBudget(state: BudgetEnforcementDecision["state"]): QueuePressureClass | undefined {
+  if (state === "watch") return "watch";
+  if (state === "defer") return "defer";
+  if (state === "block") return "block";
+  if (state === "needs_bk") return "needs_bk";
+  return undefined;
+}
+
+function mergeBudgetPressure(input: {
+  pressureClass: QueuePressureClass;
+  reasons: string[];
+  budget: BudgetEnforcementDecision;
+}): { pressureClass: QueuePressureClass; reasons: string[] } {
+  const budgetClass = pressureClassFromBudget(input.budget.state);
+  if (!budgetClass) return { pressureClass: input.pressureClass, reasons: input.reasons };
+  const budgetReasons = input.budget.reasons.map((reason) => `budget ${input.budget.state}: ${reason}`);
+  const candidates = [
+    { pressureClass: input.pressureClass, reason: input.reasons[0] ?? "" },
+    { pressureClass: budgetClass, reason: budgetReasons[0] ?? `budget ${input.budget.state}` },
+  ];
+  candidates.sort((left, right) => pressureOrder[right.pressureClass] - pressureOrder[left.pressureClass] || left.reason.localeCompare(right.reason));
+  return {
+    pressureClass: candidates[0].pressureClass,
+    reasons: [...input.reasons, ...budgetReasons].filter(Boolean),
+  };
+}
+
 export function buildQueuePressureSnapshot(input: QueuePressureInput = {}, options: { projectId?: string } = {}): QueuePressureSnapshot {
   const requests = filterProject(input.requests, options.projectId);
   const plans = filterProject(input.plans, options.projectId);
@@ -189,6 +226,14 @@ export function buildQueuePressureSnapshot(input: QueuePressureInput = {}, optio
   const runs = filterProject(input.runs, options.projectId);
   const lifecycles = filterProject(input.lifecycles, options.projectId);
   const budgetObservations = filterProject(input.budgetObservations, options.projectId);
+  const budgetContext: BudgetEvaluationContext = { projectId: options.projectId };
+  const budget = evaluateBudgetEnforcement({
+    policies: input.budgetPolicies,
+    observations: input.budgetObservations,
+    context: budgetContext,
+    decisions: input.decisions,
+    governanceEvents: input.governanceEvents,
+  });
   const blockers = input.orchestratorPlanBlockers ?? [];
   const projectPlanIds = new Set(plans.map((plan) => plan.id));
   const projectBlockers = options.projectId ? blockers.filter((blocker) => projectPlanIds.has(blocker.planId)) : blockers;
@@ -213,12 +258,13 @@ export function buildQueuePressureSnapshot(input: QueuePressureInput = {}, optio
     budgetAuditGaps: budgetObservations.filter((observation) => observation.cost.kind === "unknown").length,
     unsafeHostIssues,
   };
-  const classification = classFromMetrics(metrics);
+  const classification = mergeBudgetPressure({ ...classFromMetrics(metrics), budget });
   return {
     projectId: options.projectId,
     pressureClass: classification.pressureClass,
     metrics,
     reasons: classification.reasons,
+    budget,
   };
 }
 
@@ -241,11 +287,20 @@ export function decideQueueAdmission(input: {
       subjectKind,
       decision: subjectKind === "routine_trigger" || subjectKind === "action" ? "ask_bk" : "defer",
       pressure,
-      reason,
+      reason: `pending BK decisions=${pressure.metrics.pendingBkDecisions}`,
     };
   }
   if (pressure.metrics.recoveryNeeds > 0) {
     return { subjectKind, decision: subjectKind === "action" ? "block" : "defer", pressure, reason };
+  }
+  if (pressure.budget?.state === "needs_bk") {
+    return { subjectKind, decision: "ask_bk", pressure, reason: oneLine(pressure.budget.reasons[0] ?? reason) };
+  }
+  if (pressure.budget?.state === "block") {
+    return { subjectKind, decision: "block", pressure, reason: oneLine(pressure.budget.reasons[0] ?? reason) };
+  }
+  if (pressure.budget?.state === "defer") {
+    return { subjectKind, decision: "defer", pressure, reason: oneLine(pressure.budget.reasons[0] ?? reason) };
   }
   if (pressure.pressureClass === "normal" || pressure.pressureClass === "watch") {
     return { subjectKind, decision: "accept", pressure, reason };
@@ -277,6 +332,9 @@ export function formatQueuePressureSnapshot(pressure: QueuePressureSnapshot): st
     `- intake: pending_requests=${metrics.pendingRequests} deferred_requests=${metrics.deferredRequests} pending_bk=${metrics.pendingBkDecisions} task_drafts=${metrics.taskDrafts}`,
     `- execution: active_tasks=${metrics.activeTasks} active_actions=${metrics.activeActions} running_actions=${metrics.runningActions} recovery_needs=${metrics.recoveryNeeds} failed_runs=${metrics.failedRuns}`,
     `- audit: lifecycle_gaps=${metrics.runLifecycleGaps} outbox_backlog=${metrics.outboxBacklog} budget_audit_gaps=${metrics.budgetAuditGaps} unsafe_host=${metrics.unsafeHostIssues}`,
+    pressure.budget && pressure.budget.state !== "ok"
+      ? `- budget gate: ${pressure.budget.state} ${pressure.budget.reasons.join("; ")}`
+      : "- budget gate: ok",
     `- reasons: ${pressure.reasons.length ? pressure.reasons.join("; ") : "none"}`,
   ];
 }

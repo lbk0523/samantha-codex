@@ -72,7 +72,8 @@
     "agent_profile",
     "routine_trigger",
     "project_profile",
-    "safety_policy"
+    "safety_policy",
+    "budget_policy"
   ],
   "derivedViewKinds": [
     "ceo_status",

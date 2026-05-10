@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { TaskSpec } from "../src/lib/contracts";
 import { buildCeoStatusSnapshot, formatCeoStatusReport } from "../src/lib/ceo-status";
+import { createBudgetPolicyRecord, createCostBudgetAuditRecord } from "../src/lib/cost-budget-audit";
 import { createDecisionItem } from "../src/lib/decision-store";
+import { createGovernanceEvent } from "../src/lib/governance-event-store";
 import type { RunSummary } from "../src/lib/ledger";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "../src/lib/orchestrator-store";
 import type { RemoteActionRecord } from "../src/lib/remote-action-store";
@@ -272,6 +274,79 @@ describe("CEO status snapshot", () => {
     expect(snapshot.needsDecision.map((item) => item.id)).toEqual(["plan-questions", "plan-1"]);
     expect(snapshot.nextAction).toMatchObject({ kind: "answer_questions", targetId: "plan-questions" });
     expect(snapshot.risks).toContain("report could hide blockers");
+  });
+
+  test("surfaces approved budget block gates in CEO status without overriding decisions", () => {
+    const ancestry = {
+      mode: "assigned" as const,
+      projectId: "samantha",
+      goalId: "goal-budget",
+      workItemId: "work-budget",
+    };
+    const policy = createBudgetPolicyRecord({
+      id: "budget-policy-ceo",
+      createdAt: "2026-05-10T01:00:00.000Z",
+      status: "active",
+      scope: { type: "project", id: "samantha" },
+      thresholds: { currency: "USD", blockAtAmount: 1 },
+      governance: {
+        decisionId: "decision-budget-policy-ceo",
+        governanceEventId: "gov-event-budget-policy-ceo",
+        approvedBy: "bk",
+        approvedAt: "2026-05-10T01:02:00.000Z",
+        summary: "BK approved deterministic budget enforcement.",
+      },
+    });
+    const decision = {
+      ...createDecisionItem({
+        kind: "budget_change",
+        title: "Approve CEO budget policy",
+        prompt: "Approve deterministic budget enforcement.",
+        source: "system",
+        subject: { type: "budget", id: policy.id },
+        options: ["approve", "reject"],
+        createdAt: "2026-05-10T01:01:00.000Z",
+      }),
+      id: "decision-budget-policy-ceo",
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedBy: "bk" as const,
+      resolvedAt: "2026-05-10T01:02:00.000Z",
+      updatedAt: "2026-05-10T01:02:00.000Z",
+    };
+    const event = createGovernanceEvent({
+      id: "gov-event-budget-policy-ceo",
+      timestamp: "2026-05-10T01:02:00.000Z",
+      actor: "bk",
+      source: { kind: "decision", id: decision.id },
+      subject: { type: "budget", id: policy.id },
+      kind: "transition_approved",
+      riskClass: "high",
+      summary: "Budget policy approved.",
+      related: { decisionIds: [decision.id] },
+    });
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-10T01:04:00.000Z",
+      projectId: "samantha",
+      decisions: [decision],
+      governanceEvents: [event],
+      budgetPolicies: [policy],
+      budgetObservations: [
+        createCostBudgetAuditRecord({
+          ancestry,
+          observedAt: "2026-05-10T01:03:00.000Z",
+          actor: "operator",
+          subject: { type: "project", id: "samantha" },
+          cost: { kind: "measured", amount: 2, currency: "USD", source: "manual receipt" },
+          context: { projectId: "samantha" },
+        }),
+      ],
+    });
+    const report = formatCeoStatusReport(snapshot);
+
+    expect(snapshot.risks.join(" ")).toContain("Budget gate block");
+    expect(report).toContain("Budget gate block");
+    expect(report).toContain("budget gate: block");
   });
 
   test("pending decision queue items appear before derived plan decisions", () => {

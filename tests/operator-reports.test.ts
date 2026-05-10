@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { createCostBudgetAuditRecord } from "../src/lib/cost-budget-audit";
+import { createBudgetPolicyRecord, createCostBudgetAuditRecord } from "../src/lib/cost-budget-audit";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import type { DaemonHealthResult, DaemonHeartbeat } from "../src/lib/daemon";
 import { createDecisionItem } from "../src/lib/decision-store";
+import { createGovernanceEvent } from "../src/lib/governance-event-store";
 import type { RunSummary } from "../src/lib/ledger";
 import {
   ceoNotificationReport,
@@ -633,6 +634,80 @@ describe("operator reports", () => {
 
     const empty = statusReport({ runs: [], pendingInboxCount: 0, budgetObservations: [] });
     expect(empty).toContain("cost total: unavailable (missing cost data is unknown, not zero)");
+  });
+
+  test("renders deterministic budget enforcement gates when approved policy applies", () => {
+    const ancestry = {
+      mode: "assigned" as const,
+      projectId: "samantha",
+      goalId: "goal-budget",
+      workItemId: "work-budget",
+    };
+    const policy = createBudgetPolicyRecord({
+      id: "budget-policy-report",
+      createdAt: "2026-05-10T01:00:00.000Z",
+      status: "active",
+      scope: { type: "project", id: "samantha" },
+      thresholds: { currency: "USD", blockAtAmount: 1, unknownCost: "defer" },
+      governance: {
+        decisionId: "decision-budget-policy-report",
+        governanceEventId: "gov-event-budget-policy-report",
+        approvedBy: "bk",
+        approvedAt: "2026-05-10T01:02:00.000Z",
+        summary: "BK approved deterministic budget policy.",
+      },
+    });
+    const decision = {
+      ...createDecisionItem({
+        kind: "budget_change",
+        title: "Approve budget policy",
+        prompt: "Approve deterministic budget enforcement.",
+        source: "system",
+        subject: { type: "budget", id: policy.id },
+        options: ["approve", "reject"],
+        createdAt: "2026-05-10T01:01:00.000Z",
+      }),
+      id: "decision-budget-policy-report",
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedBy: "bk" as const,
+      resolvedAt: "2026-05-10T01:02:00.000Z",
+      updatedAt: "2026-05-10T01:02:00.000Z",
+    };
+    const event = createGovernanceEvent({
+      id: "gov-event-budget-policy-report",
+      timestamp: "2026-05-10T01:02:00.000Z",
+      actor: "bk",
+      source: { kind: "decision", id: decision.id },
+      subject: { type: "budget", id: policy.id },
+      kind: "transition_approved",
+      riskClass: "high",
+      summary: "Budget policy approved.",
+      related: { decisionIds: [decision.id] },
+    });
+    const status = statusReport({
+      runs: [],
+      pendingInboxCount: 0,
+      projectId: "samantha",
+      decisions: [decision],
+      governanceEvents: [event],
+      budgetPolicies: [policy],
+      budgetObservations: [
+        createCostBudgetAuditRecord({
+          ancestry,
+          observedAt: "2026-05-10T01:03:00.000Z",
+          actor: "operator",
+          subject: { type: "project", id: "samantha" },
+          cost: { kind: "estimated", amount: 1.5, currency: "USD", basis: "manual token estimate" },
+          context: { projectId: "samantha", goalId: "goal-budget" },
+        }),
+      ],
+    });
+
+    expect(status).toContain("budget gate: block");
+    expect(status).toContain("reached block limit 1");
+    expect(status).toContain("- class: block project=samantha");
+    expect(status).toContain("budget block:");
   });
 
   test("renders project queue counts in the operator status report", () => {

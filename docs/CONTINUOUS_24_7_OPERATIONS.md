@@ -430,7 +430,32 @@ Verification focus:
 
 Outcome:
 
-- Pending.
+- Added deterministic budget policy records for project, goal, work item, run,
+  action, model, and provider scopes, backed by a file-backed
+  `state/budget-policies.jsonl` store.
+- Added local budget enforcement evaluation over existing budget audit
+  observations. Enforcement distinguishes measured, estimated, and unknown
+  cost; measured zero remains known zero, while unknown cost can defer, block,
+  or ask BK and is never counted as zero.
+- Required active budget policies to have explicit BK `budget_change` or risk
+  acceptance decision evidence plus a `transition_approved` governance event
+  for the budget policy subject before they can enforce. Missing evidence
+  produces `needs_bk`.
+- Wired budget enforcement into the existing queue admission path so approved
+  policies can defer or block request/action admission and append budget
+  governance block events. Pending BK decisions, recovery blockers, unsafe host
+  state, safety, approval, project, dispatch, merge, push, cleanup, recovery,
+  connector, and secret gates remain separate and higher authority.
+- Surfaced budget gate state in queue pressure, CEO status risks, operator
+  status reports, and project queue pressure formatting.
+- Added focused tests for policy storage, governance evidence, unknown-cost
+  defer behavior, deterministic block behavior, admission defer/block behavior,
+  gate priority behind BK decisions, budget governance event sources, risk
+  policy approval requirements, CEO status visibility, and operator report
+  visibility.
+- Did not add provider billing API integration, writer-cap changes,
+  connector/secret expansion, daemon/watch/poll/reply runtime changes, merge,
+  push, cleanup, or recovery authority.
 
 ## M9: Backup, Restore, And Host Migration Drills
 

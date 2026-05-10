@@ -4,13 +4,19 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   CostBudgetAuditStore,
+  BudgetPolicyStore,
   createCostBudgetAuditRecord,
+  createBudgetPolicyRecord,
   createRunCostBudgetObservation,
+  evaluateBudgetEnforcement,
   summarizeCostBudgetAuditRollups,
   summarizeCostBudgetAuditRecords,
+  validateBudgetPolicyGovernance,
   type CostBudgetAuditRecord,
 } from "../src/lib/cost-budget-audit";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
+import { createDecisionItem } from "../src/lib/decision-store";
+import { createGovernanceEvent } from "../src/lib/governance-event-store";
 import type { RunSummary } from "../src/lib/ledger";
 import { createRemoteDispatchAction } from "../src/lib/remote-action-store";
 
@@ -21,6 +27,13 @@ async function makeStore(): Promise<{ path: string; store: CostBudgetAuditStore 
   tmpRoots.push(root);
   const path = join(root, "state", "budget-audit.jsonl");
   return { path, store: new CostBudgetAuditStore(path) };
+}
+
+async function makePolicyStore(): Promise<{ path: string; store: BudgetPolicyStore }> {
+  const root = await mkdtemp(join(tmpdir(), "samantha-codex-budget-policy-"));
+  tmpRoots.push(root);
+  const path = join(root, "state", "budget-policies.jsonl");
+  return { path, store: new BudgetPolicyStore(path) };
 }
 
 afterEach(async () => {
@@ -283,5 +296,169 @@ describe("CostBudgetAuditStore", () => {
     await expect(store.list()).rejects.toThrow(
       "malformed cost budget audit record at line 1: unknown cost must not include amount",
     );
+  });
+
+  test("stores budget policy records for deterministic enforcement scopes", async () => {
+    const { store } = await makePolicyStore();
+    const policy = createBudgetPolicyRecord({
+      id: "budget-policy-samantha",
+      createdAt: "2026-05-10T01:00:00.000Z",
+      status: "proposed",
+      scope: { type: "project", id: "samantha" },
+      thresholds: { currency: "usd", watchAtAmount: 1, deferAtAmount: 2, blockAtAmount: 3 },
+      summary: "Project policy proposal.",
+    });
+
+    await store.append(policy);
+
+    expect(await store.load(policy.id)).toEqual(policy);
+    expect(policy.thresholds.currency).toBe("USD");
+    await expect(store.load("budget-policy-missing")).rejects.toThrow("budget policy not found: budget-policy-missing");
+  });
+
+  test("requires explicit governance evidence before budget policy activation can enforce", () => {
+    const policy = createBudgetPolicyRecord({
+      id: "budget-policy-active",
+      createdAt: "2026-05-10T01:00:00.000Z",
+      status: "active",
+      scope: { type: "project", id: "samantha" },
+      thresholds: { currency: "USD", blockAtAmount: 1 },
+      governance: {
+        decisionId: "decision-budget-policy-active",
+        governanceEventId: "gov-event-budget-policy-active",
+        approvedBy: "bk",
+        approvedAt: "2026-05-10T01:02:00.000Z",
+        summary: "BK approved project budget policy activation.",
+      },
+    });
+    const approved = {
+      ...createDecisionItem({
+        kind: "budget_change",
+        title: "Activate Samantha budget policy",
+        prompt: "Approve deterministic budget enforcement.",
+        source: "system",
+        subject: { type: "budget", id: policy.id },
+        options: ["approve", "reject"],
+        createdAt: "2026-05-10T01:01:00.000Z",
+      }),
+      id: "decision-budget-policy-active",
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedBy: "bk" as const,
+      resolvedAt: "2026-05-10T01:02:00.000Z",
+      updatedAt: "2026-05-10T01:02:00.000Z",
+    };
+    const event = createGovernanceEvent({
+      id: "gov-event-budget-policy-active",
+      timestamp: "2026-05-10T01:02:00.000Z",
+      actor: "bk",
+      source: { kind: "decision", id: approved.id },
+      subject: { type: "budget", id: policy.id },
+      kind: "transition_approved",
+      riskClass: "high",
+      summary: "Budget policy activation approved by BK.",
+      related: { decisionIds: [approved.id] },
+    });
+
+    expect(validateBudgetPolicyGovernance({ policy })).toEqual([
+      `budget policy ${policy.id} is missing approved BK budget_change decision evidence`,
+      `budget policy ${policy.id} is missing transition_approved governance event evidence`,
+    ]);
+    expect(validateBudgetPolicyGovernance({ policy, decisions: [approved], governanceEvents: [event] })).toEqual([]);
+    expect(evaluateBudgetEnforcement({
+      policies: [policy],
+      observations: [],
+      context: { projectId: "samantha" },
+    })).toMatchObject({ state: "needs_bk" });
+  });
+
+  test("enforces known and unknown project budget observations without treating unknown as zero", () => {
+    const governance = {
+      decisionId: "decision-budget-enforce",
+      governanceEventId: "gov-event-budget-enforce",
+      approvedBy: "bk" as const,
+      approvedAt: "2026-05-10T01:02:00.000Z",
+      summary: "BK approved deterministic project budget enforcement.",
+    };
+    const policy = createBudgetPolicyRecord({
+      id: "budget-policy-enforce",
+      createdAt: "2026-05-10T01:00:00.000Z",
+      status: "active",
+      scope: { type: "project", id: "samantha" },
+      thresholds: { currency: "USD", watchAtAmount: 1, deferAtAmount: 2, blockAtAmount: 3, unknownCost: "defer" },
+      governance,
+    });
+    const approved = {
+      ...createDecisionItem({
+        kind: "budget_change",
+        title: "Activate budget policy",
+        prompt: "Approve deterministic budget enforcement.",
+        source: "system",
+        subject: { type: "budget", id: policy.id },
+        options: ["approve", "reject"],
+        createdAt: "2026-05-10T01:01:00.000Z",
+      }),
+      id: governance.decisionId,
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedBy: "bk" as const,
+      resolvedAt: governance.approvedAt,
+      updatedAt: governance.approvedAt,
+    };
+    const event = createGovernanceEvent({
+      id: governance.governanceEventId,
+      timestamp: governance.approvedAt,
+      actor: "bk",
+      source: { kind: "decision", id: approved.id },
+      subject: { type: "budget", id: policy.id },
+      kind: "transition_approved",
+      riskClass: "high",
+      summary: "Budget policy activation approved by BK.",
+      related: { decisionIds: [approved.id] },
+    });
+    const zero = createCostBudgetAuditRecord({
+      ancestry,
+      observedAt: "2026-05-10T01:03:00.000Z",
+      actor: "operator",
+      subject: { type: "run", id: "run-zero" },
+      cost: { kind: "measured", amount: 0, currency: "USD", source: "receipt" },
+      context: { projectId: "samantha", runId: "run-zero" },
+    });
+    const unknown = createCostBudgetAuditRecord({
+      ancestry,
+      observedAt: "2026-05-10T01:04:00.000Z",
+      actor: "samantha",
+      subject: { type: "run", id: "run-unknown" },
+      cost: { kind: "unknown", reason: "provider cost missing" },
+      context: { projectId: "samantha", runId: "run-unknown" },
+    });
+    const overLimit = createCostBudgetAuditRecord({
+      ancestry,
+      observedAt: "2026-05-10T01:05:00.000Z",
+      actor: "operator",
+      subject: { type: "action", id: "action-over" },
+      cost: { kind: "estimated", amount: 3.5, currency: "USD", basis: "token estimate" },
+      context: { projectId: "samantha", actionId: "action-over" },
+    });
+
+    const unknownDecision = evaluateBudgetEnforcement({
+      policies: [policy],
+      observations: [zero, unknown],
+      context: { projectId: "samantha" },
+      decisions: [approved],
+      governanceEvents: [event],
+    });
+    const blockedDecision = evaluateBudgetEnforcement({
+      policies: [policy],
+      observations: [zero, overLimit],
+      context: { projectId: "samantha" },
+      decisions: [approved],
+      governanceEvents: [event],
+    });
+
+    expect(unknownDecision.state).toBe("defer");
+    expect(unknownDecision.reasons.join(" ")).toContain("unknown cost observations=1");
+    expect(blockedDecision.state).toBe("block");
+    expect(blockedDecision.reasons.join(" ")).toContain("reached block limit 3");
   });
 });

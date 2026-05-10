@@ -13,7 +13,13 @@ import {
   type CeoNotifyReportRecord,
   type CeoReportRecord,
 } from "./lib/ceo-report-store";
-import { CostBudgetAuditStore, createRunCostBudgetObservation, type CostBudgetAuditFilter, type CostDataKind } from "./lib/cost-budget-audit";
+import {
+  BudgetPolicyStore,
+  CostBudgetAuditStore,
+  createRunCostBudgetObservation,
+  type CostBudgetAuditFilter,
+  type CostDataKind,
+} from "./lib/cost-budget-audit";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
 import {
   decisionAllowsOrchestratorMaterialization,
@@ -263,6 +269,10 @@ function governanceEventsPath(args: ParsedArgs): string {
 
 function costBudgetAuditPath(args: ParsedArgs): string {
   return join(stateDir(args), "budget-audit.jsonl");
+}
+
+function budgetPoliciesPath(args: ParsedArgs): string {
+  return join(stateDir(args), "budget-policies.jsonl");
 }
 
 function routineTriggersPath(args: ParsedArgs): string {
@@ -560,6 +570,7 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
     reports,
     governanceEvents,
     budgetObservations,
+    budgetPolicies,
   ] = await Promise.all([
     new RunIndex(runsPath(args)).list(),
     new TaskStore(tasksPath(args)).list(),
@@ -574,6 +585,7 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
     new CeoReportStore(ceoReportsPath(args)).list(),
     new GovernanceEventStore(governanceEventsPath(args)).list(),
     new CostBudgetAuditStore(costBudgetAuditPath(args)).list(),
+    new BudgetPolicyStore(budgetPoliciesPath(args)).list(),
   ]);
   const projectId = flag(args, "project", "") || undefined;
   const inboxDir = resolve(flag(args, "inbox-dir", join(root, "inbox")));
@@ -601,6 +613,7 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
       reports,
       governanceEvents,
       budgetObservations,
+      budgetPolicies,
     }),
   });
   return runs.length;
@@ -1411,7 +1424,7 @@ async function orchestratorPlanBlockersForReport(
 }
 
 async function nowReportForInbox(args: ParsedArgs): Promise<string> {
-  const [runs, tasks, actions, proposals, drafts, orchestrationRequests, orchestratorPlans, decisions, ops, lifecycles, reports, governanceEvents, budgetObservations] = await Promise.all([
+  const [runs, tasks, actions, proposals, drafts, orchestrationRequests, orchestratorPlans, decisions, ops, lifecycles, reports, governanceEvents, budgetObservations, budgetPolicies] = await Promise.all([
     new RunIndex(runsPath(args)).list(),
     new TaskStore(tasksPath(args)).listActive(),
     new RemoteActionStore(remoteActionsPath(args)).list(),
@@ -1425,6 +1438,7 @@ async function nowReportForInbox(args: ParsedArgs): Promise<string> {
     new CeoReportStore(ceoReportsPath(args)).list(),
     new GovernanceEventStore(governanceEventsPath(args)).list(),
     new CostBudgetAuditStore(costBudgetAuditPath(args)).list(),
+    new BudgetPolicyStore(budgetPoliciesPath(args)).list(),
   ]);
   return nowReport({
     runs,
@@ -1441,11 +1455,12 @@ async function nowReportForInbox(args: ParsedArgs): Promise<string> {
     reports,
     governanceEvents,
     budgetObservations,
+    budgetPolicies,
   });
 }
 
 async function loadCeoStatusSnapshot(args: ParsedArgs): Promise<CeoStatusSnapshot> {
-  const [runs, tasks, taskDrafts, decisions, actions, orchestrationRequests, orchestratorPlans, ops, lifecycles, reports, governanceEvents, budgetObservations] = await Promise.all([
+  const [runs, tasks, taskDrafts, decisions, actions, orchestrationRequests, orchestratorPlans, ops, lifecycles, reports, governanceEvents, budgetObservations, budgetPolicies] = await Promise.all([
     new RunIndex(runsPath(args)).list(),
     new TaskStore(tasksPath(args)).list(),
     new TaskDraftStore(taskDraftsPath(args)).list(),
@@ -1458,6 +1473,7 @@ async function loadCeoStatusSnapshot(args: ParsedArgs): Promise<CeoStatusSnapsho
     new CeoReportStore(ceoReportsPath(args)).list(),
     new GovernanceEventStore(governanceEventsPath(args)).list(),
     new CostBudgetAuditStore(costBudgetAuditPath(args)).list(),
+    new BudgetPolicyStore(budgetPoliciesPath(args)).list(),
   ]);
   const projectId = flag(args, "project", "") || undefined;
 
@@ -1476,6 +1492,7 @@ async function loadCeoStatusSnapshot(args: ParsedArgs): Promise<CeoStatusSnapsho
     reports,
     governanceEvents,
     budgetObservations,
+    budgetPolicies,
   });
 }
 
@@ -1496,6 +1513,8 @@ async function queueAdmissionFor(input: {
     runs,
     lifecycles,
     budgetObservations,
+    budgetPolicies,
+    governanceEvents,
     ops,
   ] = await Promise.all([
     new OrchestrationRequestStore(orchestrationRequestsPath(input.args)).list(),
@@ -1507,6 +1526,8 @@ async function queueAdmissionFor(input: {
     new RunIndex(runsPath(input.args)).list(),
     new RunLifecycleStore(runLifecyclePath(input.args)).list(),
     new CostBudgetAuditStore(costBudgetAuditPath(input.args)).list(),
+    new BudgetPolicyStore(budgetPoliciesPath(input.args)).list(),
+    new GovernanceEventStore(governanceEventsPath(input.args)).list(),
     collectOps(input.args),
   ]);
   const pressure = buildQueuePressureSnapshot({
@@ -1519,10 +1540,34 @@ async function queueAdmissionFor(input: {
     runs,
     lifecycles,
     budgetObservations,
+    budgetPolicies,
+    governanceEvents,
     orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(input.args, plans),
     ops: withoutActiveInboxCommand(ops),
   }, { projectId: input.projectId });
-  return decideQueueAdmission({ pressure, subjectKind: input.subjectKind });
+  const admission = decideQueueAdmission({ pressure, subjectKind: input.subjectKind });
+  if (
+    admission.decision !== "accept" &&
+    pressure.budget &&
+    (pressure.budget.state === "defer" || pressure.budget.state === "block" || pressure.budget.state === "needs_bk")
+  ) {
+    const policy =
+      pressure.budget.policyEvaluations[0]?.policy ??
+      budgetPolicies.find((record) => record.status === "active" && record.scope.type === "project" && record.scope.id === input.projectId);
+    if (policy) {
+      await new GovernanceEventStore(governanceEventsPath(input.args)).create({
+        timestamp: new Date().toISOString(),
+        actor: "samantha",
+        source: { kind: "budget_policy", id: policy.id },
+        subject: { type: "budget", id: policy.id },
+        kind: "transition_blocked",
+        riskClass: "low",
+        summary: `Budget gate ${pressure.budget.state} for ${input.subjectKind}: ${admission.reason}`,
+        dedupeKey: `budget-gate:${input.subjectKind}:${input.projectId ?? "global"}:${pressure.budget.state}:${policy.id}`,
+      });
+    }
+  }
+  return admission;
 }
 
 function csvFlag(value: string): string[] | undefined {
@@ -2304,6 +2349,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       governanceEvents: await new GovernanceEventStore(governanceEventsPath(args)).list(),
       orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(args),
       budgetObservations: await new CostBudgetAuditStore(costBudgetAuditPath(args)).list(),
+      budgetPolicies: await new BudgetPolicyStore(budgetPoliciesPath(args)).list(),
       projectId: typeof command.args?.projectId === "string" ? command.args.projectId : undefined,
     });
   }
