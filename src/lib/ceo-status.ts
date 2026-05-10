@@ -11,10 +11,19 @@ import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import type { OrchestratorPlanBlocker } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "./orchestrator-store";
+import type { CeoReportRecord } from "./ceo-report-store";
+import type { CostBudgetAuditRecord } from "./cost-budget-audit";
+import type { GovernanceEventRecord } from "./governance-event-store";
 import type { RemoteActionRecord } from "./remote-action-store";
 import { recoveryResolvedPlanIds } from "./recovery-continuity";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
 import { buildOperatingSurfaceView } from "./operating-surface";
+import {
+  buildProjectQueueSnapshot,
+  filterProjectQueueRecords,
+  formatProjectQueueSnapshot,
+  type ProjectQueueSnapshot,
+} from "./project-queues";
 
 export type CeoOverall = "idle" | "active" | "needs_decision" | "blocked" | "failed" | "needs_recovery";
 
@@ -72,6 +81,7 @@ export interface CeoNextAction {
 
 export interface CeoStatusSnapshot {
   generatedAt: string;
+  projectFilterId?: string;
   overall: CeoOverall;
   completed: CeoStatusItem[];
   active: CeoStatusItem[];
@@ -80,10 +90,12 @@ export interface CeoStatusSnapshot {
   needsDecision: CeoDecisionSummary[];
   risks: string[];
   nextAction: CeoNextAction;
+  projectQueues?: ProjectQueueSnapshot;
 }
 
 export interface BuildCeoStatusSnapshotInput {
   generatedAt?: string;
+  projectId?: string;
   runs?: RunSummary[];
   tasks?: TaskSpec[];
   decisions?: DecisionItem[];
@@ -92,6 +104,9 @@ export interface BuildCeoStatusSnapshotInput {
   orchestratorPlans?: OrchestratorPlanRecord[];
   orchestratorPlanBlockers?: OrchestratorPlanBlocker[];
   lifecycles?: RunLifecycleRecord[];
+  reports?: CeoReportRecord[];
+  governanceEvents?: GovernanceEventRecord[];
+  budgetObservations?: CostBudgetAuditRecord[];
   ops?: OpsSnapshot;
 }
 
@@ -437,15 +452,32 @@ function chooseOverall(input: {
 }
 
 export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}): CeoStatusSnapshot {
-  const runs = input.runs ?? [];
-  const tasks = input.tasks ?? [];
-  const decisions = input.decisions ?? [];
-  const actions = input.actions ?? [];
-  const orchestrationRequests = input.orchestrationRequests ?? [];
-  const orchestratorPlans = input.orchestratorPlans ?? [];
-  const orchestratorPlanBlockers = input.orchestratorPlanBlockers ?? [];
+  const projectQueues = buildProjectQueueSnapshot({
+    requests: input.orchestrationRequests,
+    plans: input.orchestratorPlans,
+    decisions: input.decisions,
+    tasks: input.tasks,
+    actions: input.actions,
+    runs: input.runs,
+    lifecycles: input.lifecycles,
+    reports: input.reports,
+    governanceEvents: input.governanceEvents,
+    budgetObservations: input.budgetObservations,
+    orchestratorPlanBlockers: input.orchestratorPlanBlockers,
+    globalBlockers: [...(input.ops?.failures ?? []), ...(input.ops?.warnings ?? [])],
+  }, { filterProjectId: input.projectId });
+  const runs = filterProjectQueueRecords(input.runs ?? [], input.projectId);
+  const tasks = filterProjectQueueRecords(input.tasks ?? [], input.projectId);
+  const decisions = filterProjectQueueRecords(input.decisions ?? [], input.projectId);
+  const actions = filterProjectQueueRecords(input.actions ?? [], input.projectId);
+  const orchestrationRequests = filterProjectQueueRecords(input.orchestrationRequests ?? [], input.projectId);
+  const orchestratorPlans = filterProjectQueueRecords(input.orchestratorPlans ?? [], input.projectId);
+  const planIds = new Set(orchestratorPlans.map((plan) => plan.id));
+  const orchestratorPlanBlockers = input.projectId
+    ? (input.orchestratorPlanBlockers ?? []).filter((blocker) => planIds.has(blocker.planId))
+    : input.orchestratorPlanBlockers ?? [];
   const blockedPlanIds = new Set(orchestratorPlanBlockers.map((blocker) => blocker.planId));
-  const lifecycles = input.lifecycles ?? [];
+  const lifecycles = filterProjectQueueRecords(input.lifecycles ?? [], input.projectId);
   const resolvedPlanIds = recoveryResolvedPlanIds({
     requests: orchestrationRequests,
     plans: orchestratorPlans,
@@ -648,6 +680,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
 
   return {
     generatedAt: input.generatedAt ?? new Date().toISOString(),
+    projectFilterId: input.projectId,
     overall: chooseOverall({
       active: sortedActive,
       blocked: sortedBlocked,
@@ -663,6 +696,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     needsDecision,
     risks,
     nextAction,
+    projectQueues,
   };
 }
 
@@ -692,6 +726,7 @@ export function formatCeoStatusReport(
     "# ceo:status",
     "",
     `Generated: ${snapshot.generatedAt}`,
+    snapshot.projectFilterId ? `Project filter: ${snapshot.projectFilterId}` : "",
     `Overall: ${snapshot.overall}`,
     `Summary: ${view.summary}`,
     `Headline: ${view.headline}`,
@@ -719,5 +754,7 @@ export function formatCeoStatusReport(
     "",
     "Risks:",
     ...(snapshot.risks.length ? snapshot.risks.map((risk) => `- ${risk}`) : ["- none"]),
+    "",
+    ...(snapshot.projectQueues ? formatProjectQueueSnapshot(snapshot.projectQueues) : []),
   ].filter((line) => line !== "").join("\n");
 }

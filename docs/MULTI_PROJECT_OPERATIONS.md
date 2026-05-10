@@ -271,6 +271,26 @@ Verification focus:
 - legacy or unassigned records are visible instead of disappearing
 - routine display text still avoids raw ids where they are not needed
 
+Outcome:
+
+- Added a shared project queue snapshot in `src/lib/project-queues.ts` for
+  requests, plans, decisions, tasks, actions, runs, lifecycle records, recovery
+  requests, CEO reports, governance events, and budget audit observations.
+- Project queues now classify assigned project records separately from explicit
+  `unassigned` records and legacy records without inferring project identity
+  from repo paths or prose.
+- CEO status supports `--project=<id>` and filters the primary status sections
+  to the selected project while preserving cross-project project counts,
+  legacy/unassigned counts, and global blockers from diagnostics.
+- Operator status reports and the read-only dashboard Daily Review now show
+  project queue summaries with pending BK decisions, active actions, failed
+  runs, recovery needs, and audit gaps.
+- Worker run logs, run summaries, and lifecycle bases now preserve task
+  ancestry so future runs participate in project-level queue and report
+  filters.
+- Added focused M5 tests for project queue aggregation, CEO status filtering,
+  operator status reports, and read-only dashboard rendering.
+
 ## M6: Remote Project Selection And Wrong-Project Guards
 
 Goal: prevent Telegram or another compact adapter from operating on the wrong

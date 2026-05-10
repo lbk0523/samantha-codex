@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderDashboard } from "../src/lib/dashboard";
 import type { CeoStatusSnapshot } from "../src/lib/ceo-status";
 import type { RunSummary } from "../src/lib/ledger";
+import { buildProjectQueueSnapshot } from "../src/lib/project-queues";
 
 const ceoStatus: CeoStatusSnapshot = {
   generatedAt: "2026-05-07T12:00:00.000Z",
@@ -79,6 +80,43 @@ describe("dashboard", () => {
     expect(html).toContain("Resolve the pending BK decision");
     expect(html).toContain("Telegram: /approve");
     expect(html).toContain('<div class="fact"><span>BK decisions</span><span><code>1</code></span></div>');
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<form");
+  });
+
+  test("renders read-only project queue counts for a filtered dashboard view", () => {
+    const html = renderDashboard([], {
+      ceoStatus: {
+        ...ceoStatus,
+        projectFilterId: "samantha",
+        projectQueues: buildProjectQueueSnapshot({
+          tasks: [
+            {
+              id: "task-samantha",
+              ancestry: {
+                mode: "assigned",
+                projectId: "samantha",
+                goalId: "goal-dashboard",
+                workItemId: "work-dashboard",
+              },
+              title: "Dashboard filter",
+              targetAgent: "codex-worker",
+              targetFiles: ["src/lib/dashboard.ts"],
+              forbiddenChanges: ["state/**"],
+              verifyCommands: ["bun test tests/dashboard.test.ts"],
+              instructions: "Fixture.",
+              status: "pending",
+            },
+          ],
+          globalBlockers: ["host check failed"],
+        }, { filterProjectId: "samantha" }),
+      },
+    });
+
+    expect(html).toContain("Project filter");
+    expect(html).toContain("Project Queues");
+    expect(html).toContain("selected samantha:");
+    expect(html).toContain("global blockers: 1");
     expect(html).not.toContain("<button");
     expect(html).not.toContain("<form");
   });

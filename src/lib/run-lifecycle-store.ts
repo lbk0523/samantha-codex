@@ -46,6 +46,7 @@ export function lifecycleBaseFromRunLog(input: {
   return {
     schemaVersion: 1,
     runId: input.log.runId,
+    ancestry: input.log.ancestry ?? input.log.task.ancestry,
     taskId: input.log.task.id,
     repoRoot: input.repoRoot,
     runLogPath: input.runLogPath,

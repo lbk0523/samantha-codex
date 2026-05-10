@@ -562,6 +562,59 @@ describe("operator reports", () => {
     expect(empty).toContain("cost total: unavailable (missing cost data is unknown, not zero)");
   });
 
+  test("renders project queue counts in the operator status report", () => {
+    const ancestry = {
+      mode: "assigned" as const,
+      projectId: "samantha",
+      goalId: "goal-status",
+      workItemId: "work-status",
+    };
+    const status = statusReport({
+      runs: [{ ...failRun, ancestry }],
+      pendingInboxCount: 0,
+      projectId: "samantha",
+      tasks: [{ ...task, ancestry, status: "pending" }],
+      actions: [
+        createRemoteDispatchAction({
+          task: { ...task, ancestry },
+          repoRoot: "/repo",
+          createdAt: "2026-05-03T10:07:00.000Z",
+          source: "remote",
+          commandId: "remote-prepare",
+        }),
+      ],
+      decisions: [
+        createDecisionItem({
+          ancestry,
+          title: "Approve status plan",
+          prompt: "Approve before materialization.",
+          kind: "orchestrator_plan_approval",
+          source: "system",
+          subject: { type: "orchestrator_plan", id: "plan-status" },
+          options: ["approve", "revise", "cancel"],
+          createdAt: "2026-05-03T10:08:00.000Z",
+        }),
+      ],
+      budgetObservations: [
+        createCostBudgetAuditRecord({
+          ancestry,
+          observedAt: "2026-05-09T01:00:00.000Z",
+          actor: "samantha",
+          subject: { type: "run", id: "run-fail" },
+        }),
+      ],
+    });
+
+    expect(status).toContain("Project filter: samantha");
+    expect(status).toContain("Project queues:");
+    expect(status).toContain("- selected samantha:");
+    expect(status).toContain("pending_bk=1");
+    expect(status).toContain("active_actions=1");
+    expect(status).toContain("failed_runs=1");
+    expect(status).toContain("audit_gaps=1");
+    expect(status).toContain("- global blockers: 0");
+  });
+
   test("renders task summaries", () => {
     const report = tasksListReport([task]);
 

@@ -140,6 +140,57 @@ describe("CEO status snapshot", () => {
     expect(snapshot.nextAction).toMatchObject({ kind: "plan", command: "/plan", targetId: "request-1" });
   });
 
+  test("project filter keeps selected project status while preserving cross-project blockers and legacy labels", () => {
+    const samanthaAncestry = {
+      mode: "assigned" as const,
+      projectId: "samantha",
+      goalId: "goal-samantha",
+      workItemId: "work-samantha",
+    };
+    const omhtAncestry = {
+      mode: "assigned" as const,
+      projectId: "omht",
+      goalId: "goal-omht",
+      workItemId: "work-omht",
+    };
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      projectId: "samantha",
+      orchestrationRequests: [
+        { ...request, id: "request-samantha", ancestry: samanthaAncestry, text: "Samantha work" },
+        { ...request, id: "request-omht", ancestry: omhtAncestry, text: "OMHT work" },
+      ],
+      tasks: [{ ...task, id: "task-legacy", status: "blocked" }],
+      ops: {
+        ok: false,
+        failures: ["host verification failed"],
+        warnings: [],
+        queues: {
+          pendingInboxCount: 0,
+          remoteOutboxCount: 0,
+          unsentRemoteOutboxCount: 0,
+        },
+        telegram: {},
+        health: { ok: true, ageMs: 0, violations: [] },
+        launchd: [],
+      } as any,
+    });
+    const report = formatCeoStatusReport(snapshot);
+
+    expect(snapshot.projectFilterId).toBe("samantha");
+    expect(snapshot.active.map((item) => item.id)).toEqual(["request-samantha"]);
+    expect(snapshot.risks).toContain("host verification failed");
+    expect(snapshot.projectQueues?.selectedProject?.counts.active).toBe(1);
+    expect(snapshot.projectQueues?.projects.find((item) => item.bucket.projectId === "omht")?.counts.active).toBe(1);
+    expect(snapshot.projectQueues?.legacy.counts.blocked).toBe(1);
+    expect(snapshot.projectQueues?.globalBlockers).toEqual(["host verification failed"]);
+    expect(report).toContain("Project filter: samantha");
+    expect(report).toContain("- selected samantha:");
+    expect(report).toContain("- project omht:");
+    expect(report).toContain("- legacy legacy:");
+    expect(report).toContain("- global blockers: 1");
+  });
+
   test("planned and question plans appear under Needs BK", () => {
     const questionPlan: OrchestratorPlanRecord = {
       ...plan,

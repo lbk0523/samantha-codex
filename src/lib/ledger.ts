@@ -133,6 +133,7 @@ export function summarizeWorkerRun(input: WorkerRunLogInput & { runId: string; l
   return {
     schemaVersion: 1,
     runId: input.runId,
+    ancestry: input.task.ancestry,
     taskId: input.task.id,
     taskTitle: input.task.title,
     agentId: input.agent.id,

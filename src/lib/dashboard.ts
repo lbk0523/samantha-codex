@@ -6,6 +6,7 @@ import type { DaemonHeartbeat } from "./daemon";
 import type { RunSummary } from "./ledger";
 import { buildOperatingSurfaceView, type OperatingSurfaceItem } from "./operating-surface";
 import type { OpsSnapshot } from "./ops-diagnostics";
+import { formatProjectQueueSnapshot } from "./project-queues";
 import type { ProposalRecord } from "./proposal-store";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
 import type { TaskDraftRecord } from "./task-draft-store";
@@ -813,6 +814,7 @@ function renderCeoStatus(status: CeoStatusSnapshot | undefined): string {
   const operating = buildOperatingSurfaceView(status);
   const telegram = operating.primaryAction.telegramCommand ? `Telegram: ${operating.primaryAction.telegramCommand}` : "";
   const local = operating.primaryAction.localCommand ? `Local fallback: ${operating.primaryAction.localCommand}` : "";
+  const projectQueueLines = status.projectQueues ? formatProjectQueueSnapshot(status.projectQueues) : [];
 
   return `<section class="panel" aria-label="CEO status review">
   <h2>Daily Review</h2>
@@ -823,6 +825,7 @@ function renderCeoStatus(status: CeoStatusSnapshot | undefined): string {
     </div>
     <div class="facts">
       <div class="fact"><span>Overall</span><span>${badge(status.overall, ceoOverallTone(status.overall))}</span></div>
+      ${status.projectFilterId ? `<div class="fact"><span>Project filter</span><span><code>${escapeHtml(status.projectFilterId)}</code></span></div>` : ""}
       <div class="fact"><span>BK decisions</span><span><code>${String(status.needsDecision.length)}</code></span></div>
       <div class="fact"><span>Active work</span><span><code>${String(status.active.length)}</code></span></div>
       <div class="fact"><span>Blocked / recovery</span><span><code>${String(status.blocked.length)}</code></span></div>
@@ -859,6 +862,14 @@ function renderCeoStatus(status: CeoStatusSnapshot | undefined): string {
           <div class="muted">${escapeHtml(operating.primaryAction.reason)}</div>
         </div>
       </div>
+      ${
+        projectQueueLines.length
+          ? `<div class="ceo-block">
+        <h3>Project Queues</h3>
+        <ul class="ceo-list">${ceoList(projectQueueLines, (line) => line, "none", 12)}</ul>
+      </div>`
+          : ""
+      }
     </div>
   </div>
 </section>`;

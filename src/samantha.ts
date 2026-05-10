@@ -462,6 +462,9 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
     orchestratorPlans,
     ops,
     lifecycles,
+    reports,
+    governanceEvents,
+    budgetObservations,
   ] = await Promise.all([
     new RunIndex(runsPath(args)).list(),
     new TaskStore(tasksPath(args)).list(),
@@ -473,7 +476,11 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
     new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
     collectOps(args),
     new RunLifecycleStore(runLifecyclePath(args)).list(),
+    new CeoReportStore(ceoReportsPath(args)).list(),
+    new GovernanceEventStore(governanceEventsPath(args)).list(),
+    new CostBudgetAuditStore(costBudgetAuditPath(args)).list(),
   ]);
+  const projectId = flag(args, "project", "") || undefined;
   const inboxDir = resolve(flag(args, "inbox-dir", join(root, "inbox")));
   await writeDashboard(out, runs, {
     heartbeat: await readDaemonHeartbeat(heartbeatPath(args)),
@@ -485,6 +492,7 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
     lifecycles,
     liveRuns: await readLiveRuns(logDir(args)),
     ceoStatus: buildCeoStatusSnapshot({
+      projectId,
       runs,
       tasks,
       decisions,
@@ -494,6 +502,9 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
       orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(args, orchestratorPlans),
       ops,
       lifecycles,
+      reports,
+      governanceEvents,
+      budgetObservations,
     }),
   });
   return runs.length;
@@ -1310,7 +1321,7 @@ async function nowReportForInbox(args: ParsedArgs): Promise<string> {
 }
 
 async function loadCeoStatusSnapshot(args: ParsedArgs): Promise<CeoStatusSnapshot> {
-  const [runs, tasks, decisions, actions, orchestrationRequests, orchestratorPlans, ops, lifecycles] = await Promise.all([
+  const [runs, tasks, decisions, actions, orchestrationRequests, orchestratorPlans, ops, lifecycles, reports, governanceEvents, budgetObservations] = await Promise.all([
     new RunIndex(runsPath(args)).list(),
     new TaskStore(tasksPath(args)).list(),
     new DecisionStore(decisionsPath(args)).list(),
@@ -1319,9 +1330,14 @@ async function loadCeoStatusSnapshot(args: ParsedArgs): Promise<CeoStatusSnapsho
     new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
     collectOps(args),
     new RunLifecycleStore(runLifecyclePath(args)).list(),
+    new CeoReportStore(ceoReportsPath(args)).list(),
+    new GovernanceEventStore(governanceEventsPath(args)).list(),
+    new CostBudgetAuditStore(costBudgetAuditPath(args)).list(),
   ]);
+  const projectId = flag(args, "project", "") || undefined;
 
   return buildCeoStatusSnapshot({
+    projectId,
     runs,
     tasks,
     decisions,
@@ -1331,6 +1347,9 @@ async function loadCeoStatusSnapshot(args: ParsedArgs): Promise<CeoStatusSnapsho
     orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(args, orchestratorPlans),
     ops,
     lifecycles,
+    reports,
+    governanceEvents,
+    budgetObservations,
   });
 }
 
@@ -1819,9 +1838,17 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       ops,
       proposals: await new ProposalStore(proposalsPath(args)).list(),
       drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
+      requests: await new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
+      plans: await new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
+      decisions: await new DecisionStore(decisionsPath(args)).list(),
+      tasks: await new TaskStore(tasksPath(args)).list(),
       actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
       lifecycles: await new RunLifecycleStore(runLifecyclePath(args)).list(),
+      reports: await new CeoReportStore(ceoReportsPath(args)).list(),
+      governanceEvents: await new GovernanceEventStore(governanceEventsPath(args)).list(),
+      orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(args),
       budgetObservations: await new CostBudgetAuditStore(costBudgetAuditPath(args)).list(),
+      projectId: typeof command.args?.projectId === "string" ? command.args.projectId : undefined,
     });
   }
   if (command.type === "ops:now") {
@@ -3357,7 +3384,7 @@ async function main(): Promise<void> {
       "  inbox:watch",
       "  actions:run-pending [--limit=1]",
       "  actions:watch [--interval-ms=1000] [--limit=1]",
-      "  ceo:status [--json] [--limit=10]",
+      "  ceo:status [--json] [--limit=10] [--project=<id>]",
       "  ceo:notify",
       "  decisions:create --title=<text> --prompt=<text>",
       "  decisions:list [--pending]",
@@ -3369,7 +3396,7 @@ async function main(): Promise<void> {
       "  next-action",
       "  doctor [--json]",
       "  health:check [--max-age-ms=15000]",
-      "  dashboard:build",
+      "  dashboard:build [--project=<id>]",
       "  dashboard:serve [--port=4173] [--host=127.0.0.1]",
       "",
       "integration gates:",

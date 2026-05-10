@@ -53,6 +53,7 @@ export function buildWorkerRunLog(input: WorkerRunLogInput): WorkerRunLog {
   return {
     schemaVersion: 1,
     runId,
+    ancestry: input.task.ancestry,
     startedAt: input.startedAt,
     finishedAt: input.finishedAt,
     task: input.task,

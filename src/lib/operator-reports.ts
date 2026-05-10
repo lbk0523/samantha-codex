@@ -8,6 +8,9 @@ import { buildOperatingSurfaceView } from "./operating-surface";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import { blockerForPlan, payloadBlockerForPlan, type OrchestratorPlanBlocker } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord, OrchestratorSynthesisPayload } from "./orchestrator-store";
+import type { CeoReportRecord } from "./ceo-report-store";
+import type { GovernanceEventRecord } from "./governance-event-store";
+import { buildProjectQueueSnapshot, formatProjectQueueSnapshot } from "./project-queues";
 import { classifyRemoteRequest, type ProjectProfile, type ProjectRemoteScope, type RemoteRequestClassification } from "./project-profile";
 import type { ProposalRecord } from "./proposal-store";
 import { remoteActionCommand, type RemoteActionRecord } from "./remote-action-store";
@@ -2033,10 +2036,18 @@ export function statusReport(input: {
   heartbeat?: DaemonHeartbeat;
   pendingInboxCount: number;
   ops?: OpsSnapshot;
+  projectId?: string;
   proposals?: ProposalRecord[];
   drafts?: TaskDraftRecord[];
+  requests?: OrchestrationRequestRecord[];
+  plans?: OrchestratorPlanRecord[];
+  decisions?: DecisionItem[];
+  tasks?: TaskSpec[];
   actions?: RemoteActionRecord[];
   lifecycles?: RunLifecycleRecord[];
+  reports?: CeoReportRecord[];
+  governanceEvents?: GovernanceEventRecord[];
+  orchestratorPlanBlockers?: OrchestratorPlanBlocker[];
   budgetObservations?: CostBudgetAuditRecord[];
 }): string {
   const latest = input.runs.at(-1);
@@ -2065,6 +2076,20 @@ export function statusReport(input: {
         failed: input.actions.filter((action) => action.status === "failed").length,
       }
     : undefined;
+  const projectQueues = buildProjectQueueSnapshot({
+    requests: input.requests,
+    plans: input.plans,
+    decisions: input.decisions,
+    tasks: input.tasks,
+    actions: input.actions,
+    runs: input.runs,
+    lifecycles: input.lifecycles,
+    reports: input.reports,
+    governanceEvents: input.governanceEvents,
+    budgetObservations: input.budgetObservations,
+    orchestratorPlanBlockers: input.orchestratorPlanBlockers,
+    globalBlockers: [...(input.ops?.failures ?? []), ...(input.ops?.warnings ?? [])],
+  }, { filterProjectId: input.projectId });
   const heartbeat = input.heartbeat
     ? `${input.heartbeat.status} pid=${input.heartbeat.pid} updated=${input.heartbeat.updatedAt} processed=${input.heartbeat.processedTotal}`
     : "missing";
@@ -2072,6 +2097,7 @@ export function statusReport(input: {
   return [
     "# status",
     "",
+    input.projectId ? `Project filter: ${input.projectId}` : "",
     `운영 상태: ${input.ops ? (input.ops.ok ? "정상" : "확인 필요") : "unknown"}`,
     input.ops ? `진단: failures=${input.ops.failures.length} warnings=${input.ops.warnings.length}` : "",
     "",
@@ -2127,6 +2153,8 @@ export function statusReport(input: {
     latest ? `- latest: ${oneLine(runLine(latest).slice(2))}` : "- latest: 없음",
     latest ? `- lifecycle: ${lifecycleText(latestLifecycle)}` : "",
     ...budgetAuditLines(input.budgetObservations),
+    "",
+    ...formatProjectQueueSnapshot(projectQueues),
   ]
     .filter(Boolean)
     .join("\n");
