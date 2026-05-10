@@ -68,6 +68,8 @@ North-star criteria are tracked in [NORTH_STAR.md](NORTH_STAR.md).
   [MULTI_PROJECT_OPERATIONS.md](MULTI_PROJECT_OPERATIONS.md)
 - Phase 7 execution spec:
   [EVIDENCE_BASED_PARALLELISM_EXPANSION.md](EVIDENCE_BASED_PARALLELISM_EXPANSION.md)
+- Phase 8 execution spec:
+  [CONTEXT_AND_KNOWLEDGE_MEMORY.md](CONTEXT_AND_KNOWLEDGE_MEMORY.md)
 - North-star criteria: [NORTH_STAR.md](NORTH_STAR.md)
 
 Future phase execution specs should be added only when Samantha reaches that
@@ -285,7 +287,7 @@ Detailed stages:
 
 ### 8. Context And Knowledge Memory
 
-Status: planned.
+Status: in progress.
 
 Objective: give Samantha durable project memory so BK does not have to restate
 strategic context, product decisions, recurring preferences, or known risks.
@@ -314,7 +316,8 @@ Exit criteria:
   worktree allocation, dispatch, merge, push, cleanup, or approval gates.
 - BK can ask why a recommendation was made and trace it to stored context.
 
-Execution stages: write a phase-specific document when this phase begins.
+Detailed stages:
+[CONTEXT_AND_KNOWLEDGE_MEMORY.md](CONTEXT_AND_KNOWLEDGE_MEMORY.md).
 
 ### 9. Continuous 24/7 Operations
 
