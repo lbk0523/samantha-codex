@@ -238,7 +238,25 @@ Verification focus:
 
 Outcome placeholder:
 
-- Fill after M4 implementation and verification.
+- Added a derived decision-history summary builder in
+  `src/lib/decision-history-summary.ts`.
+- Summaries cite source decision ids, related governance event ids, relevant
+  report ids, subject plan ids, and preserved ancestry.
+- Summaries distinguish BK-resolved decisions from derived LLM/system prompts:
+  BK decisions use `bk_decision`, while unresolved/system prompts remain
+  derived `llm_summary` context.
+- Rejected, pending, archived, superseded, reversed, and stale decisions are
+  emitted as inactive guidance and are not mixed into active planner guidance.
+- Conflicting prior BK decisions for the same subject produce an explicit
+  ambiguity risk instead of silent recency-based selection.
+- Summary generation is pure and does not mutate decision, governance event,
+  report, or plan source-of-truth records.
+- Added focused tests in `tests/decision-history-summary.test.ts`.
+- Verified with `bun test tests/decision-history-summary.test.ts`,
+  `bun test tests/decision-store.test.ts tests/governance-event-store.test.ts
+  tests/operator-review-report.test.ts tests/operator-reports.test.ts
+  tests/decision-history-summary.test.ts`, `bun typecheck`,
+  `bun run test:portable`, and `bun run verify:docs`.
 
 ## M5: Preference And Risk Capture Candidates
 
