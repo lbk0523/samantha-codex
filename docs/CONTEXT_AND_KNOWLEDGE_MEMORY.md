@@ -192,9 +192,27 @@ Verification focus:
 - old or absent briefs produce an explicit "no project memory" result rather
   than inferred context
 
-Outcome placeholder:
+Outcome:
 
-- Fill after M3 implementation and verification.
+- Added the minimal durable project brief contract and JSONL store in
+  `src/lib/project-brief-store.ts`.
+- Project briefs are project-scoped, source-backed, and sectioned into product
+  context, current strategy, key constraints, known risks, and open questions.
+  Every substantive section entry requires source citations.
+- Brief reads are deterministic, sorted by project id, and scoped to known
+  project profiles. Absent or pending-only briefs return an explicit
+  `no_project_memory` result instead of inferred context.
+- Brief writes can only enter `pending_review`; active briefs require review
+  evidence and duplicate ids are rejected rather than silently overwritten.
+- Brief records reject authority fields such as repo roots, remote scopes,
+  safety policy overlays, dispatch prerequisites, forbidden changes, setup or
+  verify commands, writer caps, and runtime roots. Briefs remain context only.
+- Left orchestrator prompts and runtime authority unchanged.
+- Verified with `bun test tests/project-brief-store.test.ts
+  tests/memory-taxonomy.test.ts tests/project-profile.test.ts
+  tests/project-queues.test.ts tests/ancestry.test.ts
+  tests/governance-event-store.test.ts`, `bun typecheck`,
+  `bun run test:portable`, and `bun run verify:docs`.
 
 ## M4: Decision History Summaries
 
