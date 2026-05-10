@@ -331,6 +331,20 @@ Verification focus:
 - default policy remains writerCap `1` unless a governed change is explicitly
   applied
 
+Outcome:
+
+- Added a safety-policy governance gate for writer-cap increases in
+  `src/lib/profile-governance.ts`.
+- A `writerCap` increase now requires explicit BK approval with the policy diff
+  in the decision prompt plus complete dogfood evidence, safe deterministic
+  conflict evidence, completed merge and cleanup evidence, and completed
+  rollback drill evidence.
+- BK approval alone remains insufficient, and partial conflict evidence remains
+  advisory until the full evidence bundle is present.
+- `DEFAULT_SAFETY_POLICY.writerCap` remains `1`; passing the governance check
+  does not mutate the default policy or enable multi-writer execution by
+  itself.
+
 ## M10: Dogfood And Exit Review
 
 Goal: close Phase 7 only with concrete evidence from real report-only

@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentProfile, SafetyPolicy, TaskSpec } from "../src/lib/contracts";
 import { createDecisionItem, type DecisionItem } from "../src/lib/decision-store";
+import { createGovernanceEvent, type GovernanceEventRecord } from "../src/lib/governance-event-store";
+import {
+  createParallelismEvidenceRecord,
+  type ParallelismEvidenceRecord,
+  type ParallelismWriterConflictSafety,
+} from "../src/lib/parallelism-evidence-store";
 import {
   CAPABILITY_CHANGE_RISK_CLASS,
   PROFILE_CHANGE_RISK_CLASS,
@@ -114,6 +120,79 @@ function approvedDecision(input: {
     resolution: "approved",
     resolutionNote: "Approved after governance review.",
   };
+}
+
+function safeConflictEvidence(): ParallelismWriterConflictSafety {
+  return {
+    schemaVersion: 1,
+    evaluatedAt: "2026-05-10T00:02:00.000Z",
+    advisoryOnly: true,
+    advisorySafe: true,
+    mayIncreaseWriterCap: false,
+    writerCap: DEFAULT_SAFETY_POLICY.writerCap,
+    candidateCount: 2,
+    violations: [],
+  };
+}
+
+function completeParallelismEvidence(): ParallelismEvidenceRecord {
+  return createParallelismEvidenceRecord({
+    observedAt: "2026-05-10T00:03:00.000Z",
+    planId: "plan-writer-cap-evidence",
+    batches: [["task-review", "task-research"], ["task-write"]],
+    refs: [
+      {
+        taskId: "task-review",
+        actionId: "action-review",
+        runId: "run-review",
+        runLogPath: "/runs/run-review.json",
+        agentId: "codex-reviewer",
+        agentRole: "reviewer",
+        resultMode: "report",
+        outcome: "pass",
+        changedFiles: [],
+      },
+      {
+        taskId: "task-research",
+        actionId: "action-research",
+        runId: "run-research",
+        runLogPath: "/runs/run-research.json",
+        agentId: "codex-researcher",
+        agentRole: "researcher",
+        resultMode: "report",
+        outcome: "pass",
+        changedFiles: [],
+      },
+      {
+        taskId: "task-write",
+        actionId: "action-write",
+        runId: "run-write",
+        runLogPath: "/runs/run-write.json",
+        agentId: "codex-worker",
+        agentRole: "writer",
+        resultMode: "write",
+        outcome: "pass",
+        changedFiles: ["src/lib/profile-governance.ts"],
+      },
+    ],
+    verification: { pass: true, summary: "parallel non-writers plus one writer passed" },
+    mergeStatus: "completed",
+    cleanupStatus: "completed",
+    outcome: "pass",
+    writerConflictSafety: safeConflictEvidence(),
+  });
+}
+
+function rollbackDrillEvidence(): GovernanceEventRecord {
+  return createGovernanceEvent({
+    timestamp: "2026-05-10T00:04:00.000Z",
+    actor: "bk",
+    source: { kind: "operator_report", id: "recovery-drill:merge-conflict" },
+    subject: { type: "run", id: "drill-merge-conflict" },
+    kind: "transition_completed",
+    riskClass: "medium",
+    summary: "Recovery drill merge-conflict outcome=fixed: rollback path verified through operator recovery.",
+  });
 }
 
 describe("agent profile and capability governance", () => {
@@ -355,16 +434,95 @@ describe("agent profile and capability governance", () => {
         kind: "capability_change",
         subjectType: "policy",
         subjectId: safetyPolicyCapabilityId(),
-        prompt: "Approve safety policy writerCap change.",
+        prompt: "Approve safety policy writerCap change with auditable diff: writerCap: 1 -> 2.",
       }),
     ]);
     expect(approvedWriterCap.ok).toBe(false);
     expect(approvedWriterCap.violations).toContain(
+      "safety policy writerCap increase is missing complete dogfood evidence",
+    );
+    expect(approvedWriterCap.violations).toContain(
       "safety policy writerCap change is missing deterministic writer conflict evidence",
     );
     expect(approvedWriterCap.violations).toContain(
-      "safety policy writerCap increase remains blocked in Phase 7 M6; conflict detection is advisory and cannot approve concurrency",
+      "safety policy writerCap increase is missing merge and cleanup evidence",
     );
+    expect(approvedWriterCap.violations).toContain(
+      "safety policy writerCap increase is missing completed rollback drill evidence",
+    );
+  });
+
+  test("blocks writerCap increase when evidence is partial or the diff is not auditable", () => {
+    const changedPolicy: SafetyPolicy = { ...DEFAULT_SAFETY_POLICY, writerCap: 2 };
+    const approvedWithoutDiff = approvedDecision({
+      kind: "capability_change",
+      subjectType: "policy",
+      subjectId: safetyPolicyCapabilityId(),
+      prompt: "Approve safety policy writerCap change.",
+    });
+    const partial = validateSafetyPolicyGovernance(changedPolicy, DEFAULT_SAFETY_POLICY, [approvedWithoutDiff], {
+      writerConflictSafety: safeConflictEvidence(),
+      parallelismEvidence: [
+        createParallelismEvidenceRecord({
+          observedAt: "2026-05-10T00:03:00.000Z",
+          planId: "plan-partial-evidence",
+          batches: [["task-review", "task-research"]],
+          refs: [
+            {
+              taskId: "task-review",
+              agentId: "codex-reviewer",
+              agentRole: "reviewer",
+              resultMode: "report",
+              outcome: "pass",
+              changedFiles: [],
+            },
+            {
+              taskId: "task-research",
+              agentId: "codex-researcher",
+              agentRole: "researcher",
+              resultMode: "report",
+              outcome: "pass",
+              changedFiles: [],
+            },
+          ],
+          verification: { pass: true, summary: "report-only dogfood passed" },
+          mergeStatus: "not_applicable",
+          cleanupStatus: "not_applicable",
+          outcome: "pass",
+        }),
+      ],
+    });
+
+    expect(partial.ok).toBe(false);
+    expect(partial.violations).toContain("approved safety policy change is missing auditable diff: writerCap: 1 -> 2");
+    expect(partial.violations).toContain("safety policy writerCap increase is missing complete dogfood evidence");
+    expect(partial.violations).toContain("safety policy writerCap increase is missing merge and cleanup evidence");
+    expect(partial.violations).toContain("safety policy writerCap increase is missing completed rollback drill evidence");
+  });
+
+  test("allows writerCap governance check with complete evidence and BK approval", () => {
+    const changedPolicy: SafetyPolicy = { ...DEFAULT_SAFETY_POLICY, writerCap: 2 };
+    const result = validateSafetyPolicyGovernance(changedPolicy, DEFAULT_SAFETY_POLICY, [
+      approvedDecision({
+        kind: "capability_change",
+        subjectType: "policy",
+        subjectId: safetyPolicyCapabilityId(),
+        prompt: "Approve safety policy writerCap change with auditable diff: writerCap: 1 -> 2.",
+      }),
+    ], {
+      writerConflictSafety: safeConflictEvidence(),
+      parallelismEvidence: [completeParallelismEvidence()],
+      governanceEvents: [rollbackDrillEvidence()],
+    });
+
+    expect(result).toEqual({ ok: true, violations: [] });
+  });
+
+  test("keeps default writerCap at one unless a governed policy value is explicitly supplied", () => {
+    const unchanged = validateSafetyPolicyGovernance(DEFAULT_SAFETY_POLICY, DEFAULT_SAFETY_POLICY);
+
+    expect(unchanged).toEqual({ ok: true, violations: [] });
+    expect(DEFAULT_SAFETY_POLICY.writerCap).toBe(1);
   });
 
   test("governs advisory topology changes as capability metadata without dispatch authority", () => {

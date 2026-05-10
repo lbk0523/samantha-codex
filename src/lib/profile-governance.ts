@@ -6,9 +6,13 @@ import type {
   SkillBundleRef,
 } from "./contracts";
 import type { DecisionItem } from "./decision-store";
+import type { GovernanceEventRecord } from "./governance-event-store";
 import { parseGovernanceRiskClass, type GovernanceRiskClass } from "./governance-taxonomy";
 import { readableSlug, shortHash } from "./ids";
-import type { ParallelismWriterConflictSafety } from "./parallelism-evidence-store";
+import type {
+  ParallelismEvidenceRecord,
+  ParallelismWriterConflictSafety,
+} from "./parallelism-evidence-store";
 
 export const PROFILE_CHANGE_RISK_CLASS: GovernanceRiskClass = "high";
 export const CAPABILITY_CHANGE_RISK_CLASS: GovernanceRiskClass = "high";
@@ -16,6 +20,12 @@ export const CAPABILITY_CHANGE_RISK_CLASS: GovernanceRiskClass = "high";
 export interface ProfileGovernanceCheck {
   ok: boolean;
   violations: string[];
+}
+
+export interface WriterCapGovernanceEvidence {
+  parallelismEvidence?: ParallelismEvidenceRecord[];
+  writerConflictSafety?: ParallelismWriterConflictSafety;
+  governanceEvents?: GovernanceEventRecord[];
 }
 
 interface ProfileAuthorityBaseline {
@@ -355,7 +365,7 @@ export function validateSafetyPolicyGovernance(
   policy: SafetyPolicy,
   baseline: SafetyPolicy,
   decisions: DecisionItem[] = [],
-  evidence: { writerConflictSafety?: ParallelismWriterConflictSafety } = {},
+  evidence: WriterCapGovernanceEvidence = {},
 ): ProfileGovernanceCheck {
   const changes: string[] = [];
   const writerCapIncrease = policy.writerCap > baseline.writerCap;
@@ -377,17 +387,100 @@ export function validateSafetyPolicyGovernance(
     violations.push(`safety policy has unapproved governed capability change: ${changes.join("; ")}`);
   }
   if (approved && writerCapIncrease) {
-    const conflictSafety = evidence.writerConflictSafety;
-    if (!conflictSafety) {
-      violations.push("safety policy writerCap change is missing deterministic writer conflict evidence");
-    } else if (!conflictSafety.advisorySafe) {
+    violations.push(...writerCapIncreaseViolations({
+      policy,
+      baseline,
+      changes,
+      approved,
+      evidence,
+    }));
+  }
+  return { ok: violations.length === 0, violations };
+}
+
+function writerCapIncreaseViolations(input: {
+  policy: SafetyPolicy;
+  baseline: SafetyPolicy;
+  changes: string[];
+  approved: DecisionItem;
+  evidence: WriterCapGovernanceEvidence;
+}): string[] {
+  const violations: string[] = [];
+  const records = input.evidence.parallelismEvidence ?? [];
+  const conflictSafety = input.evidence.writerConflictSafety
+    ?? records.map((record) => record.writerConflictSafety).find((safety): safety is ParallelismWriterConflictSafety => Boolean(safety));
+
+  if (!approvalPromptIncludesDiff(input.approved, input.changes)) {
+    violations.push(`approved safety policy change is missing auditable diff: ${input.changes.join("; ")}`);
+  }
+  if (!hasCompleteDogfoodEvidence(records, input.baseline)) {
+    violations.push("safety policy writerCap increase is missing complete dogfood evidence");
+  }
+  if (!conflictSafety) {
+    violations.push("safety policy writerCap change is missing deterministic writer conflict evidence");
+  } else {
+    if (!conflictSafety.advisorySafe) {
       violations.push(
         `safety policy writerCap change has unsafe writer conflict evidence: ${conflictSafety.violations.join("; ")}`,
       );
     }
-    violations.push(
-      "safety policy writerCap increase remains blocked in Phase 7 M6; conflict detection is advisory and cannot approve concurrency",
-    );
+    if (conflictSafety.writerCap !== input.baseline.writerCap) {
+      violations.push(
+        `safety policy writerCap conflict evidence used writerCap ${conflictSafety.writerCap}, expected baseline ${input.baseline.writerCap}`,
+      );
+    }
+    if (conflictSafety.candidateCount < input.policy.writerCap) {
+      violations.push(
+        `safety policy writerCap conflict evidence has ${conflictSafety.candidateCount} candidate(s), expected at least ${input.policy.writerCap}`,
+      );
+    }
   }
-  return { ok: violations.length === 0, violations };
+  if (!hasMergeCleanupEvidence(records)) {
+    violations.push("safety policy writerCap increase is missing merge and cleanup evidence");
+  }
+  if (!hasRollbackEvidence(input.evidence.governanceEvents ?? [])) {
+    violations.push("safety policy writerCap increase is missing completed rollback drill evidence");
+  }
+
+  return violations;
+}
+
+function approvalPromptIncludesDiff(decision: DecisionItem, changes: string[]): boolean {
+  const prompt = oneLine(decision.prompt);
+  return changes.every((change) => prompt.includes(change));
+}
+
+function hasCompleteDogfoodEvidence(records: ParallelismEvidenceRecord[], baseline: SafetyPolicy): boolean {
+  return records.some((record) => {
+    if (record.outcome !== "pass" || !record.verification.pass) return false;
+    if (record.writerCount !== baseline.writerCap) return false;
+    const writerRefs = record.refs.filter((ref) => ref.agentRole === "writer" || ref.resultMode === "write");
+    if (!writerRefs.some((ref) => ref.outcome === "pass")) return false;
+
+    const reportTaskIds = new Set(
+      record.refs
+        .filter((ref) => ref.agentRole !== "writer" && ref.resultMode === "report" && ref.outcome === "pass")
+        .map((ref) => ref.taskId),
+    );
+    return record.batches.some((batch) => batch.filter((taskId) => reportTaskIds.has(taskId)).length >= 2);
+  });
+}
+
+function hasMergeCleanupEvidence(records: ParallelismEvidenceRecord[]): boolean {
+  return records.some((record) =>
+    record.outcome === "pass" &&
+    record.verification.pass &&
+    record.writerCount > 0 &&
+    record.mergeStatus === "completed" &&
+    record.cleanupStatus === "completed"
+  );
+}
+
+function hasRollbackEvidence(events: GovernanceEventRecord[]): boolean {
+  return events.some((event) =>
+    event.source.kind === "operator_report" &&
+    event.source.id.startsWith("recovery-drill:") &&
+    event.kind === "transition_completed" &&
+    event.summary.includes("outcome=fixed")
+  );
 }

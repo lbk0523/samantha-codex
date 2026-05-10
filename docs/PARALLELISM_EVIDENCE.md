@@ -33,6 +33,7 @@ There is no automatic Phase 7 writer cap increase.
 | Keep role topology advisory | `src/lib/role-topology.ts` defines advisory role relationships and explicitly denies dispatch, writer, connector, secret, merge, push, cleanup, rollback, approval, and safety-policy authority. `tests/policy.test.ts`, `tests/profile-governance.test.ts`, `tests/orchestrator-agent.test.ts`, and `tests/operator-reports.test.ts` cover known-role validation, governance approval, planning/reporting visibility, and unchanged dispatch policy. | `bun run test:portable` |
 | Keep writer conflict detection advisory | `src/lib/parallelism-conflict-detector.ts` detects overlapping target files, forbidden changes, same-repo writer candidates, stale bases, dirty target repos, unmerged writer dependencies, and missing passing evidence. `tests/parallelism-conflict-detector.test.ts` verifies unsafe overlap, stale/dirty cases, missing evidence, evidence-record attachment, governance blocking, and `writerCap` staying `1`. | `bun test tests/parallelism-conflict-detector.test.ts` |
 | Keep merge queue classification deterministic | `src/lib/merge-gate.ts` classifies candidates as `mergeable`, `already_merged`, `stale_base`, `failed_verification`, `dirty_target_repo`, `missing_commit`, or `blocked`, and evaluates sorted merge queues without push commands. `tests/merge-gate.test.ts` covers deterministic ordering, clean mergeable candidates, stale/dirty/missing/failed candidates, post-merge verification failure, and push staying separate. | `bun test tests/merge-gate.test.ts` |
+| Govern writer-cap changes | `src/lib/profile-governance.ts` requires complete dogfood evidence, safe deterministic conflict evidence, completed merge and cleanup evidence, completed rollback drill evidence, and explicit BK approval whose prompt includes the auditable policy diff before a `writerCap` increase can pass governance. `tests/profile-governance.test.ts` covers insufficient evidence, approval without evidence, complete evidence, and the default cap staying `1`. | `bun test tests/profile-governance.test.ts` |
 
 ## Dogfood Notes
 
@@ -59,6 +60,8 @@ Before changing `writerCap` above `1`, update this document first with:
 - failure response for dirty worktrees, target-file violations, failed verify
   commands, merge conflicts, push failures, and abandoned worktrees;
 - focused tests for the exact concurrency behavior being added.
+- explicit BK approval for the safety-policy change with the auditable diff in
+  the decision prompt.
 
 If any item is missing, the writer cap stays `1`.
 

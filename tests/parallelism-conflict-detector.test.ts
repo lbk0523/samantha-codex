@@ -187,7 +187,7 @@ describe("writer concurrency conflict detection", () => {
     ]);
   });
 
-  test("stores conflict results as advisory evidence without approving writerCap expansion", async () => {
+  test("stores conflict results as advisory evidence without approving writerCap expansion by itself", async () => {
     const left = await makeRepo();
     const right = await makeRepo();
     const conflictSafety = await evaluateWriterConcurrencySafety({
@@ -230,7 +230,16 @@ describe("writer concurrency conflict detection", () => {
     expect(record.writerConflictSafety).toEqual(conflictSafety);
     expect(governance.ok).toBe(false);
     expect(governance.violations).toContain(
-      "safety policy writerCap increase remains blocked in Phase 7 M6; conflict detection is advisory and cannot approve concurrency",
+      "approved safety policy change is missing auditable diff: writerCap: 1 -> 2",
+    );
+    expect(governance.violations).toContain(
+      "safety policy writerCap increase is missing complete dogfood evidence",
+    );
+    expect(governance.violations).toContain(
+      "safety policy writerCap increase is missing merge and cleanup evidence",
+    );
+    expect(governance.violations).toContain(
+      "safety policy writerCap increase is missing completed rollback drill evidence",
     );
     expect(DEFAULT_SAFETY_POLICY.writerCap).toBe(1);
   });
