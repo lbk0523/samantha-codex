@@ -1,4 +1,4 @@
-import type { AgentRole, TaskSpec } from "./contracts";
+import type { TaskSpec } from "./contracts";
 import { buildCeoStatusSnapshot, type CeoStatusSnapshot } from "./ceo-status";
 import {
   summarizeCostBudgetAuditRollups,
@@ -20,14 +20,17 @@ import { buildProjectQueueSnapshot, formatProjectQueueSnapshot } from "./project
 import { classifyRemoteRequest, projectRemoteScopeRisk, type ProjectProfile, type ProjectRemoteScope, type RemoteRequestClassification } from "./project-profile";
 import type { ProposalRecord } from "./proposal-store";
 import { remoteActionCommand, type RemoteActionRecord } from "./remote-action-store";
+import {
+  agentRoleForId,
+  agentRoleLabel,
+  oneLine,
+  resultModeLabel,
+  roleOutcomeSummary,
+} from "./role-reporting";
 import { advisoryRoleTopologySummaryForRole } from "./role-topology";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
 import type { WorkerRunLog } from "./run-log";
 import type { TaskDraftRecord } from "./task-draft-store";
-
-function oneLine(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
 
 const telegramCommandReplacements: Array<[RegExp, string]> = [
   [/(^|[^\w/])\/help_advanced\b/g, "$1/help"],
@@ -254,10 +257,6 @@ function lifecycleText(lifecycle: RunLifecycleRecord | undefined): string {
   return `merged=${lifecycle.mergedAt ? "yes" : "no"} pushed=${lifecycle.pushedAt ? "yes" : "no"} cleaned=${lifecycle.cleanedAt ? "yes" : "no"}`;
 }
 
-function resultModeLabel(mode: string | undefined): string {
-  return mode === "report" ? "계획/보고" : "구현/수정";
-}
-
 function requestIntentLabel(intent: RemoteRequestClassification["intent"]): string {
   const labels: Record<RemoteRequestClassification["intent"], string> = {
     implementation: "implementation",
@@ -291,33 +290,27 @@ function requestClassificationReasonLine(classification: RemoteRequestClassifica
   return `분류 근거: ${telegramSafeLine(classification.reasons.join("; "))}`;
 }
 
-function agentRoleLabel(agentId: string | undefined): string {
-  if (agentId === "codex-reviewer") return "Reviewer";
-  if (agentId === "codex-evaluator") return "Evaluator";
-  if (agentId === "codex-spec") return "Spec";
-  if (agentId === "codex-researcher") return "Researcher";
-  if (agentId === "codex-content") return "Content";
-  if (agentId === "codex-operations") return "Operations";
-  if (agentId === "codex-worker") return "Writer";
-  return "Agent";
-}
-
-function agentRoleForId(agentId: string | undefined): AgentRole | undefined {
-  if (agentId === "codex-reviewer") return "reviewer";
-  if (agentId === "codex-evaluator") return "evaluator";
-  if (agentId === "codex-spec" || agentId === "codex-orchestrator") return "spec";
-  if (agentId === "codex-researcher") return "researcher";
-  if (agentId === "codex-content") return "content";
-  if (agentId === "codex-operations") return "operations";
-  if (agentId === "codex-worker") return "writer";
-  return undefined;
-}
-
-function roleOutcomeLine(input: { agentId?: string; title: string; mode?: string; outcome: string }): string {
+function roleOutcomeLine(input: {
+  agentId?: string;
+  title: string;
+  mode?: string;
+  outcome: string;
+  ancestry?: TaskSpec["ancestry"];
+  includeContribution?: boolean;
+  includeTopology?: boolean;
+}): string {
   const role = agentRoleForId(input.agentId);
-  const topology = role ? advisoryRoleTopologySummaryForRole(role) : "";
+  const topology = input.includeTopology === false || !role ? "" : advisoryRoleTopologySummaryForRole(role);
   const topologyText = topology ? `; advisory topology: ${topology}` : "";
-  return `- ${agentRoleLabel(input.agentId)}: ${oneLine(input.title)}: ${input.outcome} (${resultModeLabel(input.mode)})${topologyText}`;
+  return `- ${roleOutcomeSummary({
+    agentId: input.agentId,
+    role,
+    title: input.title,
+    mode: input.mode,
+    outcome: input.outcome,
+    ancestry: input.ancestry,
+    includeContribution: input.includeContribution,
+  })}${topologyText}`;
 }
 
 function taskProposalLine(task: NonNullable<OrchestratorPlanRecord["payload"]>["tasks"][number]): string {
@@ -1761,16 +1754,21 @@ export function orchestratorPlanResultReport(input: {
         : runLog?.task.resultMode === "report"
           ? "보고 완료"
           : "통과";
+      const specialistFailed = runLog?.task.resultMode === "report" && actionNeedsRecovery(action);
       return [
         roleOutcomeLine({
           agentId: runLog?.agent.id ?? action.targetAgent,
           title: action.taskTitle,
           mode: runLog?.task.resultMode,
           outcome: actionOutcome,
+          ancestry: runLog?.task.ancestry ?? runLog?.ancestry ?? action.ancestry ?? input.plan.ancestry,
+          includeContribution: true,
+          includeTopology: false,
         }),
         `  대상: ${repoName(runLog?.input.repoRoot ?? action.repoRoot)} / ${resultModeLabel(runLog?.task.resultMode)}`,
         runLog ? `  보고: ${oneLine(workerFinalMessage(runLog))}` : "",
         action.result?.failure ? `  실패 이유: ${telegramSafeLine(action.result.failure)}` : "",
+        specialistFailed ? `  다음: 실패한 specialist 보고를 ${code("/recover")} 복구 계획에 반영` : "",
       ].filter(Boolean);
     }),
     "",

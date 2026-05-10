@@ -121,6 +121,29 @@ describe("dashboard", () => {
     expect(html).not.toContain("<form");
   });
 
+  test("renders completed specialist outcomes in the daily review", () => {
+    const html = renderDashboard([], {
+      ceoStatus: {
+        ...ceoStatus,
+        completed: [
+          {
+            kind: "action",
+            id: "action-review-parallel",
+            title: "Review parallel outcome",
+            status: "completed",
+            detail: "Reviewer [project=samantha goal=goal-parallelism]: Review parallel outcome: completed (계획/보고); checked quality and regressions; reduced bad change approval risk",
+          },
+        ],
+      },
+    });
+
+    expect(html).toContain("Completed Work");
+    expect(html).toContain("Reviewer [project=samantha goal=goal-parallelism]");
+    expect(html).toContain("reduced bad change approval risk");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<form");
+  });
+
   test("separates current problem counts from historical run failures", () => {
     const failedRun: RunSummary = {
       schemaVersion: 1,

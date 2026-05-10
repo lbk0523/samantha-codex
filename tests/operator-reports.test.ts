@@ -1320,6 +1320,79 @@ describe("operator reports", () => {
     expect(reportOnlyPlanResult).toContain("작업 유형: 계획/보고 - 커밋 없음 정상");
     expect(reportOnlyPlanResult).not.toContain("로컬 merge 후보");
 
+    const specialistAncestry = {
+      mode: "assigned" as const,
+      projectId: "samantha",
+      goalId: "goal-parallelism",
+      workItemId: "work-parallelism",
+    };
+    const reviewerAgent: AgentProfile = {
+      ...agent,
+      id: "codex-reviewer",
+      role: "reviewer",
+      writerClass: "non-writer",
+      worktreePolicy: "none",
+      mergePolicy: "none",
+    };
+    const reviewerTask: TaskSpec = {
+      ...task,
+      id: "task-review-parallel",
+      ancestry: specialistAncestry,
+      title: "Review parallel summary",
+      targetAgent: "codex-reviewer",
+      resultMode: "report",
+      targetFiles: [],
+    };
+    const reviewerAction = {
+      ...createRemoteDispatchAction({
+        task: reviewerTask,
+        repoRoot: "/repo/samantha-codex",
+        createdAt: "2026-05-05T10:04:00.000Z",
+        source: "remote",
+        commandId: "review-parallel",
+        ancestry: specialistAncestry,
+      }),
+      status: "completed" as const,
+      result: { runId: "run-review-parallel", runLogPath: "/runs/run-review-parallel.json", pass: true, outcome: "pass" },
+    };
+    const specialistResult = orchestratorPlanResultReport({
+      plan: { ...orchestratorPlan, ancestry: specialistAncestry, status: "materialized", actionIds: [reviewerAction.id] },
+      actions: [reviewerAction],
+      runLogs: [
+        {
+          schemaVersion: 1,
+          ancestry: specialistAncestry,
+          runId: "run-review-parallel",
+          startedAt: "2026-05-05T10:04:00.000Z",
+          finishedAt: "2026-05-05T10:05:00.000Z",
+          task: reviewerTask,
+          agent: reviewerAgent,
+          input: { repoRoot: "/repo/samantha-codex", allocate: true, execute: true },
+          result: {
+            preparation: {
+              taskId: reviewerTask.id,
+              agentId: reviewerAgent.id,
+              worktreePath: "/worktree",
+              codex: { prompt: "prompt", command: ["codex", "exec"] },
+            },
+            setupResults: [],
+            command: { command: ["codex", "exec"], exitCode: 0, stdout: "", stderr: "" },
+            evaluation: {
+              pass: true,
+              harness: { status: "pass", note: "checked role presentation risk", commit: "" },
+              changedFiles: [],
+              scopeViolations: [],
+              verifyResults: [],
+            },
+            pass: true,
+          },
+        },
+      ],
+    });
+    expect(specialistResult).toContain("Reviewer [project=samantha goal=goal-parallelism]: Review parallel summary: 보고 완료 (계획/보고)");
+    expect(specialistResult).toContain("checked quality and regressions; reduced bad change approval risk");
+    expect(specialistResult).not.toContain("action-");
+
     const failedPlanResult = orchestratorPlanResultReport({
       plan: { ...orchestratorPlan, status: "materialized", actionIds: ["action-failed"] },
       actions: [
@@ -1378,6 +1451,56 @@ describe("operator reports", () => {
     expect(failedPlanResult).toContain("`docs/failure-report.md`");
     expect(failedPlanResult).toContain("bun typecheck exited 1");
     expect(failedPlanResult).toContain("`/runs/run-failed.json`");
+
+    const failedSpecialistAction = {
+      ...reviewerAction,
+      id: "action-specialist-failed",
+      status: "failed" as const,
+      result: {
+        runId: "run-specialist-failed",
+        runLogPath: "/runs/run-specialist-failed.json",
+        pass: false,
+        outcome: "failed",
+        failure: "review verification failed",
+      },
+    };
+    const failedSpecialistResult = orchestratorPlanResultReport({
+      plan: { ...orchestratorPlan, ancestry: specialistAncestry, status: "materialized", actionIds: [failedSpecialistAction.id] },
+      actions: [failedSpecialistAction],
+      runLogs: [
+        {
+          schemaVersion: 1,
+          ancestry: specialistAncestry,
+          runId: "run-specialist-failed",
+          startedAt: "2026-05-05T10:06:00.000Z",
+          finishedAt: "2026-05-05T10:07:00.000Z",
+          task: reviewerTask,
+          agent: reviewerAgent,
+          input: { repoRoot: "/repo/samantha-codex", allocate: true, execute: true },
+          result: {
+            preparation: {
+              taskId: reviewerTask.id,
+              agentId: reviewerAgent.id,
+              worktreePath: "/worktree",
+              codex: { prompt: "prompt", command: ["codex", "exec"] },
+            },
+            setupResults: [],
+            command: { command: ["codex", "exec"], exitCode: 1, stdout: "", stderr: "" },
+            evaluation: {
+              pass: false,
+              harness: { status: "rework", note: "review verification failed", commit: "" },
+              changedFiles: [],
+              scopeViolations: [],
+              verifyResults: [{ command: "bun typecheck", exitCode: 1, stdout: "", stderr: "TS2322" }],
+            },
+            pass: false,
+          },
+        },
+      ],
+    });
+    expect(failedSpecialistResult).toContain("Reviewer [project=samantha goal=goal-parallelism]: Review parallel summary: 검증 실패 (계획/보고)");
+    expect(failedSpecialistResult).toContain("다음: 실패한 specialist 보고를 `/recover` 복구 계획에 반영");
+    expect(failedSpecialistResult).toContain("텔레그램: `/recover`");
 
     const blockedPlanResult = orchestratorPlanResultReport({
       plan: { ...orchestratorPlan, status: "materialized", actionIds: [passedPlanAction.id] },

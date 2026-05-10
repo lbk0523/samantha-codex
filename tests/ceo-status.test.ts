@@ -496,6 +496,50 @@ describe("CEO status snapshot", () => {
     expect(snapshot.active.map((item) => item.status).sort()).toEqual(["approved", "pending", "running", "waiting"]);
   });
 
+  test("completed parallel specialists summarize role outcome and ancestry without run ids", () => {
+    const ancestry = {
+      mode: "assigned" as const,
+      projectId: "samantha",
+      goalId: "goal-parallelism",
+      workItemId: "work-parallelism",
+    };
+    const reviewTask: TaskSpec = {
+      ...task,
+      id: "task-review-parallel",
+      ancestry,
+      title: "Review parallel outcome",
+      targetAgent: "codex-reviewer",
+      resultMode: "report",
+      targetFiles: [],
+    };
+    const completedAction: RemoteActionRecord = {
+      ...action,
+      id: "action-review-parallel",
+      ancestry,
+      taskId: reviewTask.id,
+      taskTitle: reviewTask.title,
+      targetAgent: reviewTask.targetAgent,
+      status: "completed",
+      completedAt: "2026-05-07T12:10:00.000Z",
+      result: { runId: "run-review-parallel", pass: true, outcome: "pass" },
+    };
+
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T00:00:00.000Z",
+      tasks: [reviewTask],
+      actions: [completedAction],
+    });
+    const report = formatCeoStatusReport(snapshot);
+
+    expect(snapshot.completed[0]).toMatchObject({
+      kind: "action",
+      id: "action-review-parallel",
+      detail: expect.stringContaining("Reviewer [project=samantha goal=goal-parallelism]: Review parallel outcome: completed (계획/보고)"),
+    });
+    expect(report).toContain("checked quality and regressions; reduced bad change approval risk");
+    expect(report).not.toContain("run=run-review-parallel");
+  });
+
   test("failed action and failed synthesis create recovery blockers", () => {
     const failedAction: RemoteActionRecord = {
       ...action,

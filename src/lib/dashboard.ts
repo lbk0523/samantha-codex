@@ -854,6 +854,10 @@ function renderCeoStatus(status: CeoStatusSnapshot | undefined): string {
         <ul class="ceo-list">${ceoList(operating.sections.historicalFailures, surfaceItemText)}</ul>
       </div>
       <div class="ceo-block">
+        <h3>Completed Work</h3>
+        <ul class="ceo-list">${ceoList(operating.sections.completed, surfaceItemText)}</ul>
+      </div>
+      <div class="ceo-block">
         <h3>Risks</h3>
         <ul class="ceo-list">${ceoList(operating.sections.risks, (risk) => risk)}</ul>
       </div>

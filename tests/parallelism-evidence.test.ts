@@ -505,9 +505,10 @@ describe("parallelism evidence", () => {
     });
 
     expect(report).toContain("완료 작업: 3/3");
-    expect(report).toContain("Reviewer: Scope report: 보고 완료 (계획/보고)");
-    expect(report).toContain("Evaluator: Verify report: 보고 완료 (계획/보고)");
-    expect(report).toContain("Writer: Apply focused change: 통과 (구현/수정)");
+    expect(report).toContain("Reviewer [project=samantha goal=goal-parallelism]: Scope report: 보고 완료 (계획/보고)");
+    expect(report).toContain("Evaluator [project=samantha goal=goal-parallelism]: Verify report: 보고 완료 (계획/보고)");
+    expect(report).toContain("Writer [project=samantha goal=goal-parallelism]: Apply focused change: 통과 (구현/수정)");
+    expect(report).toContain("checked verification evidence; reduced false pass risk");
     expect(report).toContain("작업 유형: 구현/수정 - merge 필요");
     expect(report).toContain("로컬 merge 후보:");
     expect(report).not.toContain("action-");

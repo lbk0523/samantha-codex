@@ -20,6 +20,7 @@ import { recoveryResolvedPlanIds } from "./recovery-continuity";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
 import { buildOperatingSurfaceView } from "./operating-surface";
 import { buildCeoRanking, type CeoRanking } from "./ceo-ranking";
+import { agentRoleForId, roleOutcomeSummary } from "./role-reporting";
 import {
   buildProjectQueueSnapshot,
   filterProjectQueueRecords,
@@ -241,6 +242,35 @@ function taskItem(task: TaskSpec, goals: GoalRecord[] = []): CeoStatusItem {
     detail: `agent=${task.targetAgent}`,
     ...rankingContext(task, goals),
   };
+}
+
+function completedActionDetail(action: RemoteActionRecord, task: TaskSpec | undefined): string {
+  const mode = task?.resultMode;
+  const role = agentRoleForId(action.targetAgent);
+  const outcome = action.result?.outcome === "pass" || action.result?.pass !== false ? "completed" : action.result?.outcome ?? action.status;
+  return roleOutcomeSummary({
+    agentId: action.targetAgent,
+    role,
+    title: action.taskTitle,
+    mode,
+    outcome,
+    ancestry: action.ancestry ?? task?.ancestry,
+    includeContribution: true,
+  });
+}
+
+function failedActionDetail(action: RemoteActionRecord, task: TaskSpec | undefined): string {
+  const failure = oneLine(action.result?.failure ?? action.result?.outcome ?? "action failed or reported non-passing result");
+  if (task?.resultMode !== "report") return failure;
+  return `${roleOutcomeSummary({
+    agentId: action.targetAgent,
+    role: agentRoleForId(action.targetAgent),
+    title: action.taskTitle,
+    mode: task.resultMode,
+    outcome: "failed",
+    ancestry: action.ancestry ?? task.ancestry,
+    includeContribution: true,
+  })}; next=/recover`;
 }
 
 function runItem(run: RunSummary, goals: GoalRecord[] = []): CeoStatusItem {
@@ -526,6 +556,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
       .flatMap((plan) => plan.taskIds ?? []),
   );
   const actionTaskIds = new Set(actions.map((action) => action.taskId));
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
   const decisionsBySubject = latestDecisionBySubject(decisions);
   const currentBlockerClarifications = decisions.filter((decision) =>
     decisionIsCurrentBlockerClarification(decision, orchestratorPlans),
@@ -654,7 +685,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
       title: action.taskTitle,
       status: action.status,
       updatedAt: actionUpdatedAt(action),
-      detail: oneLine(action.result?.failure ?? action.result?.outcome ?? "action failed or reported non-passing result"),
+      detail: failedActionDetail(action, tasksById.get(action.taskId)),
       ...rankingContext(action, goals),
     })),
     ...failedPlans.map((plan) => ({
@@ -680,7 +711,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
         title: action.taskTitle,
         status: action.status,
         updatedAt: action.completedAt ?? action.createdAt,
-        detail: action.result?.runId ? `run=${action.result.runId}` : undefined,
+        detail: completedActionDetail(action, tasksById.get(action.taskId)),
         ...rankingContext(action, goals),
       })),
     ...runs.filter((run) => run.pass).map((run) => runItem(run, goals)),

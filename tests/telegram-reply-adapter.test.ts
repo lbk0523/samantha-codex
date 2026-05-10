@@ -212,7 +212,7 @@ describe("sendOutboxReplies", () => {
         "작업 유형: 구현/수정 - merge 필요",
         "완료 작업: 1/1",
         "Worker 결과:",
-        "- Telegram UX 정리: 통과",
+        "- Reviewer [project=samantha goal=goal-parallelism]: Telegram UX 정리: 보고 완료 (계획/보고); checked quality and regressions; reduced bad change approval risk",
         "  보고: Telegram 보고 메시지를 짧게 정리했습니다.",
         "산출/변경:",
         "- `src > lib > operator-reports.ts`",
@@ -229,6 +229,8 @@ describe("sendOutboxReplies", () => {
     expect(report).toContain("계획 결과: 구현 통과");
     expect(report).toContain("대상 repo: `samantha-codex`");
     expect(report).toContain("작업 유형: 구현/수정 - merge 필요");
+    expect(report).toContain("Reviewer [project=samantha goal=goal-parallelism]");
+    expect(report).toContain("reduced bad change approval risk");
     expect(report).toContain("Telegram 보고 메시지를 짧게 정리했습니다.");
     expect(report).toContain("`src > lib > operator-reports.ts`");
     expect(report).toContain("남은 리스크:");
