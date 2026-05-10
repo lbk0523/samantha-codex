@@ -4,6 +4,10 @@ import { selectedProjectIdFromAncestry } from "./orchestration-ancestry";
 import { hostOnlyRuntimeViolations, planPayloadBlockerViolations } from "./orchestrator-blockers";
 import type { OrchestratorPlanRecord, OrchestratorTaskProposal } from "./orchestrator-store";
 import type { ProjectProfile } from "./project-profile";
+import {
+  projectEffectiveForbiddenChanges,
+  projectSafetyMaterializationViolations,
+} from "./project-safety-policy";
 import { createRemoteDispatchAction, type RemoteActionRecord } from "./remote-action-store";
 import { validateTaskTargetFiles } from "./task-draft-store";
 import { validateDispatch } from "./policy";
@@ -108,7 +112,7 @@ export function materializeOrchestratorPlan(input: {
 
     violations.push(...validateProposalRepoRoot(taskPrefix, proposal, projectsById, canonicalProjectRoots));
     violations.push(...validateProposalProjectContext(taskPrefix, proposal, selectedProjectId));
-    const fieldViolations = validateTaskProposal(taskPrefix, proposal, task, input.agents);
+    const fieldViolations = validateTaskProposal(taskPrefix, proposal, task, input.agents, projectsById.get(proposal.projectId ?? ""));
     violations.push(...fieldViolations);
 
     const dependsOnActionIds = dependencyProposalIds(proposal, payload.tasks, proposalBatchIndex)
@@ -263,6 +267,9 @@ function validateUnmergedWriterDependencies(
 
 function taskFromProposal(proposal: OrchestratorTaskProposal, projects: ProjectProfile[], ancestry?: TaskSpec["ancestry"]): TaskSpec {
   const project = proposal.projectId ? projects.find((item) => item.id === proposal.projectId) : undefined;
+  const forbiddenChanges = project
+    ? projectEffectiveForbiddenChanges(project, proposal.forbiddenChanges)
+    : proposal.forbiddenChanges;
   return {
     id: taskIdFromOrchestratorProposal(proposal.id),
     ancestry,
@@ -271,7 +278,7 @@ function taskFromProposal(proposal: OrchestratorTaskProposal, projects: ProjectP
     projectId: proposal.projectId,
     repoRoot: proposal.repoRoot || project?.repoRoot,
     targetFiles: proposal.targetFiles,
-    forbiddenChanges: proposal.forbiddenChanges.length ? proposal.forbiddenChanges : project?.forbiddenChanges ?? [],
+    forbiddenChanges,
     setupCommands: proposal.setupCommands ?? project?.setupCommands ?? [],
     verifyCommands: proposal.verifyCommands.length ? proposal.verifyCommands : project?.verifyCommands ?? [],
     instructions: proposal.instructions.trim(),
@@ -288,7 +295,13 @@ function validateProposalProjectContext(prefix: string, proposal: OrchestratorTa
   return [];
 }
 
-function validateTaskProposal(prefix: string, proposal: OrchestratorTaskProposal, task: TaskSpec, agents: AgentProfile[]): string[] {
+function validateTaskProposal(
+  prefix: string,
+  proposal: OrchestratorTaskProposal,
+  task: TaskSpec,
+  agents: AgentProfile[],
+  project: ProjectProfile | undefined,
+): string[] {
   const violations: string[] = [];
   const agent = agents.find((item) => item.id === task.targetAgent);
 
@@ -299,6 +312,12 @@ function validateTaskProposal(prefix: string, proposal: OrchestratorTaskProposal
   if (task.verifyCommands.length === 0) violations.push(`${prefix}: verifyCommands must not be empty`);
   violations.push(...validateTaskTargetFiles(task.targetFiles, task.forbiddenChanges).map((violation) => `${prefix}: ${violation}`));
   violations.push(...hostOnlyRuntimeViolations(proposal).map((violation) => `${prefix}: ${violation}`));
+  violations.push(...projectSafetyMaterializationViolations({
+    project,
+    proposalId: proposal.id,
+    targetFiles: task.targetFiles,
+    resultMode: task.resultMode,
+  }));
 
   if (!agent) {
     violations.push(`${prefix}: targetAgent is unknown: ${task.targetAgent || "(empty)"}`);

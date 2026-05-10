@@ -1,5 +1,6 @@
 import type { AgentProfile } from "./contracts";
 import { classifyRemoteRequest, type ProjectProfile, type RemoteRequestClassification } from "./project-profile";
+import { projectEffectiveForbiddenChanges } from "./project-safety-policy";
 import type {
   OrchestrationRequestRecord,
   OrchestratorPlanPayload,
@@ -392,7 +393,10 @@ function projectProfileLines(profiles: ProjectProfile[]): string[] {
     const scopes = (profile.remoteScopes ?? [])
       .map((scope) => `${scope.id}:${scope.resultMode ?? "write"}:${scope.targetFiles.join(",")}`)
       .join("; ");
-    return `- ${profile.id}: repo=${profile.repoRoot}; keywords=${(profile.keywords ?? []).join(",") || "none"}; scopes=${scopes || "none"}; forbidden=${profile.forbiddenChanges.join(",") || "none"}; verify=${profile.verifyCommands.join(",") || "none"}`;
+    const allowedScopes = profile.safetyPolicy?.allowedRemoteScopeIds?.join(",") || "all declared scopes";
+    const dispatchPrerequisites = profile.safetyPolicy?.dispatchPrerequisites?.join(",") || "none";
+    const hostOnly = profile.safetyPolicy?.hostOnlyVerificationNeeds?.join(",") || "none";
+    return `- ${profile.id}: repo=${profile.repoRoot}; keywords=${(profile.keywords ?? []).join(",") || "none"}; scopes=${scopes || "none"}; allowedScopes=${allowedScopes}; forbidden=${projectEffectiveForbiddenChanges(profile).join(",") || "none"}; verify=${profile.verifyCommands.join(",") || "none"}; dispatchPrerequisites=${dispatchPrerequisites}; hostOnlyVerification=${hostOnly}`;
   });
 }
 

@@ -49,6 +49,38 @@ const project = {
   forbiddenChanges: ["state/**"],
 };
 
+const strictProject = {
+  ...project,
+  safetyPolicy: {
+    forbiddenChanges: ["docs/private/**"],
+    allowedRemoteScopeIds: ["planning_report"],
+    hostOnlyVerificationNeeds: ["bun run verify:host"],
+    dispatchPrerequisites: ["BK must confirm host runtime window"],
+  },
+  remoteScopes: [
+    {
+      id: "planning_report",
+      label: "Planning report",
+      description: "Report-only docs work.",
+      risk: "low" as const,
+      resultMode: "report" as const,
+      targetFiles: ["docs/**"],
+      planSteps: ["Read docs.", "Report."],
+      successCriteria: ["Report is actionable."],
+    },
+    {
+      id: "implementation",
+      label: "Implementation",
+      description: "Code work.",
+      risk: "medium" as const,
+      resultMode: "write" as const,
+      targetFiles: ["src/**"],
+      planSteps: ["Read code.", "Implement."],
+      successCriteria: ["Tests pass."],
+    },
+  ],
+};
+
 function proposal(patch: Partial<OrchestratorTaskProposal> & Pick<OrchestratorTaskProposal, "id" | "title" | "targetAgent">): OrchestratorTaskProposal {
   return {
     projectId: "samantha",
@@ -392,6 +424,85 @@ describe("materializeOrchestratorPlan role-aware specialist contract", () => {
     expect(result.ok).toBe(false);
     expect(result.violations).toContain(
       "task proposal write-with-default-verify-only: writer task proposals must include their own verifyCommands",
+    );
+  });
+
+  test("blocks project-specific forbidden changes before materialization", () => {
+    const result = materializeOrchestratorPlan({
+      plan: plan([
+        proposal({
+          id: "touch-private-doc",
+          title: "Touch private docs",
+          targetAgent: "codex-reviewer",
+          targetFiles: ["docs/private/notes.md"],
+          forbiddenChanges: [],
+        }),
+      ], [["touch-private-doc"]]),
+      agents: [reviewer],
+      projects: [strictProject],
+      createdAt: "2026-05-07T00:03:56.000Z",
+      commandId: "remote-go-project-forbidden",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.violations).toContain(
+      "task proposal touch-private-doc: targetFiles entry is forbidden: docs/private/notes.md matches docs/private/**",
+    );
+    expect(result.tasks).toEqual([
+      expect.objectContaining({ forbiddenChanges: ["state/**", "docs/private/**"] }),
+    ]);
+  });
+
+  test("blocks tasks outside project allowed remote scopes before materialization", () => {
+    const result = materializeOrchestratorPlan({
+      plan: plan([
+        proposal({
+          id: "write-source",
+          title: "Write source",
+          targetAgent: "codex-worker",
+          resultMode: "write",
+          targetFiles: ["src/lib/policy.ts"],
+          instructions: "Apply a focused change.",
+        }),
+      ], [["write-source"]]),
+      agents: [worker],
+      projects: [{ ...strictProject, safetyPolicy: { allowedRemoteScopeIds: ["planning_report"] } }],
+      createdAt: "2026-05-07T00:03:56.500Z",
+      commandId: "remote-go-project-scope",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.violations).toContain(
+      "task proposal write-source: project policy samantha blocked: resultMode write is outside allowed remote scopes planning_report. Next safe action: revise the plan to an allowed project scope or request governed project policy approval.",
+    );
+    expect(result.violations).toContain(
+      "task proposal write-source: project policy samantha blocked: targetFiles entry src/lib/policy.ts is outside allowed remote scopes planning_report. Next safe action: revise targetFiles to the allowed project scope or request governed project policy approval.",
+    );
+  });
+
+  test("reports project-specific dispatch prerequisites and host-only verification needs", () => {
+    const result = materializeOrchestratorPlan({
+      plan: plan([
+        proposal({
+          id: "strict-doc-report",
+          title: "Strict doc report",
+          targetAgent: "codex-reviewer",
+          targetFiles: ["docs/report.md"],
+          forbiddenChanges: [],
+        }),
+      ], [["strict-doc-report"]]),
+      agents: [reviewer],
+      projects: [strictProject],
+      createdAt: "2026-05-07T00:03:56.700Z",
+      commandId: "remote-go-project-prereq",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.violations).toContain(
+      "task proposal strict-doc-report: project policy samantha blocked: dispatch prerequisite is unresolved: BK must confirm host runtime window. Next safe action: satisfy the project prerequisite or revise the plan to keep it as a blocker before /go.",
+    );
+    expect(result.violations).toContain(
+      "task proposal strict-doc-report: project policy samantha blocked: host-only verification is required outside worker dispatch: bun run verify:host. Next safe action: revise the plan to report this as host verification instead of materializing a worker task.",
     );
   });
 

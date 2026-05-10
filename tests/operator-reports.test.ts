@@ -1121,6 +1121,16 @@ describe("operator reports", () => {
     expect(blocked).toContain("답변/수정 요청: `/revise <피드백>`");
     expect(blocked).not.toContain("상태 확인: `/now`");
 
+    const projectPolicyBlocked = orchestratorGoBlockedReport({
+      plan: orchestratorPlan,
+      violations: [
+        "task proposal write-source: project policy samantha blocked: targetFiles entry src/lib/policy.ts is outside allowed remote scopes planning_report. Next safe action: revise targetFiles to the allowed project scope or request governed project policy approval.",
+      ],
+    });
+    expect(projectPolicyBlocked).toContain("project policy samantha blocked");
+    expect(projectPolicyBlocked).toContain("Next safe action: revise targetFiles to the allowed project scope");
+    expect(projectPolicyBlocked).toContain("계획 수정: `/revise <피드백>`");
+
     const materialized = orchestratorGoMaterializedReport({
       plan: { ...advisoryPlan, status: "materialized" },
       tasks: [task],

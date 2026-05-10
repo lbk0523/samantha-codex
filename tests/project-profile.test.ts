@@ -9,6 +9,7 @@ import {
   classifyRemoteRequestIntent,
   inferProjectProfile,
   loadProjectProfiles,
+  projectRemoteScopeRisk,
   selectProjectRemoteScope,
   type ProjectProfile,
 } from "../src/lib/project-profile";
@@ -60,7 +61,7 @@ describe("project profiles", () => {
     });
   });
 
-  test("preserves explicit patch arrays over defaults", () => {
+  test("composes explicit patch arrays with stricter project forbidden changes", () => {
     expect(
       applyProjectDefaults(
         {
@@ -73,7 +74,7 @@ describe("project profiles", () => {
     ).toMatchObject({
       setupCommands: ["bun install --frozen-lockfile"],
       verifyCommands: ["bun test tests/unit/foo.test.ts"],
-      forbiddenChanges: ["app/**"],
+      forbiddenChanges: ["node_modules/**", "app/**"],
     });
   });
 
@@ -107,6 +108,52 @@ describe("project profiles", () => {
     expect(classifyRemoteRequestIntent("다음 작업 구현")).toBe("implementation");
     expect(classifyRemoteRequestIntent("계획대로 구현 시작")).toBe("implementation");
     expect(selectProjectRemoteScope(profile, { requestText: "다음 작업 구현" })?.id).toBe("implementation");
+  });
+
+  test("blocks project policy attempts to loosen global authority", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-profile-policy-loosen-"));
+    try {
+      await writeFile(
+        join(root, "omht.json"),
+        JSON.stringify({
+          ...profile,
+          repoRoot: "$HOME/projects/omht",
+          safetyPolicy: {
+            writerCap: 2,
+            connectorAccess: ["gmail"],
+            forbiddenChanges: ["state/**"],
+          },
+        }),
+        "utf8",
+      );
+
+      await expect(loadProjectProfiles(root, { env: { HOME: "/Users/byung" }, homeDir: "/Users/byung" })).rejects.toThrow(
+        "safetyPolicy.writerCap must not configure global authority",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("applies project safety overlay to remote scope selection and risk defaults", () => {
+    const strict: ProjectProfile = {
+      ...profile,
+      safetyPolicy: {
+        forbiddenChanges: ["state/**"],
+        allowedRemoteScopeIds: ["planning_report"],
+        riskDefaults: { remoteScopes: { planning_report: "medium" } },
+      },
+    };
+
+    expect(() => selectProjectRemoteScope(strict, { requestedScopeId: "implementation" })).toThrow(
+      "project policy omht blocks remote scope: implementation",
+    );
+    const selected = selectProjectRemoteScope(strict, { requestedScopeId: "planning_report" });
+    expect(selected?.id).toBe("planning_report");
+    expect(selected ? projectRemoteScopeRisk(strict, selected) : undefined).toBe("medium");
+    expect(applyProjectRemoteScopeDefaults({}, strict, selected)).toMatchObject({
+      forbiddenChanges: ["node_modules/**", "state/**"],
+    });
   });
 
   test("classifies mixed Korean and English request intents deterministically", () => {

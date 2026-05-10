@@ -364,6 +364,29 @@ Verification focus:
 - reports show the project-specific blocked reason and next safe action
 - existing Phase 5 authority-change tests remain valid
 
+Outcome:
+
+- Added a per-project safety overlay contract with additive `forbiddenChanges`,
+  `allowedRemoteScopeIds`, `hostOnlyVerificationNeeds`, risk defaults, and
+  dispatch prerequisites.
+- Project policy composition now uses stricter-rule-wins behavior: project and
+  task forbidden changes are unioned, remote scopes can only be narrowed, and
+  scope risk defaults can only raise effective risk.
+- Project safety policy validation fails closed when a project profile attempts
+  to configure global writer, skill, connector, secret, merge, push, cleanup,
+  or approval authority.
+- Plan materialization now blocks project-specific forbidden paths, target files
+  outside allowed project remote scopes, unresolved project dispatch
+  prerequisites, and host-only verification needs before tasks or actions can be
+  used as executable work.
+- Added governance helpers requiring an approved policy capability decision for
+  project policy authority expansion such as removing forbidden changes,
+  expanding allowed remote scopes, removing prerequisites, or lowering project
+  risk defaults.
+- Updated operator reports so project-policy denial text includes the
+  project-specific blocked reason and next safe action.
+- Kept `writerCap` global and unchanged.
+
 ## M8: Project And Goal Cost/Budget Reporting
 
 Goal: use the Phase 5 budget audit hooks to show cost and budget observations

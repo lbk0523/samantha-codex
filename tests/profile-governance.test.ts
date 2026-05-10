@@ -13,6 +13,11 @@ import {
   validateSafetyPolicyGovernance,
 } from "../src/lib/profile-governance";
 import { DEFAULT_SAFETY_POLICY, validateDispatch } from "../src/lib/policy";
+import {
+  projectSafetyPolicyCapabilityId,
+  validateProjectSafetyPolicyGovernance,
+} from "../src/lib/project-safety-policy";
+import type { ProjectProfile } from "../src/lib/project-profile";
 
 const blockedSkills = [
   "using-git-worktrees",
@@ -40,6 +45,43 @@ const reportTask: TaskSpec = {
   verifyCommands: [],
   instructions: "Return a report only.",
   status: "pending",
+};
+
+const project: ProjectProfile = {
+  schemaVersion: 1,
+  id: "samantha",
+  repoRoot: "/repo/samantha",
+  setupCommands: [],
+  verifyCommands: ["bun typecheck"],
+  forbiddenChanges: ["state/**", "runs/**"],
+  remoteScopes: [
+    {
+      id: "planning_report",
+      label: "Planning report",
+      description: "Report only.",
+      risk: "low",
+      resultMode: "report",
+      targetFiles: ["docs/**"],
+      planSteps: ["Read docs."],
+      successCriteria: ["Report is actionable."],
+    },
+    {
+      id: "implementation",
+      label: "Implementation",
+      description: "Code changes.",
+      risk: "medium",
+      resultMode: "write",
+      targetFiles: ["src/**"],
+      planSteps: ["Read code."],
+      successCriteria: ["Tests pass."],
+    },
+  ],
+  safetyPolicy: {
+    forbiddenChanges: ["docs/private/**"],
+    allowedRemoteScopeIds: ["planning_report"],
+    dispatchPrerequisites: ["BK confirms the deployment window"],
+    riskDefaults: { remoteScopes: { planning_report: "medium" } },
+  },
 };
 
 function approvedDecision(input: {
@@ -310,5 +352,32 @@ describe("agent profile and capability governance", () => {
         prompt: "Approve safety policy writerCap change.",
       }),
     ]).ok).toBe(true);
+  });
+
+  test("requires governed approval when project policy expands authority", () => {
+    const loosened: ProjectProfile = {
+      ...project,
+      safetyPolicy: {
+        forbiddenChanges: [],
+        allowedRemoteScopeIds: ["planning_report", "implementation"],
+        riskDefaults: { remoteScopes: { planning_report: "low" } },
+      },
+    };
+    const missing = validateProjectSafetyPolicyGovernance(project, loosened);
+    const approved = validateProjectSafetyPolicyGovernance(project, loosened, [
+      approvedDecision({
+        kind: "capability_change",
+        subjectType: "policy",
+        subjectId: projectSafetyPolicyCapabilityId("samantha"),
+        prompt: "Approve project policy authority expansion for Samantha.",
+      }),
+    ]);
+
+    expect(missing.ok).toBe(false);
+    expect(missing.violations[0]).toContain("project policy samantha has unapproved governed authority expansion");
+    expect(missing.violations[0]).toContain("allowedRemoteScopeIds expanded: implementation");
+    expect(missing.violations[0]).toContain("forbiddenChanges removed: docs/private/**");
+    expect(missing.violations[0]).toContain("riskDefaults lowered for planning_report: medium -> low");
+    expect(approved.ok).toBe(true);
   });
 });

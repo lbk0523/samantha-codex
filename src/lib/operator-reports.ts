@@ -11,7 +11,7 @@ import type { OrchestrationRequestRecord, OrchestratorPlanRecord, OrchestratorSy
 import type { CeoReportRecord } from "./ceo-report-store";
 import type { GovernanceEventRecord } from "./governance-event-store";
 import { buildProjectQueueSnapshot, formatProjectQueueSnapshot } from "./project-queues";
-import { classifyRemoteRequest, type ProjectProfile, type ProjectRemoteScope, type RemoteRequestClassification } from "./project-profile";
+import { classifyRemoteRequest, projectRemoteScopeRisk, type ProjectProfile, type ProjectRemoteScope, type RemoteRequestClassification } from "./project-profile";
 import type { ProposalRecord } from "./proposal-store";
 import { remoteActionCommand, type RemoteActionRecord } from "./remote-action-store";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
@@ -1712,7 +1712,7 @@ export function taskDraftPlanReport(input: {
     `프로젝트: ${code(input.project.id)}${input.inferredProject ? " (자동 선택)" : ""}`,
     requestClassificationLine(classification),
     `분류: ${resultModeLabel(input.draft.resultMode)}${scope ? ` (${code(scope.id)} - ${oneLine(scope.label)})` : " (프로젝트 기본값)"}`,
-    scope ? `위험도: ${scope.risk}${input.inferredScope ? " (자동 선택)" : ""}` : "위험도: unknown",
+    scope ? `위험도: ${projectRemoteScopeRisk(input.project, scope)}${input.inferredScope ? " (자동 선택)" : ""}` : "위험도: unknown",
     `실행 모드: ${code(input.draft.resultMode ?? "write")}`,
     `준비 상태: ${input.violations.length === 0 ? "가능" : "불가"}`,
     "",

@@ -2,6 +2,13 @@ import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { TaskResultMode } from "./contracts";
+import {
+  projectEffectiveForbiddenChanges,
+  projectRemoteScopeAllowed,
+  projectRemoteScopeRisk,
+  validateProjectSafetyPolicyOverlay,
+  type ProjectSafetyPolicyOverlay,
+} from "./project-safety-policy";
 import type { TaskDraftUpdatePatch } from "./task-draft-store";
 
 export interface ProjectProfile {
@@ -15,6 +22,7 @@ export interface ProjectProfile {
   forbiddenChanges: string[];
   defaultRemoteScopeId?: string;
   remoteScopes?: ProjectRemoteScope[];
+  safetyPolicy?: ProjectSafetyPolicyOverlay;
 }
 
 export interface ProjectRemoteScope {
@@ -476,6 +484,7 @@ export function validateProjectProfile(profile: unknown, source?: string): strin
   violations.push(...stringArrayViolations(profile.setupCommands, "setupCommands", { source, required: true }));
   violations.push(...stringArrayViolations(profile.verifyCommands, "verifyCommands", { source, required: true, nonEmpty: true }));
   violations.push(...stringArrayViolations(profile.forbiddenChanges, "forbiddenChanges", { source, required: true }));
+  violations.push(...validateProjectSafetyPolicyOverlay(profile as unknown as ProjectProfile, source));
 
   if (profile.defaultRemoteScopeId !== undefined && (typeof profile.defaultRemoteScopeId !== "string" || profile.defaultRemoteScopeId.trim() === "")) {
     violations.push(`${prefix}: defaultRemoteScopeId must be a non-empty string`);
@@ -641,7 +650,7 @@ export function applyProjectDefaults(
     ...patch,
     projectId: patch.projectId ?? profile.id,
     repoRoot: patch.repoRoot ?? profile.repoRoot,
-    forbiddenChanges: patch.forbiddenChanges ?? profile.forbiddenChanges,
+    forbiddenChanges: projectEffectiveForbiddenChanges(profile, patch.forbiddenChanges ?? []),
     setupCommands: patch.setupCommands ?? profile.setupCommands,
     verifyCommands: patch.verifyCommands ?? profile.verifyCommands,
   };
@@ -657,13 +666,16 @@ export function selectProjectRemoteScope(
   if (input.requestedScopeId) {
     const requested = scopes.find((scope) => scope.id === input.requestedScopeId);
     if (!requested) throw new Error(`remote scope not found: ${input.requestedScopeId}`);
+    if (!projectRemoteScopeAllowed(profile, requested.id)) {
+      throw new Error(`project policy ${profile.id} blocks remote scope: ${requested.id}`);
+    }
     return requested;
   }
 
   const text = input.requestText?.toLowerCase() ?? "";
   const classification = classifyRemoteRequest(text);
   const intentScope = scopeForClassification(scopes, classification);
-  if (intentScope) return intentScope;
+  if (intentScope && projectRemoteScopeAllowed(profile, intentScope.id)) return intentScope;
   if (classification.safeHandling === "report_only" || classification.safeHandling === "questions_first") {
     return undefined;
   }
@@ -674,16 +686,20 @@ export function selectProjectRemoteScope(
       score: (scope.keywords ?? []).filter((keyword) => text.includes(keyword.toLowerCase())).length,
     }))
     .filter((item) => item.score > 0)
+    .filter((item) => projectRemoteScopeAllowed(profile, item.scope.id))
     .sort((a, b) => b.score - a.score);
   if (scored[0]) return scored[0].scope;
 
   if (profile.defaultRemoteScopeId) {
     const defaultScope = scopes.find((scope) => scope.id === profile.defaultRemoteScopeId);
     if (!defaultScope) throw new Error(`default remote scope not found: ${profile.defaultRemoteScopeId}`);
+    if (!projectRemoteScopeAllowed(profile, defaultScope.id)) {
+      throw new Error(`project policy ${profile.id} blocks default remote scope: ${defaultScope.id}`);
+    }
     return defaultScope;
   }
 
-  return scopes[0];
+  return scopes.find((scope) => projectRemoteScopeAllowed(profile, scope.id));
 }
 
 export function applyProjectRemoteScopeDefaults(
@@ -695,7 +711,7 @@ export function applyProjectRemoteScopeDefaults(
     {
       ...patch,
       targetFiles: patch.targetFiles ?? scope?.targetFiles,
-      forbiddenChanges: patch.forbiddenChanges ?? scope?.forbiddenChanges,
+      forbiddenChanges: projectEffectiveForbiddenChanges(profile, patch.forbiddenChanges ?? scope?.forbiddenChanges ?? []),
       setupCommands: patch.setupCommands ?? scope?.setupCommands,
       verifyCommands: patch.verifyCommands ?? scope?.verifyCommands,
       resultMode: patch.resultMode ?? scope?.resultMode,
@@ -703,3 +719,5 @@ export function applyProjectRemoteScopeDefaults(
     profile,
   );
 }
+
+export { projectRemoteScopeRisk };
