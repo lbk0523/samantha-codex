@@ -23,6 +23,19 @@ limited to deterministic recovery planning, governed corrective work,
 BK/operator action, or current decision commands. Workers, non-writers, and
 orchestrator agents must not roll back state directly.
 
+Backup, restore, and host migration drills use separate read-only validation
+commands:
+
+```bash
+bun run samantha backup:manifest --out=backup-manifest.json --generated-at=<iso timestamp>
+bun run samantha restore:validate --manifest=backup-manifest.json --current-host-id=<host-id>
+bun run samantha migration:validate --old-host-ownership=<old.json> --new-host-ownership=<new.json> --target-host-id=<host-id>
+```
+
+These drills report blockers only. They must not dispatch, approve, merge,
+push, cleanup, recover, rewrite history, start services, or stop services by
+themselves.
+
 ## Outcome Labels
 
 - `fixed`: the drill reached a safe resolved state through normal gates.

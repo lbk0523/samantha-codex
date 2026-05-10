@@ -485,7 +485,30 @@ Verification focus:
 
 Outcome:
 
-- Pending.
+- Added manifest-based backup inspection through `backup:manifest`. The
+  manifest records deterministic relative-path entries with bytes, SHA-256,
+  record kind, required-for-restore flags, portable project profile state,
+  host-owned runtime artifacts, and explicit restore authority flags set to
+  false for dispatch, approval, merge, push, cleanup, recovery, and history
+  rewriting.
+- Added read-only restore validation through `restore:validate`. It checks
+  manifest presence/hash integrity, malformed JSONL records, duplicate ids,
+  broken project/work-item ancestry, materialized plan/task/action ancestry
+  mismatches, governance gaps for memory and budget policy evidence, run
+  lifecycle consistency, and stale or wrong-host ownership records.
+- Added read-only host migration validation through `migration:validate`.
+  Migration is blocked when old and new host ownership records are both active,
+  preventing active-active automation host operation.
+- Documented backup, restore, and migration drill steps in daemon operations
+  and rollback/recovery drill docs, including the requirement to stop old host
+  services before enabling the new host.
+- Added focused tests covering deterministic manifests, missing restore files,
+  malformed records, duplicate ids, broken ancestry, governance gaps, stale
+  host ownership, active-active migration blocking, and restore validation
+  leaving state unchanged.
+- Left runtime authority unchanged: restore and migration validation do not
+  dispatch workers, approve decisions, merge, push, cleanup, recover, rewrite
+  history, start services, stop services, or mutate source-of-truth state.
 
 ## M10: Long-Run Dogfood, Failure Drills, And Exit Review
 

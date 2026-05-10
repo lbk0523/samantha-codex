@@ -71,6 +71,56 @@ Only one automation host should run these services at a time. Stop the old host 
 
 Use `ops/systemd/` on Linux or WSL hosts. Use `ops/launchd/` on macOS hosts.
 
+## Backup, Restore, And Host Migration Drills
+
+Backups are manifest-based. A manifest records relative paths, bytes, hashes,
+record categories, portable project profile files, host-owned runtime
+artifacts, and the restore authority contract. Restore validation is
+read-only: it does not dispatch workers, approve decisions, merge, push,
+cleanup worktrees, recover plans, or rewrite git history.
+
+Generate a deterministic manifest:
+
+```bash
+bun run samantha backup:manifest --out=backup-manifest.json --generated-at=<iso timestamp>
+```
+
+Validate a restored tree before treating it as active:
+
+```bash
+bun run samantha restore:validate --manifest=backup-manifest.json --current-host-id=<new-host-id>
+```
+
+Restore validation checks:
+
+- manifest files are present and match recorded bytes and hashes
+- JSONL state records are parseable and schema-versioned
+- duplicate ids are rejected per store
+- project/work-item ancestry is well formed and materialized work keeps plan,
+  task, and action ancestry aligned
+- governance-backed memory and active budget policy records still point to
+  valid decision and governance event evidence
+- run lifecycle records point to known runs/tasks and do not record cleanup
+  before merge/push gates
+- `state/host-ownership.json` is valid, unexpired, and belongs to the intended
+  active host when `--current-host-id` is supplied
+
+Host migration is a handoff drill, not an automatic service action. Stop the
+old host services first, record the old host as `client_machine` or let its
+ownership expire, restore/copy state to the new host, write the new
+`state/host-ownership.json` as `active_automation_host`, then validate:
+
+```bash
+bun run samantha migration:validate \
+  --old-host-ownership=<old-host-ownership.json> \
+  --new-host-ownership=state/host-ownership.json \
+  --target-host-id=<new-host-id>
+```
+
+If both ownership records are active at the same time, migration validation
+blocks with an active-active host issue. Start service-manager timers on the
+new host only after restore and migration validation pass.
+
 ## Host Ownership Contract
 
 `doctor` and Telegram `/problems` read `state/host-ownership.json` before

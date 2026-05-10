@@ -170,6 +170,11 @@ import { branchForTask, worktreePathForTask } from "./lib/worktree";
 import { executeWorkerDispatch, prepareWorkerDispatch, commitWorkerChanges } from "./lib/worker-dispatch";
 import { evaluateWorkerResult } from "./lib/worker-result";
 import { gitHead, gitTopLevel } from "./lib/git";
+import {
+  buildBackupManifest,
+  validateHostMigration,
+  validateRestore,
+} from "./lib/backup-restore";
 
 interface ParsedArgs {
   command: string;
@@ -285,6 +290,10 @@ function routineTriggerObservationsPath(args: ParsedArgs): string {
 
 function recoveryDrillsPath(args: ParsedArgs): string {
   return resolve(flag(args, "drills", join(root, "references/governance/recovery-drills.json")));
+}
+
+function backupManifestPath(args: ParsedArgs): string {
+  return resolve(flag(args, "manifest", join(root, "backup-manifest.json")));
 }
 
 async function planningMemoryForRequest(input: {
@@ -3398,6 +3407,59 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "backup:manifest") {
+    const manifest = await buildBackupManifest({
+      root,
+      generatedAt: flag(args, "generated-at", new Date().toISOString()),
+      stateDir: stateDir(args),
+      runsDir: logDir(args),
+      inboxDir: resolve(flag(args, "inbox-dir", join(root, "inbox"))),
+      outboxDir: outboxDir(args),
+      archiveInboxDir: resolve(flag(args, "archive-dir", join(root, "archive", "inbox"))),
+      dashboardDir: resolve(flag(args, "dashboard-dir", join(root, "dashboard"))),
+      projectProfilesDir: projectProfilesDir(args),
+    });
+    const out = flag(args, "out", "");
+    if (out) {
+      await mkdir(dirname(resolve(out)), { recursive: true });
+      await writeFile(resolve(out), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+      printJson({ out: resolve(out), entries: manifest.entries.length });
+    } else {
+      printJson(manifest);
+    }
+    return;
+  }
+
+  if (args.command === "restore:validate") {
+    const result = await validateRestore({
+      root,
+      manifestPath: args.flags.has("manifest") ? backupManifestPath(args) : undefined,
+      currentHostId: flag(args, "current-host-id", process.env.SAMANTHA_HOST_ID ?? "") || undefined,
+      checkedAt: flag(args, "checked-at", new Date().toISOString()),
+    });
+    printJson(result);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
+  if (args.command === "migration:validate") {
+    const oldHostOwnershipPath = flag(args, "old-host-ownership", "");
+    const newHostOwnershipPath = flag(args, "new-host-ownership", "");
+    const targetHostId = flag(args, "target-host-id", process.env.SAMANTHA_HOST_ID ?? "");
+    if (!oldHostOwnershipPath || !newHostOwnershipPath || !targetHostId) {
+      throw new Error("usage: migration:validate --old-host-ownership=<path> --new-host-ownership=<path> --target-host-id=<id>");
+    }
+    const result = await validateHostMigration({
+      oldHostOwnershipPath: resolve(oldHostOwnershipPath),
+      newHostOwnershipPath: resolve(newHostOwnershipPath),
+      targetHostId,
+      checkedAt: flag(args, "checked-at", new Date().toISOString()),
+    });
+    printJson(result);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
   if (args.command === "tasks:add") {
     const taskPath = args.positionals[0];
     if (!taskPath) throw new Error("usage: tasks:add <task.json>");
@@ -4137,6 +4199,9 @@ async function main(): Promise<void> {
       "  drills:list",
       "  drills:show <drill-id>",
       "  drills:record <drill-id> --outcome=<fixed|still_blocked|needs_bk> --note=<summary>",
+      "  backup:manifest [--out=<manifest.json>] [--generated-at=<iso>]",
+      "  restore:validate [--manifest=<manifest.json>] [--current-host-id=<id>]",
+      "  migration:validate --old-host-ownership=<path> --new-host-ownership=<path> --target-host-id=<id>",
       "  tasks:add <task.json>",
       "  tasks:list [--include-archived]",
       "  tasks:show <task-id>",
