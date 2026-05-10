@@ -727,11 +727,14 @@ function dashboardRoute(pathname: string): "overview" | "lane-view" | undefined 
 }
 
 async function collectOps(args: ParsedArgs) {
+  const hostId = flag(args, "host-id", process.env.SAMANTHA_HOST_ID ?? "").trim();
   return collectOpsSnapshot({
     envFilePath: envFilePath(args),
     inboxDir: resolve(flag(args, "inbox-dir", join(root, "inbox"))),
     outboxDir: resolve(flag(args, "outbox-dir", join(root, "outbox"))),
     archiveInboxDir: resolve(flag(args, "archive-dir", join(root, "archive", "inbox"))),
+    hostOwnershipPath: resolve(flag(args, "host-ownership-path", join(stateDir(args), "host-ownership.json"))),
+    currentHostId: hostId || undefined,
     heartbeatPath: heartbeatPath(args),
     lockPath: daemonLockPath(args),
     telegramOffsetPath: telegramOffsetPath(args),
@@ -3724,7 +3727,7 @@ async function main(): Promise<void> {
       "  orchestrator:current [--project=<id>]",
       "  orchestrator:question-draft --blocker=<text> --subject-type=<type> --subject-id=<id> [--context=<text>]",
       "  next-action",
-      "  doctor [--json]",
+      "  doctor [--json] [--host-id=<id>] [--host-ownership-path=<path>]",
       "  health:check [--max-age-ms=15000]",
       "  dashboard:build [--project=<id>]",
       "  dashboard:serve [--port=4173] [--host=127.0.0.1]",

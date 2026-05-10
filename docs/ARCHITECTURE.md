@@ -60,6 +60,13 @@ advance the wrong project. New roles, profile changes, allowed skills,
 connector or secret access, routines, and budget enforcement should still be
 introduced only behind deterministic approvals and audit trails.
 
+The Phase 9 host ownership diagnostic is read-only. `doctor` and `/problems`
+classify the current machine as `active`, `client`, `stale`, or `unknown` from
+host-local `state/host-ownership.json` and the current host id. Only `active`
+means the machine is allowed to run automation, and the diagnostic does not
+start, stop, migrate, dispatch, merge, push, cleanup, recover, or grant new
+authority.
+
 The current architecture canary is role-aware but intentionally small: the Orchestrator Agent may choose report-only `codex-reviewer`, `codex-evaluator`, `codex-spec`, `codex-researcher`, `codex-content`, or `codex-operations` tasks before or alongside one `codex-worker` write task. The Control Plane keeps non-writers read-only, rejects non-writer write proposals, and keeps writer concurrency capped at one. Parallelism evidence is recorded in a compact ledger, role topology is advisory metadata only, merge and cleanup queues are classified deterministically, and writer-cap changes require complete dogfood, conflict, merge, cleanup, rollback, and BK approval evidence. Phase 7 closed without a writer-cap increase. This is not general multi-agent team construction.
 
 The existing deterministic CEO office should remain responsible for safety, state, and execution; it should not be discarded.

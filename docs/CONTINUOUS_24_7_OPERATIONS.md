@@ -158,7 +158,20 @@ Verification focus:
 
 Outcome:
 
-- Pending.
+- Added a minimal read-only host ownership diagnostic to `ops:doctor` and the
+  Telegram `/problems` path through `collectOpsSnapshot`.
+- Defined host ownership state as `active`, `client`, `stale`, or `unknown`
+  from host-local `state/host-ownership.json` plus the current host id
+  (`SAMANTHA_HOST_ID` or OS hostname).
+- Documented the host ownership record shape, cross-OS host id behavior, and
+  runtime file inventory in daemon operations docs without committing local
+  absolute paths.
+- Added focused tests proving diagnostics distinguish active host, client
+  machine, stale ownership, and unknown ownership states.
+- Left runtime behavior unchanged: no services were started, no workers were
+  dispatched, no routines or budget enforcement were added, no merge/push/
+  cleanup/recovery behavior changed, and `DEFAULT_SAFETY_POLICY.writerCap`
+  remains `1`.
 
 ## M3: Watchdog And Self-Diagnostics Hardening
 

@@ -3750,6 +3750,19 @@ describe("dashboard", () => {
       ops: {
         ok: true,
         checkedAt: "2026-05-03T10:03:00.000Z",
+        hostOwnership: {
+          path: "/repo/state/host-ownership.json",
+          currentHostId: "host-a",
+          state: "active",
+          automationAllowed: true,
+          reason: "current machine is the active automation host",
+          record: {
+            schemaVersion: 1,
+            role: "active_automation_host",
+            hostId: "host-a",
+            updatedAt: "2026-05-03T10:00:00.000Z",
+          },
+        },
         env: {
           envFilePath: "/repo/.env",
           envFileExists: true,
@@ -3887,6 +3900,19 @@ describe("dashboard", () => {
       ops: {
         ok: true,
         checkedAt: "2026-05-05T10:00:00.000Z",
+        hostOwnership: {
+          path: "/repo/state/host-ownership.json",
+          currentHostId: "host-a",
+          state: "active",
+          automationAllowed: true,
+          reason: "current machine is the active automation host",
+          record: {
+            schemaVersion: 1,
+            role: "active_automation_host",
+            hostId: "host-a",
+            updatedAt: "2026-05-05T10:00:00.000Z",
+          },
+        },
         env: {
           envFilePath: "/repo/.env",
           envFileExists: true,

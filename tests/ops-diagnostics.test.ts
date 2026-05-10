@@ -13,6 +13,20 @@ async function makeRoot(): Promise<string> {
   return root;
 }
 
+async function writeHostOwnership(path: string, hostId = "host-a", extra: Record<string, unknown> = {}): Promise<void> {
+  await writeFile(
+    path,
+    JSON.stringify({
+      schemaVersion: 1,
+      role: "active_automation_host",
+      hostId,
+      updatedAt: "2026-05-03T10:00:00.000Z",
+      ...extra,
+    }),
+    "utf8",
+  );
+}
+
 afterEach(async () => {
   await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
   tmpRoots = [];
@@ -30,6 +44,7 @@ describe("collectOpsSnapshot", () => {
     const binDir = join(root, "bin");
     const lockPath = join(stateDir, "daemon.lock");
     const heartbeatPath = join(stateDir, "heartbeat.json");
+    const hostOwnershipPath = join(stateDir, "host-ownership.json");
     await Promise.all([
       mkdir(inboxDir, { recursive: true }),
       mkdir(outboxDir, { recursive: true }),
@@ -53,6 +68,7 @@ describe("collectOpsSnapshot", () => {
       "utf8",
     );
     await mkdir(stateDir, { recursive: true });
+    await writeHostOwnership(hostOwnershipPath);
     await writeFile(join(stateDir, "telegram-offset.json"), JSON.stringify({ nextOffset: 77 }), "utf8");
     await writeFile(
       join(stateDir, "telegram-replies.json"),
@@ -96,6 +112,8 @@ describe("collectOpsSnapshot", () => {
       inboxDir,
       outboxDir,
       archiveInboxDir,
+      hostOwnershipPath,
+      currentHostId: "host-a",
       heartbeatPath,
       lockPath,
       telegramOffsetPath: join(stateDir, "telegram-offset.json"),
@@ -107,6 +125,8 @@ describe("collectOpsSnapshot", () => {
     });
 
     expect(snapshot.ok).toBe(true);
+    expect(snapshot.hostOwnership.state).toBe("active");
+    expect(snapshot.hostOwnership.automationAllowed).toBe(true);
     expect(snapshot.env.hasBotToken).toBe(true);
     expect(snapshot.env.hasPollChatId).toBe(true);
     expect(snapshot.env.hasCodexExecutable).toBe(true);
@@ -149,6 +169,55 @@ describe("collectOpsSnapshot", () => {
     expect(snapshot.warnings).toContain("launchd template not installed: com.bk.samantha.actions-watch.plist");
   });
 
+  test("distinguishes active, client, stale, and unknown host ownership states", async () => {
+    const root = await makeRoot();
+    const stateDir = join(root, "state");
+    const ownershipPath = join(stateDir, "host-ownership.json");
+    await mkdir(stateDir, { recursive: true });
+
+    const baseInput = {
+      envFilePath: join(root, ".env"),
+      inboxDir: join(root, "inbox"),
+      outboxDir: join(root, "outbox"),
+      heartbeatPath: join(stateDir, "heartbeat.json"),
+      lockPath: join(stateDir, "daemon.lock"),
+      telegramOffsetPath: join(stateDir, "telegram-offset.json"),
+      telegramRepliesPath: join(stateDir, "telegram-replies.json"),
+      hostOwnershipPath: ownershipPath,
+      currentHostId: "host-a",
+      env: {},
+      now: new Date("2026-05-03T10:00:00.000Z"),
+    };
+
+    let snapshot = await collectOpsSnapshot(baseInput);
+    expect(snapshot.hostOwnership.state).toBe("unknown");
+    expect(snapshot.hostOwnership.automationAllowed).toBe(false);
+    expect(snapshot.failures).toContain("host ownership is unknown: host ownership record is missing");
+
+    await writeHostOwnership(ownershipPath);
+    snapshot = await collectOpsSnapshot(baseInput);
+    expect(snapshot.hostOwnership.state).toBe("active");
+    expect(snapshot.hostOwnership.automationAllowed).toBe(true);
+
+    await writeHostOwnership(ownershipPath, "host-b");
+    snapshot = await collectOpsSnapshot(baseInput);
+    expect(snapshot.hostOwnership.state).toBe("client");
+    expect(snapshot.hostOwnership.automationAllowed).toBe(false);
+    expect(snapshot.failures).toContain("host ownership is client: active automation host is host-b");
+
+    await writeHostOwnership(ownershipPath, "host-a", { role: "client_machine" });
+    snapshot = await collectOpsSnapshot(baseInput);
+    expect(snapshot.hostOwnership.state).toBe("client");
+    expect(snapshot.hostOwnership.automationAllowed).toBe(false);
+    expect(snapshot.failures).toContain("host ownership is client: current machine is recorded as a client machine");
+
+    await writeHostOwnership(ownershipPath, "host-a", { expiresAt: "2026-05-03T09:59:59.000Z" });
+    snapshot = await collectOpsSnapshot(baseInput);
+    expect(snapshot.hostOwnership.state).toBe("stale");
+    expect(snapshot.hostOwnership.automationAllowed).toBe(false);
+    expect(snapshot.failures).toContain("host ownership is stale: host ownership expired at 2026-05-03T09:59:59.000Z");
+  });
+
   test("reports missing runtime prerequisites as failures and warnings", async () => {
     const root = await makeRoot();
     const snapshot = await collectOpsSnapshot({
@@ -164,6 +233,7 @@ describe("collectOpsSnapshot", () => {
     });
 
     expect(snapshot.ok).toBe(false);
+    expect(snapshot.failures).toContain("host ownership is unknown: host ownership record is missing");
     expect(snapshot.failures).toContain("TELEGRAM_BOT_TOKEN is missing");
     expect(snapshot.failures).toContain("Codex executable is missing: codex");
     expect(snapshot.failures).toContain("daemon lock is missing");
@@ -199,12 +269,14 @@ describe("collectOpsSnapshot", () => {
     const binDir = join(root, "bin");
     const lockPath = join(stateDir, "daemon.lock");
     const heartbeatPath = join(stateDir, "heartbeat.json");
+    const hostOwnershipPath = join(stateDir, "host-ownership.json");
     await Promise.all([
       mkdir(stateDir, { recursive: true }),
       mkdir(systemdDir, { recursive: true }),
       mkdir(binDir, { recursive: true }),
     ]);
     await writeFile(join(root, ".env"), "TELEGRAM_BOT_TOKEN=secret\nTELEGRAM_CHAT_ID=12345\n", "utf8");
+    await writeHostOwnership(hostOwnershipPath);
     await writeFile(join(binDir, "codex"), "", "utf8");
     await writeFile(join(stateDir, "telegram-offset.json"), JSON.stringify({ nextOffset: 77 }), "utf8");
     await writeFile(
@@ -246,6 +318,8 @@ describe("collectOpsSnapshot", () => {
 
     const snapshot = await collectOpsSnapshot({
       envFilePath: join(root, ".env"),
+      hostOwnershipPath,
+      currentHostId: "host-a",
       inboxDir: join(root, "inbox"),
       outboxDir: join(root, "outbox"),
       heartbeatPath,
@@ -293,11 +367,13 @@ describe("collectOpsSnapshot", () => {
     const stateDir = join(root, "state");
     const lockPath = join(stateDir, "daemon.lock");
     const heartbeatPath = join(stateDir, "heartbeat.json");
+    const hostOwnershipPath = join(stateDir, "host-ownership.json");
     const systemdDir = join(root, "systemd");
     const codexBin = join(root, "bin", "codex");
     await mkdir(stateDir, { recursive: true });
     await mkdir(systemdDir, { recursive: true });
     await mkdir(join(root, "bin"), { recursive: true });
+    await writeHostOwnership(hostOwnershipPath);
     for (const file of [
       "samantha-inbox-watch.service",
       "samantha-actions-watch.service",
@@ -338,6 +414,8 @@ describe("collectOpsSnapshot", () => {
 
     const snapshot = await collectOpsSnapshot({
       envFilePath: join(root, ".env"),
+      hostOwnershipPath,
+      currentHostId: "host-a",
       inboxDir: join(root, "inbox"),
       outboxDir: join(root, "outbox"),
       heartbeatPath,

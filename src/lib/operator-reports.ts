@@ -2394,6 +2394,16 @@ export function doctorReport(snapshot: OpsSnapshot): string {
     `전체 상태: ${snapshot.ok ? "정상" : "확인 필요"}`,
     `확인 시각: ${code(snapshot.checkedAt)}`,
     "",
+    "Host ownership:",
+    `- state: ${snapshot.hostOwnership.state}`,
+    `- automation allowed: ${snapshot.hostOwnership.automationAllowed ? "yes" : "no"}`,
+    `- current host id: ${code(snapshot.hostOwnership.currentHostId)}`,
+    `- record: ${code(snapshot.hostOwnership.path)}`,
+    snapshot.hostOwnership.record
+      ? `- owner: role=${code(snapshot.hostOwnership.record.role)} host=${code(snapshot.hostOwnership.record.hostId)} updated=${code(snapshot.hostOwnership.record.updatedAt)} expires=${code(snapshot.hostOwnership.record.expiresAt ?? "none")}`
+      : "- owner: missing",
+    `- reason: ${oneLine(snapshot.hostOwnership.reason)}`,
+    "",
     "환경:",
     `- .env file: ${snapshot.env.envFileExists ? "있음" : "없음"} (${code(snapshot.env.envFilePath)})`,
     `- TELEGRAM_BOT_TOKEN: ${snapshot.env.hasBotToken ? "있음" : "없음"}`,

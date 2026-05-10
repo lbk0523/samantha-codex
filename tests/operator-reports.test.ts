@@ -393,6 +393,19 @@ describe("operator reports", () => {
     const ops: OpsSnapshot = {
       ok: true,
       checkedAt: "2026-05-03T10:03:00.000Z",
+      hostOwnership: {
+        path: "/repo/state/host-ownership.json",
+        currentHostId: "host-a",
+        state: "active",
+        automationAllowed: true,
+        reason: "current machine is the active automation host",
+        record: {
+          schemaVersion: 1,
+          role: "active_automation_host",
+          hostId: "host-a",
+          updatedAt: "2026-05-03T10:00:00.000Z",
+        },
+      },
       env: {
         envFilePath: "/repo/.env",
         envFileExists: true,
@@ -493,6 +506,7 @@ describe("operator reports", () => {
     expect(healthReport(health)).toContain("정상: no");
     expect(healthReport(health)).toContain("heartbeat is stale");
     expect(doctorReport(ops)).toContain("전체 상태: 정상");
+    expect(doctorReport(ops)).toContain("automation allowed: yes");
     expect(doctorReport(ops)).toContain("TELEGRAM_BOT_TOKEN: 있음");
     expect(doctorReport(ops)).toContain("최근 원격 명령: type=`status:show`");
     expect(doctorReport(ops)).toContain("최근 reply 실패: remote-b.md attempts=2 error=Telegram error");

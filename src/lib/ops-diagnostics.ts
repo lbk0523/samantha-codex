@@ -1,6 +1,6 @@
-import { homedir, platform } from "node:os";
+import { homedir, hostname, platform } from "node:os";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { checkDaemonHealth, type DaemonHealthResult } from "./daemon";
 import type { TelegramReplyState } from "./telegram-reply-adapter";
 
@@ -64,9 +64,30 @@ export interface ServiceTemplateDiagnostics {
   }>;
 }
 
+export type HostOwnershipRole = "active_automation_host" | "client_machine";
+export type HostOwnershipState = "active" | "client" | "stale" | "unknown";
+
+export interface HostOwnershipRecord {
+  schemaVersion: 1;
+  role: HostOwnershipRole;
+  hostId: string;
+  updatedAt: string;
+  expiresAt?: string;
+}
+
+export interface HostOwnershipDiagnostics {
+  path: string;
+  currentHostId: string;
+  state: HostOwnershipState;
+  automationAllowed: boolean;
+  reason: string;
+  record?: HostOwnershipRecord;
+}
+
 export interface OpsSnapshot {
   ok: boolean;
   checkedAt: string;
+  hostOwnership: HostOwnershipDiagnostics;
   env: EnvDiagnostics;
   health: DaemonHealthResult;
   queues: QueueDiagnostics;
@@ -113,6 +134,30 @@ async function readOptionalJson<T>(path: string): Promise<T | undefined> {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw err;
   }
+}
+
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function parseHostOwnershipRecord(value: unknown): HostOwnershipRecord | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const role = record.role;
+  if (record.schemaVersion !== 1) return undefined;
+  if (role !== "active_automation_host" && role !== "client_machine") return undefined;
+  if (typeof record.hostId !== "string" || !record.hostId.trim()) return undefined;
+  if (typeof record.updatedAt !== "string" || Number.isNaN(Date.parse(record.updatedAt))) return undefined;
+  if (record.expiresAt !== undefined) {
+    if (typeof record.expiresAt !== "string" || Number.isNaN(Date.parse(record.expiresAt))) return undefined;
+  }
+  return {
+    schemaVersion: 1,
+    role,
+    hostId: oneLine(record.hostId),
+    updatedAt: record.updatedAt,
+    ...(record.expiresAt ? { expiresAt: record.expiresAt } : {}),
+  };
 }
 
 async function envFileValues(path: string): Promise<Map<string, string>> {
@@ -203,11 +248,86 @@ async function latestRemoteCommand(path?: string): Promise<RemoteCommandDiagnost
   }
 }
 
+async function hostOwnershipDiagnostics(input: {
+  path: string;
+  currentHostId: string;
+  now: Date;
+}): Promise<HostOwnershipDiagnostics> {
+  let rawRecord: unknown;
+  try {
+    rawRecord = await readOptionalJson<unknown>(input.path);
+  } catch {
+    return {
+      path: input.path,
+      currentHostId: input.currentHostId,
+      state: "unknown",
+      automationAllowed: false,
+      reason: "host ownership record is malformed",
+    };
+  }
+  if (!rawRecord) {
+    return {
+      path: input.path,
+      currentHostId: input.currentHostId,
+      state: "unknown",
+      automationAllowed: false,
+      reason: "host ownership record is missing",
+    };
+  }
+
+  const record = parseHostOwnershipRecord(rawRecord);
+  if (!record) {
+    return {
+      path: input.path,
+      currentHostId: input.currentHostId,
+      state: "unknown",
+      automationAllowed: false,
+      reason: "host ownership record is malformed",
+    };
+  }
+
+  if (record.expiresAt && Date.parse(record.expiresAt) <= input.now.getTime()) {
+    return {
+      path: input.path,
+      currentHostId: input.currentHostId,
+      state: "stale",
+      automationAllowed: false,
+      reason: `host ownership expired at ${record.expiresAt}`,
+      record,
+    };
+  }
+
+  if (record.role === "active_automation_host" && record.hostId === input.currentHostId) {
+    return {
+      path: input.path,
+      currentHostId: input.currentHostId,
+      state: "active",
+      automationAllowed: true,
+      reason: "current machine is the active automation host",
+      record,
+    };
+  }
+
+  return {
+    path: input.path,
+    currentHostId: input.currentHostId,
+    state: "client",
+    automationAllowed: false,
+    reason:
+      record.role === "active_automation_host"
+        ? `active automation host is ${record.hostId}`
+        : "current machine is recorded as a client machine",
+    record,
+  };
+}
+
 export async function collectOpsSnapshot(input: {
   envFilePath: string;
   inboxDir: string;
   outboxDir: string;
   archiveInboxDir?: string;
+  hostOwnershipPath?: string;
+  currentHostId?: string;
   heartbeatPath: string;
   lockPath: string;
   telegramOffsetPath: string;
@@ -224,7 +344,10 @@ export async function collectOpsSnapshot(input: {
 }): Promise<OpsSnapshot> {
   const now = input.now ?? new Date();
   const env = input.env ?? process.env;
+  const hostOwnershipPath = input.hostOwnershipPath ?? join(dirname(input.heartbeatPath), "host-ownership.json");
   const envValues = await envFileValues(input.envFilePath);
+  const envHostId = env.SAMANTHA_HOST_ID?.trim() || envValues.get("SAMANTHA_HOST_ID");
+  const currentHostId = input.currentHostId ?? envHostId ?? hostname();
   const envFileNames = new Set(envValues.keys());
   const hasBotToken = hasEnvValue("TELEGRAM_BOT_TOKEN", env, envFileNames);
   const hasPollChatId =
@@ -319,7 +442,13 @@ export async function collectOpsSnapshot(input: {
     codexCommand,
     hasCodexExecutable,
   };
+  const hostOwnership = await hostOwnershipDiagnostics({
+    path: hostOwnershipPath,
+    currentHostId,
+    now,
+  });
   const failures = [
+    ...(!hostOwnership.automationAllowed ? [`host ownership is ${hostOwnership.state}: ${hostOwnership.reason}`] : []),
     ...(!hasBotToken ? ["TELEGRAM_BOT_TOKEN is missing"] : []),
     ...(!hasPollChatId ? ["Telegram poll chat id is missing"] : []),
     ...(!hasReplyChatId ? ["Telegram reply chat id is missing"] : []),
@@ -340,6 +469,7 @@ export async function collectOpsSnapshot(input: {
   return {
     ok: failures.length === 0,
     checkedAt: now.toISOString(),
+    hostOwnership,
     env: envDiagnostics,
     health: effectiveHealth,
     queues,

@@ -44,6 +44,9 @@ recent runs, and latest run lifecycle state. It does not expose write actions.
 
 ## Runtime Files
 
+- `state/host-ownership.json`: read-only host ownership record used by
+  diagnostics to decide whether the current machine is the active automation
+  host, a client machine, stale, or unknown
 - `state/daemon.lock`: prevents duplicate `inbox:watch` processes
 - `state/heartbeat.json`: last daemon heartbeat
 - `state/proposals.jsonl`: remote work proposals and review state
@@ -67,6 +70,46 @@ Bad inbox commands are archived and get an outbox failure report instead of cras
 Only one automation host should run these services at a time. Stop the old host before enabling services on a new host.
 
 Use `ops/systemd/` on Linux or WSL hosts. Use `ops/launchd/` on macOS hosts.
+
+## Host Ownership Contract
+
+`doctor` and Telegram `/problems` read `state/host-ownership.json` before
+reporting whether the current machine may run automation. The record is
+host-local operational state, not a source-controlled file:
+
+```json
+{
+  "schemaVersion": 1,
+  "role": "active_automation_host",
+  "hostId": "ubuntu-samantha",
+  "updatedAt": "2026-05-10T00:00:00.000Z",
+  "expiresAt": "2026-06-10T00:00:00.000Z"
+}
+```
+
+Fields:
+
+- `role`: `active_automation_host` or `client_machine`
+- `hostId`: stable host id for this machine; diagnostics use
+  `SAMANTHA_HOST_ID` when set, otherwise the OS hostname
+- `updatedAt`: when BK or the operator last recorded this host role
+- `expiresAt`: optional stale marker; when expired, diagnostics classify the
+  host ownership state as `stale`
+
+Diagnostic states:
+
+- `active`: record says this `hostId` is the active automation host; automation
+  is allowed if the other runtime diagnostics pass
+- `client`: record says another host is active, or this host is explicitly a
+  client machine; daemon/watch/poll/reply/dispatch/dashboard runtime should not
+  run here
+- `stale`: record expired; stop and refresh host ownership before running
+  automation
+- `unknown`: record is missing or malformed; create or repair the host-local
+  ownership record before running automation
+
+This stage adds diagnostics only. It does not start services, stop old hosts,
+dispatch workers, migrate state, merge, push, cleanup, or recover.
 
 ## Linux systemd User Service
 
