@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-10
 
-Status: in progress.
+Status: implemented.
 
 This document contains the execution stages for roadmap Phase 9:
 [Continuous 24/7 Operations](CEO_OFFICE_ROADMAP.md#9-continuous-247-operations).
@@ -542,7 +542,100 @@ Verification focus:
 
 Outcome:
 
-- Pending.
+- Reviewed M1-M9 outcomes and found the Phase 9 continuous-operation contract
+  implemented: host ownership diagnostics, watchdog issue classification,
+  queue pressure and admission, governed routine triggers, routine intake
+  through existing gates, notification digest throttling, deterministic budget
+  enforcement, and manifest-based backup/restore/migration validation.
+- Added an integrated Phase 9 exit drill in
+  [tests/continuous-operations-exit.test.ts](../tests/continuous-operations-exit.test.ts).
+  The drill exercises unsafe host watchdog output, queue admission blocking,
+  routine fingerprint coalescing, low-risk notification digest windows, urgent
+  notification bypass, budget defer and block decisions, restore validation,
+  host migration active-active blocking, and `writerCap` staying `1`.
+- Updated roadmap, architecture, daemon operations, and remote adapter docs only
+  for implemented behavior.
+- Closed Phase 9 without adding multi-writer execution, direct routine dispatch,
+  provider billing integration, destructive self-healing, arbitrary remote
+  command authority, connector authority, secret authority, merge/push/cleanup/
+  recovery authority, or host active-active runtime.
+
+## Phase 9 Exit Review
+
+| Exit criterion | Status | Evidence |
+| --- | --- | --- |
+| Samantha can run for long periods on the active automation host without manual babysitting. | Met for Phase 9 scope. Host ownership, service template, heartbeat, lock, inbox, Telegram reply, outbox, and environment diagnostics are machine-checkable and exposed through `doctor` and `/problems`. Long-run safety is enforced by deterministic stops rather than silent repair. | M2/M3 outcomes above; [tests/ops-diagnostics.test.ts](../tests/ops-diagnostics.test.ts); [tests/continuous-operations-exit.test.ts](../tests/continuous-operations-exit.test.ts); [docs/DAEMON_OPERATIONS.md](DAEMON_OPERATIONS.md#watchdog-diagnostics) |
+| Host failures produce actionable reports instead of silent stalls. | Met. Watchdog diagnostics classify stale, blocked, degraded, needs-BK, and unsafe-to-continue issues with next safe actions and secret redaction. | M3 outcome above; [src/lib/ops-diagnostics.ts](../src/lib/ops-diagnostics.ts); [tests/operator-reports.test.ts](../tests/operator-reports.test.ts) |
+| Routine triggers do not create duplicate active work for the same live fingerprint. | Met. Routine observations coalesce against active requests, plans, tasks, actions, and unresolved decisions. Accepted observations can create only one pending orchestration request and cannot dispatch workers directly. | M5/M6 outcomes above; [src/lib/routine-trigger-store.ts](../src/lib/routine-trigger-store.ts); [tests/routine-trigger-store.test.ts](../tests/routine-trigger-store.test.ts); [tests/continuous-operations-exit.test.ts](../tests/continuous-operations-exit.test.ts) |
+| Budget and queue pressure can stop or defer work through deterministic policy instead of hidden agent judgment. | Met. Queue pressure classifies overload, unsafe host state, BK decisions, recovery needs, lifecycle gaps, outbox backlog, and budget audit gaps. Budget enforcement requires approved local policies and distinguishes measured, estimated, and unknown cost. | M4/M8 outcomes above; [src/lib/queue-pressure.ts](../src/lib/queue-pressure.ts); [src/lib/cost-budget-audit.ts](../src/lib/cost-budget-audit.ts); [tests/queue-pressure.test.ts](../tests/queue-pressure.test.ts); [tests/cost-budget-audit.test.ts](../tests/cost-budget-audit.test.ts) |
+| State can be backed up, restored, and audited. | Met. Backup manifests record hashes, restore-required files, project profiles, host-owned runtime artifacts, and restore authority flags. Restore validation catches missing files, malformed records, duplicate ids, broken ancestry, governance gaps, lifecycle gaps, and stale host ownership. | M9 outcome above; [src/lib/backup-restore.ts](../src/lib/backup-restore.ts); [tests/backup-restore.test.ts](../tests/backup-restore.test.ts) |
+| BK can recover or migrate the system from another machine with documented steps. | Met as a validation and handoff drill, not automatic migration. Migration validation blocks active-active host ownership, and daemon docs require old services to stop before enabling the new host. | M9 outcome above; [docs/DAEMON_OPERATIONS.md](DAEMON_OPERATIONS.md#backup-restore-and-host-migration-drills); [tests/backup-restore.test.ts](../tests/backup-restore.test.ts); [tests/continuous-operations-exit.test.ts](../tests/continuous-operations-exit.test.ts) |
+
+## Dogfood And Drill Evidence
+
+| Drill | Evidence | Result |
+| --- | --- | --- |
+| Host watchdogs | `tests/ops-diagnostics.test.ts` and the M10 exit drill exercise missing, client, stale, and unsafe host ownership; stale heartbeat; missing lock; dead pids; stuck inbox; missing service templates; and redacted Telegram reply failures. | Met. Failures are reported with next safe actions and no runtime mutation. |
+| Queue pressure | `tests/project-queues.test.ts`, `tests/queue-pressure.test.ts`, and the M10 exit drill cover unsafe host blocking, pending BK decisions outranking routine intake, recovery blockers, active action deferral, budget audit gaps, and outbox backlog. | Met. Admission decisions are deterministic and audit-visible. |
+| Routine coalescing | `tests/routine-trigger-store.test.ts` plus the M10 exit drill create an accepted routine request, then prove the duplicate live fingerprint is coalesced and cannot create another request. | Met. Routine triggers remain intake-only. |
+| Notification throttling | `tests/ceo-status.test.ts` covers low-risk digest records and urgent BK decision bypass; the M10 exit drill verifies digest-window and urgency classification helpers. | Met. Low-risk repeats coalesce, urgent changes deliver. |
+| Budget block and defer | `tests/cost-budget-audit.test.ts`, `tests/queue-pressure.test.ts`, `tests/ceo-status.test.ts`, and the M10 exit drill cover unknown-cost defer, known-cost block, governance evidence, and queue admission effects. | Met. Unknown cost is not treated as zero. |
+| Backup and restore | `tests/backup-restore.test.ts` plus the M10 exit drill cover deterministic manifests, manifest hash validation, malformed records, duplicate ids, ancestry gaps, governance gaps, lifecycle gaps, stale host ownership, and read-only restore authority. | Met. Restore validation does not activate or mutate state. |
+| Host migration | `tests/backup-restore.test.ts` and the M10 exit drill block active-active ownership and allow handoff only after the old host is no longer active. | Met. Exactly one automation host remains the contract. |
+
+## Authority Review
+
+- Writer authority: `DEFAULT_SAFETY_POLICY.writerCap` remains `1`; Phase 9 did
+  not add multi-writer execution or change writer-cap governance.
+- Routine authority: routine triggers are governed intake records. They cannot
+  dispatch, approve, merge, push, cleanup, recover, bypass project gates, or
+  expand connector or secret authority.
+- Budget authority: active budget policies can defer or block through local
+  deterministic gates only after explicit BK governance evidence. Phase 9 did
+  not add provider billing API integration or hidden LLM budget judgment.
+- Notification authority: throttling can coalesce repeated low-risk
+  notifications, but it cannot approve, reject, dispatch, merge, push, cleanup,
+  recover, create routine work, or mutate source-of-truth work state.
+- Backup/restore/migration authority: manifest generation, restore validation,
+  and migration validation are read-only checks. They do not start or stop
+  services, activate restored state, dispatch, approve, merge, push, cleanup,
+  recover, rewrite history, or operate two hosts at once.
+- Connector and secret authority: Phase 9 did not grant new connector or secret
+  access and did not change the Phase 5 profile/capability gates.
+- Memory/SOP authority: routines and budgets may use memory as context only.
+  Memory, SOPs, and skills cannot override safety, approval, project, dispatch,
+  worktree, merge, push, cleanup, recovery, budget, routine, connector, or
+  secret gates.
+
+## Verification Run
+
+Required M10 verification:
+
+```bash
+bun test tests/continuous-operations-exit.test.ts
+bun run verify:docs
+bun run verify:mac
+```
+
+M10 Mac-side run on 2026-05-10:
+
+- `bun test tests/continuous-operations-exit.test.ts` passed: 1 test, 0
+  failures.
+- Focused Phase 9 drill set passed: `bun test tests/ops-diagnostics.test.ts
+  tests/routine-trigger-store.test.ts tests/queue-pressure.test.ts
+  tests/cost-budget-audit.test.ts tests/backup-restore.test.ts
+  tests/ceo-status.test.ts tests/continuous-operations-exit.test.ts` ran 60
+  tests with 0 failures.
+- `bun run verify:docs` passed.
+- `bun run verify:mac` passed, including TypeScript typecheck, portable tests,
+  and docs verification. Portable test result: 398 passed, 0 failed across 58
+  files.
+
+Phase 9 M10 added an integrated portable drill test and documentation updates.
+It did not change host-owned daemon/watch/poll/reply/service-template runtime
+behavior or runtime state, so active-host `bun run verify:host` is not required
+for this M10 review. Run host verification later only when a host-owned runtime
+change is made on the active automation host.
 
 ## Stage Handoff Prompts
 

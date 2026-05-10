@@ -327,7 +327,7 @@ are activated.
 
 ### 9. Continuous 24/7 Operations
 
-Status: in progress.
+Status: implemented.
 
 Objective: make Samantha operate continuously with minimal manual host care.
 
@@ -349,7 +349,8 @@ Likely scope:
 
 Exit criteria:
 
-- Samantha can run for long periods on the Ubuntu host without manual babysitting.
+- Samantha can run for long periods on the active automation host without manual
+  babysitting.
 - Host failures produce actionable reports instead of silent stalls.
 - Routine triggers do not create duplicate active work for the same live
   fingerprint.

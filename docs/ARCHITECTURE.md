@@ -67,6 +67,23 @@ means the machine is allowed to run automation, and the diagnostic does not
 start, stop, migrate, dispatch, merge, push, cleanup, recover, or grant new
 authority.
 
+The Phase 9 continuous-operations gates are implemented as deterministic
+intake, pressure, budget, notification, backup, restore, and migration
+contracts. Queue pressure can accept, defer, block, or ask BK before new
+request, routine, or action intake advances. Routine triggers are governed
+intake records with stable fingerprints; accepted observations create only
+orchestration requests, and duplicate live fingerprints coalesce against
+active requests, plans, tasks, actions, or unresolved decisions. Budget
+enforcement uses local policy and cost audit records, distinguishes measured,
+estimated, and unknown cost, and requires explicit BK governance evidence
+before an active policy can defer or block work. CEO notification throttling
+coalesces repeated low-risk notifications into digest audit records while
+urgent BK decisions, failures, unsafe host state, recovery blockers, and
+budget or queue blocks still deliver. Backup manifests, restore validation,
+and host migration validation are read-only checks; they do not activate a
+restored host, start or stop services, dispatch, approve, merge, push, cleanup,
+recover, or rewrite history.
+
 The current architecture canary is role-aware but intentionally small: the Orchestrator Agent may choose report-only `codex-reviewer`, `codex-evaluator`, `codex-spec`, `codex-researcher`, `codex-content`, or `codex-operations` tasks before or alongside one `codex-worker` write task. The Control Plane keeps non-writers read-only, rejects non-writer write proposals, and keeps writer concurrency capped at one. Parallelism evidence is recorded in a compact ledger, role topology is advisory metadata only, merge and cleanup queues are classified deterministically, and writer-cap changes require complete dogfood, conflict, merge, cleanup, rollback, and BK approval evidence. Phase 7 closed without a writer-cap increase. This is not general multi-agent team construction.
 
 The existing deterministic CEO office should remain responsible for safety, state, and execution; it should not be discarded.
@@ -87,8 +104,11 @@ Future expansion should stay governance-first:
   selected compact snippets, and recommendation traces cite stored context
   when memory influences a plan. Memory and SOP/skill documents remain context
   only; they cannot override safety policy or execution gates.
-- Phase 9 may add routine coalescing and budget enforcement only after the
-  underlying audit and policy hooks exist.
+- Phase 9 added continuous-operation hardening through read-only host
+  diagnostics, queue admission pressure, routine trigger coalescing, low-risk
+  notification digests, deterministic budget enforcement, and read-only backup,
+  restore, and migration validation. These gates use memory only as context and
+  do not expand execution authority.
 
 ## Bounded LLM Call Contract
 

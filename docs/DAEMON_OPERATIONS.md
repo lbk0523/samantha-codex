@@ -58,7 +58,19 @@ recent runs, and latest run lifecycle state. It does not expose write actions.
 - `state/orchestrator-plans.jsonl`: bounded orchestrator plans with project,
   goal, and work-item ancestry when assigned
 - `state/ceo-reports.jsonl`: generated CEO reports, including project queues
-  and ranking evidence when available
+  and ranking evidence when available; repeated low-risk notifications inside a
+  digest window append `notification_digest` audit records instead of duplicate
+  remote outbox files
+- `state/routine-triggers.jsonl`: governed routine trigger definitions with
+  intake-only authority and deterministic fingerprints
+- `state/routine-trigger-observations.jsonl`: append-only observations from
+  routine triggers, including recorded, coalesced, disabled, stale, or deferred
+  intake results
+- `state/budget-audit.jsonl`: measured, estimated, or unknown local cost
+  observations used for budget reports and deterministic budget gates
+- `state/budget-policies.jsonl`: proposed, active, or disabled budget policies;
+  active policies require BK decision and governance event evidence before they
+  can enforce
 - `inbox/*.json`: queued local commands
 - `outbox/*.md`: command reports
 - `archive/inbox/*.json`: processed input commands
@@ -180,6 +192,33 @@ Diagnostics cover stale heartbeats, missing locks, dead pids, missing service
 templates or timers for the active provider, old unprocessed inbox files,
 Telegram reply failures, and missing local env prerequisites. Reports redact
 known token/secret patterns from diagnostic messages.
+
+## Queue, Routine, Notification, And Budget Gates
+
+Continuous intake goes through deterministic pressure and admission checks.
+Queue pressure considers pending requests, deferred requests, pending BK
+decisions, active tasks/actions, failed plans/runs, recovery needs, run
+lifecycle gaps, remote outbox backlog, budget audit gaps, and unsafe host
+issues. Admission may accept, defer, block, or ask BK; it records a reason on
+new requests or actions instead of dropping work or approving it silently.
+
+Routine triggers are intake records only. An approved routine observation can
+create one `pending_plan` orchestration request after project, queue, and
+coalescing checks pass. Duplicate fingerprints across active requests, plans,
+tasks, actions, or unresolved decisions are recorded as coalesced observations,
+not new live work. Routine activation itself is a governed high-risk change.
+
+`ceo:notify` records deterministic throttling metadata. Repeated low-risk
+notifications inside the digest window append `notification_digest` records
+that reference the original delivered outbox file. Urgent conditions such as
+pending BK decisions, failures, unsafe host state, recovery blockers, or queue
+and budget blocks bypass throttling.
+
+Budget enforcement uses local budget policy and audit files only. Unknown cost
+is not zero: an active policy can configure unknown cost to watch, defer,
+block, or ask BK. Active budget policies require explicit BK `budget_change` or
+risk-acceptance decision evidence plus a `transition_approved` governance event
+for the policy before they enforce.
 
 ## Linux systemd User Service
 

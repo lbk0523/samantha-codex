@@ -304,6 +304,12 @@ state/ceo-reports.jsonl
 
 Each `ceo:notify` record points to the generated `outbox/remote-*.md` file and the Telegram delivery state file. Delivery, retry, and failure evidence remains in `state/telegram-replies.json`.
 
+Repeated low-risk CEO notifications inside the deterministic digest window are
+coalesced into `notification_digest` audit records instead of creating duplicate
+remote outbox files. Urgent changes still deliver, including pending BK
+decisions, failures, unsafe host state, recovery blockers, and queue or budget
+blocks.
+
 Safe first-run behavior:
 
 - If `state/telegram-replies.json` does not exist, existing `outbox/remote-*.md` files are marked as already sent and no Telegram message is sent.
@@ -334,6 +340,12 @@ The timer reads `%h/projects/samantha-codex/.env`. If the older Claude-side Sama
 macOS LaunchAgent templates are included under `ops/launchd/` for the same commands. Install them into `~/Library/LaunchAgents` on the active macOS automation host.
 
 `samantha-ceo-notify` is automation-host work. It generates a compact CEO notification hourly; `telegram:reply` is the only adapter that sends the generated remote outbox files.
+
+Routine trigger intake is local control-plane work, not a Telegram command. A
+governed routine observation can become only a normal orchestration request
+after queue admission and fingerprint coalescing pass. Remote adapters do not
+activate routines, bypass budget gates, approve routine-created plans, dispatch
+workers, or grant connector or secret access.
 
 The timer templates favor interactive replies:
 
