@@ -6,6 +6,7 @@ import type { AgentProfile } from "../src/lib/contracts";
 import { createDecisionItem, DecisionStore } from "../src/lib/decision-store";
 import { OrchestratorPlanStore, type OrchestratorPlanPayload } from "../src/lib/orchestrator-store";
 import { commandFromRemoteInput } from "../src/lib/remote-command";
+import { createRoutineTriggerRecord } from "../src/lib/routine-trigger-store";
 
 let tmpRoots: string[] = [];
 
@@ -173,12 +174,109 @@ async function runInbox(ctx: Awaited<ReturnType<typeof setupRoot>>) {
   return stdout;
 }
 
+async function runSamantha(ctx: Awaited<ReturnType<typeof setupRoot>>, command: string[]) {
+  const proc = Bun.spawn(
+    [
+      "bun",
+      "run",
+      "src/samantha.ts",
+      ...command,
+      `--state-dir=${ctx.state}`,
+      `--agent-profiles-dir=${ctx.agents}`,
+      `--project-profiles-dir=${ctx.projects}`,
+    ],
+    { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+  );
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  return stdout;
+}
+
 afterEach(async () => {
   await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
   tmpRoots = [];
 });
 
 describe("remote project selection guards", () => {
+  test("routine observations create only one project-scoped pending request before normal gates", async () => {
+    const ctx = await setupRoot();
+    const routine = createRoutineTriggerRecord({
+      triggerId: "daily-samantha-review",
+      sourceKind: "schedule",
+      projectId: "samantha",
+      enabled: true,
+      riskClass: "medium",
+      sourceEvidence: ["docs/CONTINUOUS_24_7_OPERATIONS.md M6"],
+      fingerprintInputs: [
+        { key: "cadence", value: "daily" },
+        { key: "intent", value: "review-open-work" },
+      ],
+      activationDecisionId: "decision-routine-activation",
+      createdAt: "2026-05-10T01:00:00.000Z",
+    });
+    const approval = {
+      ...createDecisionItem({
+        kind: "routine_change",
+        title: "Activate routine",
+        prompt: "Approve routine activation.",
+        options: ["approve", "reject"],
+        source: "system",
+        subject: { type: "routine", id: routine.id },
+        createdAt: "2026-05-10T01:00:10.000Z",
+      }),
+      id: "decision-routine-activation",
+      status: "resolved" as const,
+      resolution: "approved" as const,
+      resolvedAt: "2026-05-10T01:00:20.000Z",
+      resolvedBy: "bk" as const,
+    };
+    await writeFile(join(ctx.state, "routine-triggers.jsonl"), `${JSON.stringify(routine)}\n`, "utf8");
+    await writeFile(join(ctx.state, "decisions.jsonl"), `${JSON.stringify(approval)}\n`, "utf8");
+
+    const first = JSON.parse(await runSamantha(ctx, [
+      "routine:observe",
+      routine.id,
+      "--text=Review open Samantha work and propose the next bounded plan.",
+      "--observed-at=2026-05-10T01:01:00.000Z",
+    ]));
+    const second = JSON.parse(await runSamantha(ctx, [
+      "routine:observe",
+      routine.id,
+      "--text=Review open Samantha work and propose the next bounded plan.",
+      "--observed-at=2026-05-10T01:02:00.000Z",
+    ]));
+
+    expect(first.request).toMatchObject({
+      status: "pending_plan",
+      routineTriggerId: routine.triggerId,
+      routineFingerprint: routine.fingerprint,
+      ancestry: {
+        mode: "assigned",
+        projectId: "samantha",
+        goalId: "goal-samantha-operations",
+      },
+      admission: { subjectKind: "routine_trigger", decision: "accept" },
+    });
+    expect(second.request).toBeUndefined();
+    expect(second.observation.status).toBe("coalesced");
+    expect(second.observation.coalescedWith).toEqual([
+      {
+        kind: "request",
+        id: first.request.id,
+        status: "pending_plan",
+        routineTriggerId: routine.triggerId,
+        routineFingerprint: routine.fingerprint,
+      },
+    ]);
+    expect(await readFile(join(ctx.state, "orchestration-requests.jsonl"), "utf8")).toContain(first.request.id);
+    await expect(readFile(join(ctx.state, "tasks.jsonl"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(ctx.state, "remote-actions.jsonl"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   test("ambiguous remote approve, go, and now refuse cross-project current plans", async () => {
     const ctx = await setupRoot();
     await seedPlan({ state: ctx.state, projectId: "samantha", planId: "plan-samantha", createdAt: "2026-05-10T01:00:00.000Z" });

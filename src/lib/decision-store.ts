@@ -61,6 +61,8 @@ export interface DecisionItem {
 
 export interface CreateDecisionItemInput {
   ancestry?: WorkItemAncestry;
+  routineTriggerId?: string;
+  routineFingerprint?: string;
   kind?: DecisionKind;
   title: string;
   prompt: string;
@@ -142,6 +144,8 @@ export function createDecisionItem(input: CreateDecisionItemInput): DecisionItem
     schemaVersion: 1,
     id: buildDecisionItemId({ createdAt: input.createdAt, title, subject: input.subject }),
     ancestry: input.ancestry,
+    routineTriggerId: input.routineTriggerId,
+    routineFingerprint: input.routineFingerprint,
     status: "pending",
     kind: input.kind ?? "manual",
     title,
@@ -163,12 +167,16 @@ export function decisionFromOrchestratorPlan(input: {
 }): DecisionItem | undefined {
   const summary = oneLine(input.plan.payload?.summary ?? input.request?.text ?? input.plan.requestId);
   const risks = input.plan.payload?.risks.map(oneLine).filter(Boolean) ?? [];
+  const routineTriggerId = input.plan.routineTriggerId ?? input.request?.routineTriggerId;
+  const routineFingerprint = input.plan.routineFingerprint ?? input.request?.routineFingerprint;
 
   if (input.plan.status === "questions") {
     const questions = input.plan.payload?.questions.map(oneLine).filter(Boolean) ?? [];
     return createDecisionItem({
       kind: "orchestrator_questions",
       ancestry: input.plan.ancestry ?? input.request?.ancestry,
+      routineTriggerId,
+      routineFingerprint,
       title: `Answer plan questions: ${summary}`,
       prompt: questions.length ? questions.join(" / ") : "BK input is required before this plan can proceed.",
       options: ["answer", "revise", "cancel"],
@@ -184,6 +192,8 @@ export function decisionFromOrchestratorPlan(input: {
     return createDecisionItem({
       kind: "orchestrator_plan_approval",
       ancestry: input.plan.ancestry ?? input.request?.ancestry,
+      routineTriggerId,
+      routineFingerprint,
       title: `Review plan: ${summary}`,
       prompt: planApprovalPrompt(input.plan),
       options: ["approve", "revise", "cancel"],

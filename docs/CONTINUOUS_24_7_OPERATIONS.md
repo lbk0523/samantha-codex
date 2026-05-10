@@ -337,7 +337,24 @@ Verification focus:
 
 Outcome:
 
-- Pending.
+- Added `routine:observe` as deterministic routine intake. It requires an
+  enabled routine trigger with governed BK activation evidence, records an
+  append-only observation, applies routine queue admission, coalesces against
+  live fingerprint matches, and creates only a `pending_plan` orchestration
+  request when the observation is accepted and not a duplicate.
+- Added routine observation-to-request conversion with assigned project
+  ancestry, safe default project goal, admission evidence, routine trigger id,
+  and routine fingerprint audit links.
+- Preserved routine trigger id and fingerprint links through request planning,
+  plan approval/question decisions, revision/recovery requests, materialized
+  task specs, and remote dispatch actions so later observations continue to
+  coalesce against live work.
+- Surfaced routine audit links in work request and operator review reports.
+- Added focused tests proving routine intake creates at most one active
+  request per live fingerprint, does not create tasks or actions, keeps
+  project ancestry, preserves fingerprint links through approval/materialization
+  records, and leaves `/plan`, `/approve`, `/go`, dispatch, merge, push,
+  cleanup, and recovery authority unchanged.
 
 ## M7: Notification Throttling And Digest Policy
 

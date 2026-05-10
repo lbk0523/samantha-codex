@@ -299,6 +299,7 @@ function requestLines(request: OrchestrationRequestRecord | undefined, gaps: str
   return [
     `- request ${code(request.id)} status=${statusText(request.status)} source=${statusText(request.source)} created=${code(request.createdAt)}`,
     request.recoveryOfPlanId ? `  recoveryOf=${code(request.recoveryOfPlanId)}` : "",
+    request.routineTriggerId ? `  routine=${code(request.routineTriggerId)} fingerprint=${code(request.routineFingerprint ?? "unknown")}` : "",
     `  text: ${clip(request.text)}`,
   ].filter(Boolean);
 }
@@ -310,6 +311,7 @@ function planLines(plan: OrchestratorPlanRecord): string[] {
     plan.approvedAt ? `  approved=${code(plan.approvedAt)}` : "",
     plan.materializedAt ? `  materialized=${code(plan.materializedAt)}` : "",
     plan.resultReportedAt ? `  resultReported=${code(plan.resultReportedAt)}` : "",
+    plan.routineTriggerId ? `  routine=${code(plan.routineTriggerId)} fingerprint=${code(plan.routineFingerprint ?? "unknown")}` : "",
     plan.synthesis ? `  synthesis=${code(plan.synthesis.outcome)} summary=${clip(plan.synthesis.summary)}` : "",
     plan.synthesisFailure ? `  synthesisFailure=${clip(plan.synthesisFailure)}` : "",
     plan.payload?.summary ? `  summary: ${clip(plan.payload.summary)}` : "",

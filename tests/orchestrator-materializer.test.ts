@@ -132,7 +132,12 @@ describe("materializeOrchestratorPlan role-aware specialist contract", () => {
       workItemId: "request-ancestry-flow",
     };
     const result = materializeOrchestratorPlan({
-      plan: { ...plan([proposal({ id: "ancestry-report", title: "Ancestry report", targetAgent: "codex-reviewer" })], [["ancestry-report"]]), ancestry },
+      plan: {
+        ...plan([proposal({ id: "ancestry-report", title: "Ancestry report", targetAgent: "codex-reviewer" })], [["ancestry-report"]]),
+        ancestry,
+        routineTriggerId: "daily-samantha-review",
+        routineFingerprint: "routine-fp-1111222233334444",
+      },
       agents: [reviewer],
       projects: [project],
       createdAt: "2026-05-07T00:01:00.000Z",
@@ -142,6 +147,14 @@ describe("materializeOrchestratorPlan role-aware specialist contract", () => {
     expect(result.ok).toBe(true);
     expect(result.tasks[0]?.ancestry).toEqual(ancestry);
     expect(result.actions[0]?.ancestry).toEqual(ancestry);
+    expect(result.tasks[0]).toMatchObject({
+      routineTriggerId: "daily-samantha-review",
+      routineFingerprint: "routine-fp-1111222233334444",
+    });
+    expect(result.actions[0]).toMatchObject({
+      routineTriggerId: "daily-samantha-review",
+      routineFingerprint: "routine-fp-1111222233334444",
+    });
   });
 
   test("rejects unknown or mismatched project proposals before materialization", () => {

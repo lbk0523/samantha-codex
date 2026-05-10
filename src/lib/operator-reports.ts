@@ -1491,6 +1491,7 @@ export function orchestrationRequestAddedReport(request: OrchestrationRequestRec
     "",
     `저장된 요청: ${code(request.id)}`,
     `상태: ${code(request.status)}`,
+    request.routineTriggerId ? `루틴: ${code(request.routineTriggerId)} fingerprint=${code(request.routineFingerprint ?? "unknown")}` : "",
     "",
     "요청:",
     oneLine(request.text),

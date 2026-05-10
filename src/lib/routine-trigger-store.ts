@@ -8,7 +8,8 @@ import {
   type GovernanceRiskClass,
 } from "./governance-taxonomy";
 import { compactEntityId } from "./ids";
-import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "./orchestrator-store";
+import { buildOrchestrationRequestId, type OrchestrationRequestRecord, type OrchestratorPlanRecord } from "./orchestrator-store";
+import { assignedOrchestrationAncestry } from "./orchestration-ancestry";
 import type { QueueAdmissionRecord } from "./queue-admission";
 import type { RemoteActionRecord } from "./remote-action-store";
 import { riskPolicyAllowsTransition, type RiskApprovalEvidence, type RiskPolicyDecision } from "./risk-policy";
@@ -129,6 +130,16 @@ export interface CreateRoutineTriggerObservationInput {
   activeWork?: Omit<RoutineFingerprintCoalescingInput, "fingerprint">;
   admission?: QueueAdmissionRecord;
   id?: string;
+}
+
+export interface RoutineObservationRequestInput {
+  trigger: RoutineTriggerRecord;
+  observation: RoutineTriggerObservationRecord;
+  requestText: string;
+  createdAt?: string;
+  requestId?: string;
+  source?: OrchestrationRequestRecord["source"];
+  senderId?: string;
 }
 
 function oneLine(value: string): string {
@@ -467,6 +478,40 @@ export function createRoutineTriggerObservation(input: CreateRoutineTriggerObser
     sourceEvidence,
     coalescedWith: coalescedWith.length ? coalescedWith : undefined,
     admission: input.admission,
+  };
+}
+
+export function routineObservationToOrchestrationRequest(input: RoutineObservationRequestInput): OrchestrationRequestRecord | undefined {
+  const trigger = parseRoutineTriggerRecord(input.trigger);
+  const observation = parseRoutineTriggerObservationRecord(input.observation);
+  if (observation.routineId !== trigger.id) {
+    throw new Error(`routine observation does not belong to trigger: ${observation.routineId} != ${trigger.id}`);
+  }
+  if (observation.fingerprint !== trigger.fingerprint) {
+    throw new Error(`routine observation fingerprint does not match trigger: ${observation.fingerprint} != ${trigger.fingerprint}`);
+  }
+  if (observation.status !== "recorded") return undefined;
+  if (observation.admission && observation.admission.decision !== "accept") return undefined;
+
+  const text = oneLine(input.requestText);
+  if (!text) throw new Error("routine request text is required");
+  const createdAt = input.createdAt ? requireTimestamp(input.createdAt, "createdAt") : observation.observedAt;
+  const requestId = input.requestId ?? buildOrchestrationRequestId(createdAt, `routine-${observation.id}`);
+  return {
+    schemaVersion: 1,
+    id: requestId,
+    ancestry: assignedOrchestrationAncestry({
+      projectId: trigger.projectId,
+      workItemId: requestId,
+    }),
+    routineTriggerId: trigger.triggerId,
+    routineFingerprint: trigger.fingerprint,
+    source: input.source ?? "local",
+    senderId: input.senderId ? requireString(input.senderId, "senderId") : undefined,
+    text,
+    status: "pending_plan",
+    createdAt,
+    admission: observation.admission,
   };
 }
 

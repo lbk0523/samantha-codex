@@ -91,7 +91,7 @@ export function materializeOrchestratorPlan(input: {
     proposalActionIds.set(
       proposal.id,
       createRemoteDispatchAction({
-        task: { ...taskFromProposal(proposal, input.projects, input.plan.ancestry), id: taskId },
+        task: { ...taskFromProposal(proposal, input.projects, input.plan), id: taskId },
         repoRoot: proposal.repoRoot || input.projects.find((project) => project.id === proposal.projectId)?.repoRoot || "",
         createdAt: input.createdAt,
         source: "remote",
@@ -104,7 +104,7 @@ export function materializeOrchestratorPlan(input: {
   violations.push(...validateUnmergedWriterDependencies(payload.tasks, input.agents, proposalBatchIndex));
 
   for (const proposal of payload.tasks) {
-    const task = taskFromProposal(proposal, input.projects, input.plan.ancestry);
+    const task = taskFromProposal(proposal, input.projects, input.plan);
     const taskPrefix = `task proposal ${proposal.id}`;
     if (plannedTaskIds.has(task.id)) violations.push(`${taskPrefix} produces duplicate task id: ${task.id}`);
     if (existingTaskIds.has(task.id)) violations.push(`${taskPrefix} conflicts with existing task: ${task.id}`);
@@ -265,14 +265,16 @@ function validateUnmergedWriterDependencies(
   return violations;
 }
 
-function taskFromProposal(proposal: OrchestratorTaskProposal, projects: ProjectProfile[], ancestry?: TaskSpec["ancestry"]): TaskSpec {
+function taskFromProposal(proposal: OrchestratorTaskProposal, projects: ProjectProfile[], plan: OrchestratorPlanRecord): TaskSpec {
   const project = proposal.projectId ? projects.find((item) => item.id === proposal.projectId) : undefined;
   const forbiddenChanges = project
     ? projectEffectiveForbiddenChanges(project, proposal.forbiddenChanges)
     : proposal.forbiddenChanges;
   return {
     id: taskIdFromOrchestratorProposal(proposal.id),
-    ancestry,
+    ancestry: plan.ancestry,
+    routineTriggerId: plan.routineTriggerId,
+    routineFingerprint: plan.routineFingerprint,
     title: proposal.title.trim(),
     targetAgent: proposal.targetAgent.trim(),
     projectId: proposal.projectId,

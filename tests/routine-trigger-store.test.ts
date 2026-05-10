@@ -14,6 +14,7 @@ import {
   createRoutineTriggerObservation,
   createRoutineTriggerRecord,
   findRoutineFingerprintMatches,
+  routineObservationToOrchestrationRequest,
   routineActivationPolicy,
 } from "../src/lib/routine-trigger-store";
 
@@ -230,6 +231,71 @@ describe("routine trigger contract", () => {
     expect(current.status).toBe("recorded");
     expect(disabled.coalescedWith).toBeUndefined();
     expect(stale.coalescedWith).toBeUndefined();
+  });
+
+  test("converts accepted recorded observations into one project-scoped orchestration request only", () => {
+    const trigger = triggerFixture();
+    const accepted = createRoutineTriggerObservation({
+      trigger,
+      observedAt: "2026-05-10T01:05:00.000Z",
+      admission: {
+        schemaVersion: 1,
+        decidedAt: "2026-05-10T01:05:00.000Z",
+        subjectKind: "routine_trigger",
+        decision: "accept",
+        pressureClass: "normal",
+        reason: "routine intake accepted",
+      },
+    });
+    const request = routineObservationToOrchestrationRequest({
+      trigger,
+      observation: accepted,
+      requestId: "request-routine-review",
+      requestText: "Review open Samantha work and propose the next bounded plan.",
+      source: "local",
+    });
+    const coalesced = createRoutineTriggerObservation({
+      trigger,
+      observedAt: "2026-05-10T01:06:00.000Z",
+      activeWork: { requests: [request!] },
+    });
+    const deferred = createRoutineTriggerObservation({
+      trigger,
+      observedAt: "2026-05-10T01:07:00.000Z",
+      admission: {
+        schemaVersion: 1,
+        decidedAt: "2026-05-10T01:07:00.000Z",
+        subjectKind: "routine_trigger",
+        decision: "ask_bk",
+        pressureClass: "needs_bk",
+        reason: "pending BK decision outranks routine intake",
+      },
+    });
+
+    expect(request).toMatchObject({
+      id: "request-routine-review",
+      status: "pending_plan",
+      routineTriggerId: trigger.triggerId,
+      routineFingerprint: trigger.fingerprint,
+      ancestry: {
+        mode: "assigned",
+        projectId: "samantha",
+        goalId: "goal-samantha-operations",
+        workItemId: "request-routine-review",
+      },
+      admission: { decision: "accept", subjectKind: "routine_trigger" },
+    });
+    expect(coalesced.status).toBe("coalesced");
+    expect(routineObservationToOrchestrationRequest({
+      trigger,
+      observation: coalesced,
+      requestText: "Duplicate routine work.",
+    })).toBeUndefined();
+    expect(routineObservationToOrchestrationRequest({
+      trigger,
+      observation: deferred,
+      requestText: "Deferred routine work.",
+    })).toBeUndefined();
   });
 
   test("persists routine triggers and observations as append-only intake records", async () => {

@@ -140,7 +140,11 @@ describe("DecisionStore", () => {
 
   test("derives deterministic pending decisions from planned and question orchestrator plans", () => {
     const planned = decisionFromOrchestratorPlan({
-      plan,
+      plan: {
+        ...plan,
+        routineTriggerId: "daily-samantha-review",
+        routineFingerprint: "routine-fp-1111222233334444",
+      },
       createdAt: "2026-05-07T09:02:00.000Z",
     });
     const questions = decisionFromOrchestratorPlan({
@@ -161,6 +165,8 @@ describe("DecisionStore", () => {
       status: "pending",
       subject: { type: "orchestrator_plan", id: "plan-1" },
       risk: "Dispatch behavior could change.",
+      routineTriggerId: "daily-samantha-review",
+      routineFingerprint: "routine-fp-1111222233334444",
     });
     const advisory = decisionFromOrchestratorPlan({
       plan: {

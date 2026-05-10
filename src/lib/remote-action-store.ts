@@ -81,6 +81,8 @@ export function createRemoteDispatchAction(input: {
       commandId: input.commandId,
     }),
     ancestry: input.ancestry ?? input.task.ancestry,
+    routineTriggerId: input.task.routineTriggerId,
+    routineFingerprint: input.task.routineFingerprint,
     kind: "dispatch_task",
     status: input.status ?? "pending",
     createdAt: input.createdAt,

@@ -127,6 +127,13 @@ import { createRemoteDispatchAction, RemoteActionStore, type RemoteActionRecord 
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { recoveryResolvedPlanIds } from "./lib/recovery-continuity";
 import { buildRecoveryRequestText } from "./lib/recovery-context";
+import {
+  RoutineTriggerObservationStore,
+  RoutineTriggerStore,
+  routineActivationPolicy,
+  routineObservationToOrchestrationRequest,
+  type RoutineTriggerRecord,
+} from "./lib/routine-trigger-store";
 import { lifecycleBaseFromRunLog, RunLifecycleStore, type RunLifecycleRecord } from "./lib/run-lifecycle-store";
 import { buildWorkerRunId, writeWorkerRunLog, type WorkerRunLog } from "./lib/run-log";
 import {
@@ -247,6 +254,14 @@ function governanceEventsPath(args: ParsedArgs): string {
 
 function costBudgetAuditPath(args: ParsedArgs): string {
   return join(stateDir(args), "budget-audit.jsonl");
+}
+
+function routineTriggersPath(args: ParsedArgs): string {
+  return join(stateDir(args), "routine-triggers.jsonl");
+}
+
+function routineTriggerObservationsPath(args: ParsedArgs): string {
+  return join(stateDir(args), "routine-trigger-observations.jsonl");
 }
 
 function recoveryDrillsPath(args: ParsedArgs): string {
@@ -1501,6 +1516,98 @@ async function queueAdmissionFor(input: {
   return decideQueueAdmission({ pressure, subjectKind: input.subjectKind });
 }
 
+function csvFlag(value: string): string[] | undefined {
+  const items = value.split(",").map((item) => item.trim()).filter(Boolean);
+  return items.length ? items : undefined;
+}
+
+async function selectRoutineTriggerForObserve(input: {
+  args: ParsedArgs;
+  routineId?: string;
+  triggerId?: string;
+  projectId?: string;
+}): Promise<RoutineTriggerRecord> {
+  const routineId = input.routineId ?? "";
+  const triggerId = input.triggerId ?? "";
+  const projectId = input.projectId;
+  const store = new RoutineTriggerStore(routineTriggersPath(input.args));
+
+  if (routineId) {
+    const routine = await store.find(routineId);
+    if (!routine) throw new Error(`routine trigger not found: ${routineId}`);
+    if (projectId && routine.projectId !== projectId) {
+      throw new Error(`routine trigger project mismatch: ${routine.projectId} != ${projectId}`);
+    }
+    return routine;
+  }
+
+  if (!triggerId) throw new Error("usage: routine:observe <routine-id> --text=<request> or --trigger-id=<id> [--project=<id>] --text=<request>");
+  const matches = (await store.list()).filter((routine) =>
+    routine.triggerId === triggerId && (!projectId || routine.projectId === projectId)
+  );
+  if (matches.length === 0) throw new Error(`routine trigger not found: ${triggerId}`);
+  if (matches.length > 1) throw new Error(`routine trigger is ambiguous: ${triggerId}`);
+  return matches[0];
+}
+
+async function routineActiveWork(args: ParsedArgs) {
+  return {
+    requests: await new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
+    plans: await new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
+    tasks: await new TaskStore(tasksPath(args)).list(),
+    actions: await new RemoteActionStore(remoteActionsPath(args)).list(),
+    decisions: await new DecisionStore(decisionsPath(args)).list(),
+  };
+}
+
+async function observeRoutineTrigger(input: {
+  args: ParsedArgs;
+  routineId?: string;
+  triggerId?: string;
+  projectId?: string;
+  text: string;
+  observedAt: string;
+  sourceEvidence?: string[];
+  requestId?: string;
+  source?: OrchestrationRequestRecord["source"];
+  senderId?: string;
+}): Promise<{ observation: Awaited<ReturnType<RoutineTriggerObservationStore["observe"]>>; request?: OrchestrationRequestRecord }> {
+  const trigger = await selectRoutineTriggerForObserve(input);
+  const activationDecision = trigger.activationDecisionId
+    ? await new DecisionStore(decisionsPath(input.args)).find(trigger.activationDecisionId)
+    : undefined;
+  const activation = routineActivationPolicy({
+    routine: trigger,
+    approvalEvidence: activationDecision ? [activationDecision] : [],
+  });
+  if (!activation.mayProceed) {
+    throw new Error(`routine activation is not approved: ${activation.blockedReason ?? "unknown reason"}`);
+  }
+  const admission = await queueAdmissionFor({
+    args: input.args,
+    subjectKind: "routine_trigger",
+    projectId: trigger.projectId,
+  });
+  const observation = await new RoutineTriggerObservationStore(routineTriggerObservationsPath(input.args)).observe({
+    trigger,
+    observedAt: input.observedAt,
+    sourceEvidence: input.sourceEvidence,
+    activeWork: await routineActiveWork(input.args),
+    admission: queueAdmissionRecord({ decidedAt: input.observedAt, result: admission }),
+  });
+  const request = routineObservationToOrchestrationRequest({
+    trigger,
+    observation,
+    requestText: input.text,
+    createdAt: input.observedAt,
+    requestId: input.requestId,
+    source: input.source,
+    senderId: input.senderId,
+  });
+  if (request) await new OrchestrationRequestStore(orchestrationRequestsPath(input.args)).append(request);
+  return { observation, request };
+}
+
 async function ensureDecisionForOrchestratorPlan(input: {
   args: ParsedArgs;
   plan: OrchestratorPlanRecord;
@@ -2154,6 +2261,41 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       }),
     );
   }
+  if (command.type === "routine:observe") {
+    const observedAt = String(command.args?.observedAt ?? command.args?.receivedAt ?? new Date().toISOString());
+    const text = String(command.args?.text ?? "");
+    if (!text.trim()) throw new Error("routine observation text is required");
+    const result = await observeRoutineTrigger({
+      args,
+      routineId: typeof command.args?.routineId === "string" ? command.args.routineId : undefined,
+      triggerId: typeof command.args?.triggerId === "string" ? command.args.triggerId : undefined,
+      projectId: typeof command.args?.projectId === "string" ? command.args.projectId : undefined,
+      text,
+      observedAt,
+      sourceEvidence: Array.isArray(command.args?.sourceEvidence)
+        ? command.args.sourceEvidence.map(String)
+        : typeof command.args?.sourceEvidence === "string"
+          ? csvFlag(command.args.sourceEvidence)
+          : undefined,
+      requestId: typeof command.args?.requestId === "string" ? command.args.requestId : undefined,
+      source: command.args?.source === "remote" ? "remote" : "local",
+      senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
+    });
+    return result.request
+      ? orchestrationRequestAddedReport(result.request)
+      : [
+          "# routine-observation",
+          "",
+          `Observation: ${result.observation.id}`,
+          `Status: ${result.observation.status}`,
+          result.observation.admission ? `Admission: ${result.observation.admission.decision} (${result.observation.admission.pressureClass})` : "",
+          result.observation.coalescedWith?.length
+            ? `Coalesced with: ${result.observation.coalescedWith.map((item) => `${item.kind}:${item.id}`).join(", ")}`
+            : "",
+          "",
+          "No request, task, action, dispatch, merge, push, cleanup, recovery, or approval was performed.",
+        ].filter(Boolean).join("\n");
+  }
   if (command.type === "runs:list") {
     const runs = await new RunIndex(runsPath(args)).list();
     return runsListReport(runs);
@@ -2270,6 +2412,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       schemaVersion: 1,
       id: String(command.args?.requestId ?? buildOrchestrationRequestId(receivedAt, `recover-${recoverable.plan.id}`)),
       ancestry: recoverable.plan.ancestry,
+      routineTriggerId: recoverable.plan.routineTriggerId,
+      routineFingerprint: recoverable.plan.routineFingerprint,
       source: command.args?.source === "local" ? "local" : "remote",
       senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
       text: buildRecoveryRequestText({
@@ -2334,6 +2478,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       schemaVersion: 1,
       id: String(command.args?.requestId ?? buildOrchestrationRequestId(receivedAt, `revise-${plan.id}`)),
       ancestry: plan.ancestry ?? originalRequest?.ancestry,
+      routineTriggerId: plan.routineTriggerId ?? originalRequest?.routineTriggerId,
+      routineFingerprint: plan.routineFingerprint ?? originalRequest?.routineFingerprint,
       source: command.args?.source === "local" ? "local" : "remote",
       senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
       text: revisionRequestText({ plan, request: originalRequest, feedback }),
@@ -2424,6 +2570,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       schemaVersion: 1,
       id: buildOrchestratorPlanId({ requestId: request.id, createdAt: receivedAt }),
       ancestry: planAncestry,
+      routineTriggerId: request.routineTriggerId,
+      routineFingerprint: request.routineFingerprint,
       requestId: request.id,
       status: result.status,
       createdAt: receivedAt,
@@ -2848,6 +2996,27 @@ async function main(): Promise<void> {
 
   if (args.command === "live:format") {
     await formatLiveLogFromStdin();
+    return;
+  }
+
+  if (args.command === "routine:observe") {
+    const text = flag(args, "text", "");
+    if (!text.trim()) throw new Error("usage: routine:observe <routine-id> --text=<request>");
+    const observedAt = flag(args, "observed-at", new Date().toISOString());
+    printJson(
+      await observeRoutineTrigger({
+        args,
+        routineId: args.positionals[0] || flag(args, "routine-id", "") || undefined,
+        triggerId: flag(args, "trigger-id", "") || undefined,
+        projectId: flag(args, "project", "") || undefined,
+        text,
+        observedAt,
+        sourceEvidence: csvFlag(flag(args, "source-evidence", "")),
+        requestId: flag(args, "request-id", "") || undefined,
+        source: flag(args, "source", "local") === "remote" ? "remote" : "local",
+        senderId: flag(args, "sender-id", "") || undefined,
+      }),
+    );
     return;
   }
 
@@ -3827,6 +3996,7 @@ async function main(): Promise<void> {
       "  telegram:reply [--chat-id=<id>] [--mark-existing] [--send-existing]",
       "  inbox:process",
       "  inbox:watch",
+      "  routine:observe <routine-id> --text=<request>",
       "  actions:run-pending [--limit=1]",
       "  actions:watch [--interval-ms=1000] [--limit=1]",
       "  ceo:status [--json] [--limit=10] [--project=<id>]",
