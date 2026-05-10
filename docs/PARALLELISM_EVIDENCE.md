@@ -1,6 +1,6 @@
 # Parallelism Evidence Policy
 
-Stage 9 expands parallelism only when dogfood evidence supports it. The current
+Phase 7 expands parallelism only when dogfood evidence supports it. The current
 decision is deliberately conservative: Samantha may run report-only non-writer
 work in parallel, but production writers remain capped at one.
 
@@ -16,7 +16,7 @@ work in parallel, but production writers remain capped at one.
 - Writer agents must use per-task worktrees and Samantha-controlled merge.
 - Merge, push, and cleanup remain explicit Samantha gates after worker execution.
 
-There is no Stage 9 writer cap increase.
+There is no automatic Phase 7 writer cap increase.
 
 ## Evidence Matrix
 
@@ -26,6 +26,7 @@ There is no Stage 9 writer cap increase.
 | Prefer non-writer parallel confidence first | `tests/operations.test.ts` covers ready non-writers in the same plan batch before writers. | `bun run test:portable` |
 | Serialize ready writers | `tests/operations.test.ts` covers two ready writers becoming separate batches. | `bun run test:portable` |
 | Keep non-writers read-only | `tests/policy.test.ts` and `tests/orchestrator-materializer.test.ts` reject non-writer write proposals. | `bun run test:portable` |
+| Record compact parallel evidence | `src/lib/parallelism-evidence-store.ts` records plan/action/task/run refs, roles, result modes, writer count, changed files, verification summary, merge status, cleanup status, and outcome without copying full run logs. `tests/parallelism-evidence.test.ts` covers append/list/filter, successful report-only evidence, failed evidence preservation, and writer-cap preservation. | `bun test tests/parallelism-evidence.test.ts` |
 | Keep parallel reports readable | `tests/parallelism-evidence.test.ts` covers parallel specialist plus single-writer role outcomes without raw action/status noise. | `bun run test:portable` |
 | Keep integration deterministic | `tests/merge-gate.test.ts` covers merge and push gates; `tests/worktree-cleanup.test.ts` covers cleanup gates; `tests/run-lifecycle-store.test.ts` records lifecycle status in `state/run-lifecycle.jsonl`. | `bun run test:portable` |
 | Keep recovery deterministic | `tests/recovery-context.test.ts`, `tests/recovery-continuity.test.ts`, and `tests/operations.test.ts` cover `/recover -> /plan -> /go`, failed-plan evidence, and canonical repo-root instructions. | `bun run test:portable` |

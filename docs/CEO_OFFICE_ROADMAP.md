@@ -66,6 +66,8 @@ North-star criteria are tracked in [NORTH_STAR.md](NORTH_STAR.md).
   [SAFETY_AUDIT_GOVERNANCE.md](SAFETY_AUDIT_GOVERNANCE.md)
 - Phase 6 execution spec:
   [MULTI_PROJECT_OPERATIONS.md](MULTI_PROJECT_OPERATIONS.md)
+- Phase 7 execution spec:
+  [EVIDENCE_BASED_PARALLELISM_EXPANSION.md](EVIDENCE_BASED_PARALLELISM_EXPANSION.md)
 - North-star criteria: [NORTH_STAR.md](NORTH_STAR.md)
 
 Future phase execution specs should be added only when Samantha reaches that
@@ -248,7 +250,7 @@ Detailed stages: [MULTI_PROJECT_OPERATIONS.md](MULTI_PROJECT_OPERATIONS.md).
 
 ### 7. Evidence-Based Parallelism Expansion
 
-Status: planned.
+Status: in progress.
 
 Objective: expand parallel execution and role topology only when dogfood
 evidence proves that the safety model can handle it.
@@ -278,7 +280,8 @@ Exit criteria:
 
 Evidence policy: [PARALLELISM_EVIDENCE.md](PARALLELISM_EVIDENCE.md).
 
-Execution stages: write a phase-specific document when this phase begins.
+Detailed stages:
+[EVIDENCE_BASED_PARALLELISM_EXPANSION.md](EVIDENCE_BASED_PARALLELISM_EXPANSION.md).
 
 ### 8. Context And Knowledge Memory
 
