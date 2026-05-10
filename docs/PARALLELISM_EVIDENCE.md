@@ -28,9 +28,9 @@ There is no automatic Phase 7 writer cap increase.
 | Keep non-writers read-only | `tests/policy.test.ts`, `tests/operations.test.ts`, and `tests/orchestrator-materializer.test.ts` reject non-writer write proposals, worktree allocation, merge authority, and report-only dependencies on unmerged writer output. | `bun run test:portable` |
 | Record compact parallel evidence | `src/lib/parallelism-evidence-store.ts` records plan/action/task/run refs, roles, result modes, writer count, changed files, verification summary, merge status, cleanup status, and outcome without copying full run logs. `tests/parallelism-evidence.test.ts` covers append/list/filter, successful report-only evidence, failed evidence preservation, and writer-cap preservation. | `bun test tests/parallelism-evidence.test.ts` |
 | Keep parallel reports readable | `tests/parallelism-evidence.test.ts` covers parallel specialist plus single-writer role outcomes without raw action/status noise. | `bun run test:portable` |
-| Keep integration deterministic | `tests/merge-gate.test.ts` covers merge and push gates; `tests/worktree-cleanup.test.ts` covers cleanup gates; `tests/run-lifecycle-store.test.ts` records lifecycle status in `state/run-lifecycle.jsonl`. | `bun run test:portable` |
-| Keep recovery deterministic | `tests/recovery-context.test.ts`, `tests/recovery-continuity.test.ts`, and `tests/operations.test.ts` cover `/recover -> /plan -> /go`, failed-plan evidence, and canonical repo-root instructions. | `bun run test:portable` |
-| Keep role topology advisory | `src/lib/role-topology.ts` defines advisory role relationships and explicitly denies dispatch, writer, connector, secret, merge, push, cleanup, approval, and safety-policy authority. `tests/policy.test.ts`, `tests/profile-governance.test.ts`, `tests/orchestrator-agent.test.ts`, and `tests/operator-reports.test.ts` cover known-role validation, governance approval, planning/reporting visibility, and unchanged dispatch policy. | `bun run test:portable` |
+| Keep integration deterministic | `tests/merge-gate.test.ts` covers merge and push gates; `tests/worktree-cleanup.test.ts` covers cleanup gates and classifies completed, dirty, missing, abandoned, already-cleaned, and blocked cleanup candidates; `tests/run-lifecycle-store.test.ts` records lifecycle status in `state/run-lifecycle.jsonl`. | `bun run test:portable` |
+| Keep recovery deterministic | `tests/recovery-context.test.ts`, `tests/recovery-continuity.test.ts`, `tests/recovery-drills.test.ts`, and `tests/operations.test.ts` cover `/recover -> /plan -> /go`, failed-plan evidence, canonical repo-root instructions, and rollback authority limited to deterministic recovery or operator action. | `bun run test:portable` |
+| Keep role topology advisory | `src/lib/role-topology.ts` defines advisory role relationships and explicitly denies dispatch, writer, connector, secret, merge, push, cleanup, rollback, approval, and safety-policy authority. `tests/policy.test.ts`, `tests/profile-governance.test.ts`, `tests/orchestrator-agent.test.ts`, and `tests/operator-reports.test.ts` cover known-role validation, governance approval, planning/reporting visibility, and unchanged dispatch policy. | `bun run test:portable` |
 | Keep writer conflict detection advisory | `src/lib/parallelism-conflict-detector.ts` detects overlapping target files, forbidden changes, same-repo writer candidates, stale bases, dirty target repos, unmerged writer dependencies, and missing passing evidence. `tests/parallelism-conflict-detector.test.ts` verifies unsafe overlap, stale/dirty cases, missing evidence, evidence-record attachment, governance blocking, and `writerCap` staying `1`. | `bun test tests/parallelism-conflict-detector.test.ts` |
 | Keep merge queue classification deterministic | `src/lib/merge-gate.ts` classifies candidates as `mergeable`, `already_merged`, `stale_base`, `failed_verification`, `dirty_target_repo`, `missing_commit`, or `blocked`, and evaluates sorted merge queues without push commands. `tests/merge-gate.test.ts` covers deterministic ordering, clean mergeable candidates, stale/dirty/missing/failed candidates, post-merge verification failure, and push staying separate. | `bun test tests/merge-gate.test.ts` |
 
@@ -73,6 +73,13 @@ state directly. Recovery stays deterministic:
   the same verification and integration gates.
 - Cleanup only removes a completed worker worktree after the worker commit is
   integrated, the target repo is clean, and the worker worktree is clean.
+- Cleanup classifies non-removal states as dirty, missing, abandoned, blocked,
+  or already cleaned; destructive cleanup is not attempted for dirty, missing,
+  abandoned, or blocked candidates.
 - Failed materialized plans use `/recover`; the recovery request includes the
   failed plan, failed actions, changed files, run logs, and artifact previews as
   evidence.
+- Recovery drills record rollback authority explicitly. Rollback is allowed only
+  through deterministic recovery planning, governed corrective work, BK/operator
+  action, or current decision commands; workers, non-writers, and orchestrator
+  agents must not roll back state directly.

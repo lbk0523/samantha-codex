@@ -130,6 +130,8 @@ describe("cleanupCompletedWorktree", () => {
     const result = await cleanupCompletedWorktree({ runLogPath: logPath, repoRoot: root });
 
     expect(result.cleaned).toBe(true);
+    expect(result.classification).toBe("completed");
+    expect(result.mayCleanup).toBe(true);
     expect(result.remove?.exitCode).toBe(0);
     expect(result.deleteBranch?.exitCode).toBe(0);
     expect(await exists(worktreePath)).toBe(false);
@@ -142,6 +144,7 @@ describe("cleanupCompletedWorktree", () => {
     const result = await cleanupCompletedWorktree({ runLogPath: logPath, repoRoot: root });
 
     expect(result.cleaned).toBe(false);
+    expect(result.classification).toBe("abandoned");
     expect(result.violations).toContain("target repo HEAD does not contain the worker commit");
     expect(await exists(worktreePath)).toBe(true);
     expect(await git(["rev-parse", "--verify", branch], root)).toBeTruthy();
@@ -154,8 +157,39 @@ describe("cleanupCompletedWorktree", () => {
     const result = await cleanupCompletedWorktree({ runLogPath: logPath, repoRoot: root });
 
     expect(result.cleaned).toBe(false);
+    expect(result.classification).toBe("dirty");
     expect(result.violations).toContain("worker worktree has uncommitted changes");
     expect(await exists(worktreePath)).toBe(true);
+  });
+
+  test("classifies a missing allocated worktree without destructive cleanup", async () => {
+    const { root, logPath, worktreePath, branch } = await makePassedRun({ merge: true });
+    await rm(worktreePath, { recursive: true, force: true });
+
+    const result = await cleanupCompletedWorktree({ runLogPath: logPath, repoRoot: root });
+
+    expect(result.cleaned).toBe(false);
+    expect(result.classification).toBe("missing");
+    expect(result.violations).toContain("allocated worktree path is missing or invalid");
+    expect(await exists(worktreePath)).toBe(false);
+    expect(await git(["rev-parse", "--verify", branch], root)).toBeTruthy();
+  });
+
+  test("classifies an already-cleaned worktree idempotently", async () => {
+    const { root, logPath, worktreePath, branch } = await makePassedRun({ merge: true });
+
+    const first = await cleanupCompletedWorktree({ runLogPath: logPath, repoRoot: root });
+    const second = await cleanupCompletedWorktree({ runLogPath: logPath, repoRoot: root });
+
+    expect(first.cleaned).toBe(true);
+    expect(second).toMatchObject({
+      mayCleanup: false,
+      cleaned: true,
+      classification: "already_cleaned",
+      violations: [],
+    });
+    expect(await exists(worktreePath)).toBe(false);
+    await expect(git(["rev-parse", "--verify", branch], root)).rejects.toThrow();
   });
 
   test("refuses cleanup when the run log points at the target repo worktree", async () => {
@@ -170,6 +204,7 @@ describe("cleanupCompletedWorktree", () => {
     const result = await cleanupCompletedWorktree({ runLogPath: logPath, repoRoot: root });
 
     expect(result.cleaned).toBe(false);
+    expect(result.classification).toBe("blocked");
     expect(result.violations).toContain("refusing to remove the target repo main worktree");
     expect(await exists(root)).toBe(true);
     expect(await exists(worktreePath)).toBe(true);

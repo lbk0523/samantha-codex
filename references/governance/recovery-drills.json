@@ -30,6 +30,10 @@
           "Do not use git reset or checkout to rewrite history.",
           "Run verification, merge, push, and cleanup gates normally."
         ],
+        "rollbackAuthority": [
+          "Rollback is allowed only through deterministic recovery planning or explicit operator action.",
+          "Workers, non-writers, and orchestrator agents must not roll back state directly."
+        ],
         "gates": ["plan approval", "worker verification", "merge gate", "push gate", "cleanup gate"]
       }
     },
@@ -61,6 +65,10 @@
           "If dirt is discovered after merge but before push, stop at the push gate and review the lifecycle record.",
           "If pushed already, create an explicit follow-up recovery plan instead of rewriting history.",
           "Cleanup remains gated and must not remove evidence before review."
+        ],
+        "rollbackAuthority": [
+          "Rollback is allowed only through deterministic recovery planning, BK decision, or explicit operator action.",
+          "Workers, non-writers, and orchestrator agents must not clean, reset, or roll back dirty state directly."
         ],
         "gates": ["merge gate", "push gate", "cleanup gate", "operator review"]
       }
@@ -94,6 +102,10 @@
           "Do not rewrite published history from Samantha.",
           "Push and cleanup remain separate gated transitions."
         ],
+        "rollbackAuthority": [
+          "Rollback is allowed only through a governed corrective task or explicit operator action.",
+          "Workers, non-writers, and orchestrator agents must not force merge, reset, or roll back state directly."
+        ],
         "gates": ["merge gate", "worker verification", "push gate", "cleanup gate"]
       }
     },
@@ -125,6 +137,10 @@
           "Keep the lifecycle in partially integrated state until push succeeds or BK chooses a recovery path.",
           "Retrying push requires an explicit operator action, not automatic worker retry.",
           "Cleanup requires the normal cleanup gate after push status is recorded."
+        ],
+        "rollbackAuthority": [
+          "Rollback is allowed only through BK/operator direction or a new deterministic recovery plan.",
+          "Workers, non-writers, and orchestrator agents must not mark push state, retry, or roll back directly."
         ],
         "gates": ["push gate", "operator review", "cleanup gate"]
       }
@@ -158,6 +174,10 @@
           "Create a corrective plan if the integrated work was not actually approved.",
           "Do not edit old decisions to make them current."
         ],
+        "rollbackAuthority": [
+          "Rollback is allowed only through current decision commands, deterministic recovery planning, or explicit operator action.",
+          "Workers, non-writers, and orchestrator agents must not reuse stale approvals or roll back state directly."
+        ],
         "gates": ["decision gate", "plan materialization gate", "operator review"]
       }
     },
@@ -190,6 +210,10 @@
           "Record the original mistake and correction as governance events.",
           "Run verification before merge, push, and cleanup."
         ],
+        "rollbackAuthority": [
+          "Rollback is allowed only through governed profile correction or explicit operator action.",
+          "Workers, non-writers, and orchestrator agents must not activate, revert, or roll back profile authority directly."
+        ],
         "gates": ["profile governance gate", "decision gate", "worker dispatch gate"]
       }
     },
@@ -221,6 +245,10 @@
           "If an unsafe grant was merged, create a corrective governance task and revoke the grant through normal approval gates.",
           "Do not hide the unsafe proposal by deleting historical records.",
           "Run profile governance tests before integration gates."
+        ],
+        "rollbackAuthority": [
+          "Rollback is allowed only through governed capability correction or explicit operator action.",
+          "Workers, non-writers, and orchestrator agents must not grant, revoke, or roll back connector or secret authority directly."
         ],
         "gates": ["capability governance gate", "decision gate", "worker dispatch gate"]
       }

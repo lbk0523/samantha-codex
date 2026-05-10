@@ -45,6 +45,10 @@ describe("rollback and recovery drills", () => {
       expect(drill.recoveryGuidance.canonicalRoot.toLowerCase()).toContain("canonical");
       expect(drill.operatorSteps.join("\n")).toContain("drills:record");
       expect(drill.recoveryGuidance.gates.length).toBeGreaterThan(0);
+      expect(drill.recoveryGuidance.rollbackAuthority.join("\n").toLowerCase()).toMatch(/deterministic recovery|operator/);
+      expect(drill.recoveryGuidance.rollbackAuthority.join("\n").toLowerCase()).toContain("workers");
+      expect(drill.recoveryGuidance.rollbackAuthority.join("\n").toLowerCase()).toContain("non-writers");
+      expect(drill.recoveryGuidance.rollbackAuthority.join("\n").toLowerCase()).toContain("must not");
       expect(text).not.toContain(".samantha-worktrees");
       expect(text).not.toMatch(/\/Users\/|\/home\//);
     }
@@ -69,6 +73,8 @@ describe("rollback and recovery drills", () => {
     expect(report).toContain("- samantha: $HOME/projects/samantha-codex");
     expect(report).toContain("outcome=still_blocked");
     expect(report).toContain("cleanup gate");
+    expect(report).toContain("rollback authority");
+    expect(report).toContain("Workers, non-writers, and orchestrator agents must not");
     expect(report).not.toContain(".samantha-worktrees");
   });
 

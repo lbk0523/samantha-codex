@@ -45,6 +45,7 @@ export interface AdvisoryRoleTopologyAuthority {
   merge: false;
   push: false;
   cleanup: false;
+  rollback: false;
   approval: false;
   safetyPolicy: false;
 }

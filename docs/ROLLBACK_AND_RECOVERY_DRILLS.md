@@ -1,8 +1,8 @@
 # Rollback And Recovery Drills
 
-Last updated: 2026-05-09
+Last updated: 2026-05-10
 
-Status: active Phase 5 G9 drill guidance.
+Status: active Phase 7 M8 rollback and recovery drill guidance.
 
 These drills are controlled operator exercises. They do not run workers, retry
 failed plans, mutate git history, push, merge, or cleanup automatically. The
@@ -17,6 +17,11 @@ bun run samantha drills:record <drill-id> --outcome=<fixed|still_blocked|needs_b
 
 Recorded outcomes append governance events to `state/governance-events.jsonl`
 with `operator_report` source ids such as `recovery-drill:failed-verify`.
+
+Every catalog drill includes rollback authority guidance. Rollback authority is
+limited to deterministic recovery planning, governed corrective work,
+BK/operator action, or current decision commands. Workers, non-writers, and
+orchestrator agents must not roll back state directly.
 
 ## Outcome Labels
 
@@ -34,6 +39,25 @@ For Samantha, the canonical profile record is
 `references/project-profiles/samantha.json`. The profile may contain environment
 variables such as `$HOME`; use the resolved profile root in local commands and
 reports, not a stale worker worktree path.
+
+## Cleanup Classification
+
+`worktree:cleanup` classifies cleanup candidates before attempting removal:
+
+- `completed`: the run passed, the worker commit is integrated, the target repo
+  is clean, and the worker worktree is clean. This is the only state that may
+  run `git worktree remove`.
+- `dirty`: the target repo or worker worktree has uncommitted changes. Cleanup
+  is blocked without removing anything.
+- `missing`: the allocated worker worktree path is missing or invalid while
+  cleanup cannot prove it was already completed. Cleanup is blocked without
+  removing anything.
+- `abandoned`: the run failed, lacks a commit, or the target repo does not
+  contain the worker commit. Cleanup is blocked without removing anything.
+- `already_cleaned`: the worker worktree and branch are gone, but the worker
+  commit is already integrated. The cleanup gate is idempotent.
+- `blocked`: cleanup would target the main repo worktree, the wrong repo, the
+  wrong branch, or another safety blocker.
 
 ## Drill Catalog
 

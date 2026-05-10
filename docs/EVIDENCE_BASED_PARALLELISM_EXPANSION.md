@@ -295,6 +295,21 @@ Verification focus:
 - rollback behavior is tested through deterministic recovery/operator paths
 - no agent receives direct rollback authority
 
+Outcome:
+
+- Added cleanup candidate classification for `completed`, `dirty`, `missing`,
+  `abandoned`, `already_cleaned`, and `blocked` worktree cleanup states.
+- Cleanup still removes only clean, completed worker worktrees whose commits are
+  already integrated into the target repo; dirty, missing, abandoned, and
+  blocked candidates return evidence without destructive cleanup.
+- Already-cleaned worktrees are handled idempotently when the worker worktree
+  and branch are gone but the worker commit is already integrated.
+- Recovery drill guidance now records rollback authority explicitly:
+  deterministic recovery planning, governed corrective work, BK/operator action
+  only; workers, non-writers, and orchestrator agents receive no direct
+  rollback authority.
+- Advisory role topology authority now explicitly denies rollback authority.
+
 ## M9: Writer-Cap Governance Gate
 
 Goal: make writer-cap changes require complete evidence and explicit BK

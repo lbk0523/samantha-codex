@@ -62,7 +62,7 @@ describe("orchestrator agent prompt", () => {
     expect(prompt).toContain("Use `codex-operations` for report-only operational analysis");
     expect(prompt).toContain("Use `codex-worker` only for implementation/write tasks");
     expect(prompt).toContain("Advisory role topology:");
-    expect(prompt).toContain("This topology grants no dispatch, writer, connector, secret, merge, push, cleanup, approval, or safety-policy authority.");
+    expect(prompt).toContain("This topology grants no dispatch, writer, connector, secret, merge, push, cleanup, rollback, approval, or safety-policy authority.");
     expect(prompt).toContain("Reviewer reviews Writer");
     expect(prompt).toContain("Non-writer tasks must use `resultMode: \"report\"`");
     expect(prompt).toContain("Deterministic request classification:");

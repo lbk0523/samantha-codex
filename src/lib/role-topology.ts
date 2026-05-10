@@ -45,6 +45,7 @@ const AUTHORITY_KEYS: Array<keyof AdvisoryRoleTopologyAuthority> = [
   "merge",
   "push",
   "cleanup",
+  "rollback",
   "approval",
   "safetyPolicy",
 ];
@@ -57,6 +58,7 @@ export const ADVISORY_ROLE_TOPOLOGY_AUTHORITY: AdvisoryRoleTopologyAuthority = {
   merge: false,
   push: false,
   cleanup: false,
+  rollback: false,
   approval: false,
   safetyPolicy: false,
 };
@@ -254,7 +256,7 @@ export function advisoryRoleTopologyPromptLines(
 ): string[] {
   return [
     "Advisory role topology:",
-    "- Metadata only. This topology grants no dispatch, writer, connector, secret, merge, push, cleanup, approval, or safety-policy authority.",
+    "- Metadata only. This topology grants no dispatch, writer, connector, secret, merge, push, cleanup, rollback, approval, or safety-policy authority.",
     ...topology.relationships.map((relationship) =>
       `- ${roleLabel(relationship.from)} ${relationLabel(relationship.relation)} ${roleLabel(relationship.to)}: ${oneLine(relationship.description ?? "advisory relationship")}`,
     ),

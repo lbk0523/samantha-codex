@@ -25,6 +25,7 @@ export interface RecoveryDrillGuidance {
   canonicalRoot: string;
   preMerge: string[];
   postMerge: string[];
+  rollbackAuthority: string[];
   gates: string[];
 }
 
@@ -114,6 +115,7 @@ function parseGuidance(value: unknown, label: string): RecoveryDrillGuidance {
     canonicalRoot: requireString(guidance.canonicalRoot, `${label}.canonicalRoot`),
     preMerge: requireStringList(guidance.preMerge, `${label}.preMerge`),
     postMerge: requireStringList(guidance.postMerge, `${label}.postMerge`),
+    rollbackAuthority: requireStringList(guidance.rollbackAuthority, `${label}.rollbackAuthority`),
     gates: requireStringList(guidance.gates, `${label}.gates`),
   };
 }
@@ -223,6 +225,7 @@ export function formatRecoveryDrillReport(input: {
     `- canonical root: ${input.drill.recoveryGuidance.canonicalRoot}`,
     ...input.drill.recoveryGuidance.preMerge.map((item) => `- pre-merge: ${item}`),
     ...input.drill.recoveryGuidance.postMerge.map((item) => `- post-merge: ${item}`),
+    ...input.drill.recoveryGuidance.rollbackAuthority.map((item) => `- rollback authority: ${item}`),
     ...input.drill.recoveryGuidance.gates.map((item) => `- gate: ${item}`),
     "",
     "Recorded Outcomes:",

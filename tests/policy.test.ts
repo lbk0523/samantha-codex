@@ -65,6 +65,7 @@ describe("validateDispatch", () => {
 
     expect(result.ok).toBe(true);
     expect(result.violations).toEqual([]);
+    expect(DEFAULT_ADVISORY_ROLE_TOPOLOGY.authority.rollback).toBe(false);
     expect(invalid.violations).toContain("role topology authority.dispatch must be false");
     expect(invalid.violations).toContain("role topology relationship uses unknown source role: unknown");
   });
