@@ -8,6 +8,7 @@ import type {
 import type { DecisionItem } from "./decision-store";
 import { parseGovernanceRiskClass, type GovernanceRiskClass } from "./governance-taxonomy";
 import { readableSlug, shortHash } from "./ids";
+import type { ParallelismWriterConflictSafety } from "./parallelism-evidence-store";
 
 export const PROFILE_CHANGE_RISK_CLASS: GovernanceRiskClass = "high";
 export const CAPABILITY_CHANGE_RISK_CLASS: GovernanceRiskClass = "high";
@@ -354,8 +355,10 @@ export function validateSafetyPolicyGovernance(
   policy: SafetyPolicy,
   baseline: SafetyPolicy,
   decisions: DecisionItem[] = [],
+  evidence: { writerConflictSafety?: ParallelismWriterConflictSafety } = {},
 ): ProfileGovernanceCheck {
   const changes: string[] = [];
+  const writerCapIncrease = policy.writerCap > baseline.writerCap;
   if (policy.writerCap !== baseline.writerCap) changes.push(`writerCap: ${baseline.writerCap} -> ${policy.writerCap}`);
   if (policy.requiredForbiddenChanges !== baseline.requiredForbiddenChanges) {
     changes.push(`requiredForbiddenChanges: ${baseline.requiredForbiddenChanges} -> ${policy.requiredForbiddenChanges}`);
@@ -368,9 +371,23 @@ export function validateSafetyPolicyGovernance(
   changes.push(...listChanged("blockedSkillNames", baseline.blockedSkillNames, policy.blockedSkillNames));
 
   if (changes.length === 0) return { ok: true, violations: [] };
-  if (approvedCapabilityChangeDecision(safetyPolicyCapabilityId(), decisions)) return { ok: true, violations: [] };
-  return {
-    ok: false,
-    violations: [`safety policy has unapproved governed capability change: ${changes.join("; ")}`],
-  };
+  const violations: string[] = [];
+  const approved = approvedCapabilityChangeDecision(safetyPolicyCapabilityId(), decisions);
+  if (!approved) {
+    violations.push(`safety policy has unapproved governed capability change: ${changes.join("; ")}`);
+  }
+  if (approved && writerCapIncrease) {
+    const conflictSafety = evidence.writerConflictSafety;
+    if (!conflictSafety) {
+      violations.push("safety policy writerCap change is missing deterministic writer conflict evidence");
+    } else if (!conflictSafety.advisorySafe) {
+      violations.push(
+        `safety policy writerCap change has unsafe writer conflict evidence: ${conflictSafety.violations.join("; ")}`,
+      );
+    }
+    violations.push(
+      "safety policy writerCap increase remains blocked in Phase 7 M6; conflict detection is advisory and cannot approve concurrency",
+    );
+  }
+  return { ok: violations.length === 0, violations };
 }

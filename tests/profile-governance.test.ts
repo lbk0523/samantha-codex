@@ -350,14 +350,21 @@ describe("agent profile and capability governance", () => {
     expect(validateSafetyPolicyGovernance(changedPolicy, DEFAULT_SAFETY_POLICY).violations).toEqual([
       "safety policy has unapproved governed capability change: writerCap: 1 -> 2",
     ]);
-    expect(validateSafetyPolicyGovernance(changedPolicy, DEFAULT_SAFETY_POLICY, [
+    const approvedWriterCap = validateSafetyPolicyGovernance(changedPolicy, DEFAULT_SAFETY_POLICY, [
       approvedDecision({
         kind: "capability_change",
         subjectType: "policy",
         subjectId: safetyPolicyCapabilityId(),
         prompt: "Approve safety policy writerCap change.",
       }),
-    ]).ok).toBe(true);
+    ]);
+    expect(approvedWriterCap.ok).toBe(false);
+    expect(approvedWriterCap.violations).toContain(
+      "safety policy writerCap change is missing deterministic writer conflict evidence",
+    );
+    expect(approvedWriterCap.violations).toContain(
+      "safety policy writerCap increase remains blocked in Phase 7 M6; conflict detection is advisory and cannot approve concurrency",
+    );
   });
 
   test("governs advisory topology changes as capability metadata without dispatch authority", () => {

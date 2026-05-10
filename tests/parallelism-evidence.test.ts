@@ -416,6 +416,7 @@ describe("parallelism evidence", () => {
       lifecycleTests,
       mergeGateTests,
       cleanupTests,
+      conflictTests,
     ] = await Promise.all([
       read("docs/PARALLELISM_EVIDENCE.md"),
       read("tests/policy.test.ts"),
@@ -424,6 +425,7 @@ describe("parallelism evidence", () => {
       read("tests/run-lifecycle-store.test.ts"),
       read("tests/merge-gate.test.ts"),
       read("tests/worktree-cleanup.test.ts"),
+      read("tests/parallelism-conflict-detector.test.ts"),
     ]);
 
     expect(DEFAULT_SAFETY_POLICY.writerCap).toBe(1);
@@ -440,6 +442,7 @@ describe("parallelism evidence", () => {
       "tests/run-lifecycle-store.test.ts",
       "tests/recovery-context.test.ts",
       "tests/recovery-continuity.test.ts",
+      "tests/parallelism-conflict-detector.test.ts",
     ]) {
       expect(evidence).toContain(filename);
     }
@@ -452,6 +455,7 @@ describe("parallelism evidence", () => {
     expect(lifecycleTests).toContain('test("marks merge, push, and cleanup lifecycle events"');
     expect(mergeGateTests).toContain('test("does not apply merge when the gate is blocked"');
     expect(cleanupTests).toContain('test("blocks cleanup before the worker commit is integrated"');
+    expect(conflictTests).toContain('test("keeps disjoint writer candidates blocked when deterministic evidence is missing"');
   });
 
   test("reports parallel non-writer outcomes separately from a single mergeable writer", () => {

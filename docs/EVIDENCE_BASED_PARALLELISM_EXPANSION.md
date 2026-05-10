@@ -230,6 +230,19 @@ Verification focus:
   missing
 - conflict detection cannot approve a writerCap change by itself
 
+Outcome:
+
+- Added an advisory writer concurrency conflict detector for overlapping target
+  files, forbidden target/changed files, same-repo writer candidates, stale base
+  commits, dirty target repositories, unmerged writer dependencies, and missing
+  passing parallelism evidence.
+- Parallelism evidence records can carry the advisory conflict result without
+  treating it as approval.
+- Safety-policy governance now keeps approved writerCap increases blocked in
+  Phase 7 M6 unless later governed evidence explicitly changes the policy.
+- Left execution authority unchanged. `DEFAULT_SAFETY_POLICY.writerCap` remains
+  `1`.
+
 ## M7: Merge Queue Reliability Under Load
 
 Goal: keep merge and push gates deterministic when more parallel evidence and

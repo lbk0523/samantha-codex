@@ -31,6 +31,7 @@ There is no automatic Phase 7 writer cap increase.
 | Keep integration deterministic | `tests/merge-gate.test.ts` covers merge and push gates; `tests/worktree-cleanup.test.ts` covers cleanup gates; `tests/run-lifecycle-store.test.ts` records lifecycle status in `state/run-lifecycle.jsonl`. | `bun run test:portable` |
 | Keep recovery deterministic | `tests/recovery-context.test.ts`, `tests/recovery-continuity.test.ts`, and `tests/operations.test.ts` cover `/recover -> /plan -> /go`, failed-plan evidence, and canonical repo-root instructions. | `bun run test:portable` |
 | Keep role topology advisory | `src/lib/role-topology.ts` defines advisory role relationships and explicitly denies dispatch, writer, connector, secret, merge, push, cleanup, approval, and safety-policy authority. `tests/policy.test.ts`, `tests/profile-governance.test.ts`, `tests/orchestrator-agent.test.ts`, and `tests/operator-reports.test.ts` cover known-role validation, governance approval, planning/reporting visibility, and unchanged dispatch policy. | `bun run test:portable` |
+| Keep writer conflict detection advisory | `src/lib/parallelism-conflict-detector.ts` detects overlapping target files, forbidden changes, same-repo writer candidates, stale bases, dirty target repos, unmerged writer dependencies, and missing passing evidence. `tests/parallelism-conflict-detector.test.ts` verifies unsafe overlap, stale/dirty cases, missing evidence, evidence-record attachment, governance blocking, and `writerCap` staying `1`. | `bun test tests/parallelism-conflict-detector.test.ts` |
 
 ## Dogfood Notes
 
@@ -50,6 +51,9 @@ Before changing `writerCap` above `1`, update this document first with:
 - dogfood run date and operator;
 - task ids, action ids, run-log paths, and commits for every writer involved;
 - proof that writers used separate worktrees and non-overlapping `targetFiles`;
+- advisory conflict-detection output showing clean target repos, current base
+  commits, no forbidden changes, no same-repo write conflicts, and no unmerged
+  writer dependencies;
 - proof that merge, push, cleanup, and recovery gates remained deterministic;
 - failure response for dirty worktrees, target-file violations, failed verify
   commands, merge conflicts, push failures, and abandoned worktrees;

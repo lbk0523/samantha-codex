@@ -30,6 +30,17 @@ export interface ParallelismEvidenceVerification {
   failedCommands?: string[];
 }
 
+export interface ParallelismWriterConflictSafety {
+  schemaVersion: 1;
+  evaluatedAt: string;
+  advisoryOnly: true;
+  advisorySafe: boolean;
+  mayIncreaseWriterCap: false;
+  writerCap: number;
+  candidateCount: number;
+  violations: string[];
+}
+
 export interface ParallelismEvidenceRecord {
   schemaVersion: 1;
   id: string;
@@ -47,6 +58,7 @@ export interface ParallelismEvidenceRecord {
   cleanupStatus: ParallelismEvidenceGateStatus;
   outcome: ParallelismEvidenceOutcome;
   summary?: string;
+  writerConflictSafety?: ParallelismWriterConflictSafety;
 }
 
 export interface CreateParallelismEvidenceInput {
@@ -61,6 +73,7 @@ export interface CreateParallelismEvidenceInput {
   outcome: ParallelismEvidenceOutcome;
   changedFiles?: string[];
   summary?: string;
+  writerConflictSafety?: ParallelismWriterConflictSafety;
   id?: string;
   dedupeKey?: string;
 }
@@ -184,6 +197,37 @@ function normalizeVerification(value: unknown): ParallelismEvidenceVerification 
   };
 }
 
+function normalizeWriterConflictSafety(value: unknown): ParallelismWriterConflictSafety | undefined {
+  if (value === undefined) return undefined;
+  const safety = requireRecord(value, "writerConflictSafety");
+  if (safety.schemaVersion !== 1) {
+    throw new Error(`writerConflictSafety.schemaVersion must be 1`);
+  }
+  if (safety.advisoryOnly !== true) throw new Error("writerConflictSafety.advisoryOnly must be true");
+  if (typeof safety.advisorySafe !== "boolean") throw new Error("writerConflictSafety.advisorySafe must be a boolean");
+  if (safety.mayIncreaseWriterCap !== false) {
+    throw new Error("writerConflictSafety.mayIncreaseWriterCap must be false");
+  }
+  const writerCap = safety.writerCap;
+  const candidateCount = safety.candidateCount;
+  if (typeof writerCap !== "number" || !Number.isInteger(writerCap) || writerCap < 1) {
+    throw new Error("writerConflictSafety.writerCap must be a positive integer");
+  }
+  if (typeof candidateCount !== "number" || !Number.isInteger(candidateCount) || candidateCount < 0) {
+    throw new Error("writerConflictSafety.candidateCount must be a non-negative integer");
+  }
+  return {
+    schemaVersion: 1,
+    evaluatedAt: requireTimestamp(safety.evaluatedAt),
+    advisoryOnly: true,
+    advisorySafe: safety.advisorySafe,
+    mayIncreaseWriterCap: false,
+    writerCap,
+    candidateCount,
+    violations: normalizeStringList(safety.violations ?? [], "writerConflictSafety.violations"),
+  };
+}
+
 function normalizeRef(value: unknown): ParallelismEvidenceRef {
   const ref = requireRecord(value, "ref");
   return {
@@ -286,6 +330,7 @@ export function createParallelismEvidenceRecord(input: CreateParallelismEvidence
   const cleanupStatus = parseGateStatus(input.cleanupStatus);
   const outcome = parseOutcome(input.outcome);
   const summary = optionalString(input.summary, "summary");
+  const writerConflictSafety = normalizeWriterConflictSafety(input.writerConflictSafety);
   const id = input.id ? requireString(input.id, "id") : buildParallelismEvidenceId({
     observedAt,
     planId,
@@ -318,6 +363,7 @@ export function createParallelismEvidenceRecord(input: CreateParallelismEvidence
     cleanupStatus,
     outcome,
     summary,
+    writerConflictSafety,
   };
 }
 
@@ -328,6 +374,7 @@ export function createParallelismEvidenceFromPlanResult(input: {
   runLogs: WorkerRunLog[];
   lifecycles?: RunLifecycleRecord[];
   summary?: string;
+  writerConflictSafety?: ParallelismWriterConflictSafety;
 }): ParallelismEvidenceRecord {
   const runLogForAction = (action: RemoteActionRecord) =>
     input.runLogs.find((log) => log.runId === action.result?.runId || log.task.id === action.taskId);
@@ -366,6 +413,7 @@ export function createParallelismEvidenceFromPlanResult(input: {
     cleanupStatus: gateStatusForWriters(writerCount, input.lifecycles, "cleanedAt"),
     outcome,
     summary: input.summary,
+    writerConflictSafety: input.writerConflictSafety,
   });
 }
 
@@ -388,6 +436,7 @@ export function parseParallelismEvidenceRecord(value: unknown): ParallelismEvide
     outcome: parseOutcome(record.outcome),
     changedFiles: record.changedFiles === undefined ? undefined : normalizeStringList(record.changedFiles, "changedFiles"),
     summary: optionalString(record.summary, "summary"),
+    writerConflictSafety: normalizeWriterConflictSafety(record.writerConflictSafety),
   });
 }
 
