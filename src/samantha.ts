@@ -81,6 +81,7 @@ import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnos
 import { operatorReviewReport, type OperatorReviewSubjectType } from "./lib/operator-review-report";
 import { createOrchestratorPlanBlocker, payloadBlockerForPlan, type OrchestratorPlanBlocker } from "./lib/orchestrator-blockers";
 import { runOrchestratorPlan, runOrchestratorQuestionDraft, runOrchestratorSynthesis } from "./lib/orchestrator-agent";
+import { ancestryForPlan, ancestryForRequestIntake, selectedProjectIdFromAncestry } from "./lib/orchestration-ancestry";
 import { materializeOrchestratorPlan } from "./lib/orchestrator-materializer";
 import {
   buildOrchestrationRequestId,
@@ -1902,9 +1903,17 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
     const text = String(command.args?.text ?? "");
     if (!text.trim()) throw new Error("orchestration request text is required");
+    const requestId = String(command.args?.requestId ?? buildOrchestrationRequestId(receivedAt, command.id));
+    const projectProfiles = await loadProjectProfiles(projectProfilesDir(args));
     const request: OrchestrationRequestRecord = {
       schemaVersion: 1,
-      id: String(command.args?.requestId ?? buildOrchestrationRequestId(receivedAt, command.id)),
+      id: requestId,
+      ancestry: ancestryForRequestIntake({
+        requestId,
+        requestText: text,
+        projectProfiles,
+        requestedProjectId: typeof command.args?.projectId === "string" ? command.args.projectId : undefined,
+      }),
       source: command.args?.source === "local" ? "local" : "remote",
       senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
       text,
@@ -1919,13 +1928,21 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
     const recoverable = await latestRecoverableOrchestratorPlan(args);
     if (!recoverable) return nowReportForInbox(args);
+    const recoveryProjectId = selectedProjectIdFromAncestry(recoverable.plan.ancestry);
+    const recoveryProject = recoveryProjectId
+      ? await loadProjectProfile(projectProfilesDir(args), recoveryProjectId)
+      : undefined;
 
     const request: OrchestrationRequestRecord = {
       schemaVersion: 1,
       id: String(command.args?.requestId ?? buildOrchestrationRequestId(receivedAt, `recover-${recoverable.plan.id}`)),
+      ancestry: recoverable.plan.ancestry,
       source: command.args?.source === "local" ? "local" : "remote",
       senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
-      text: buildRecoveryRequestText(recoverable),
+      text: buildRecoveryRequestText({
+        ...recoverable,
+        canonicalProjectRepoRoot: recoveryProject?.repoRoot,
+      }),
       status: "pending_plan",
       createdAt: receivedAt,
       recoveryOfPlanId: recoverable.plan.id,
@@ -1968,6 +1985,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const request: OrchestrationRequestRecord = {
       schemaVersion: 1,
       id: String(command.args?.requestId ?? buildOrchestrationRequestId(receivedAt, `revise-${plan.id}`)),
+      ancestry: plan.ancestry ?? originalRequest?.ancestry,
       source: command.args?.source === "local" ? "local" : "remote",
       senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
       text: revisionRequestText({ plan, request: originalRequest, feedback }),
@@ -2008,11 +2026,21 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
 
     const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
     const requestedScopeId = typeof command.args?.scopeId === "string" ? command.args.scopeId : undefined;
-    const result = await runOrchestratorPlan({
+    const projectProfiles = await loadProjectProfiles(projectProfilesDir(args));
+    const planAncestry = ancestryForPlan({
       request,
+      projectProfiles,
+      requestedProjectId,
+    });
+    const planRequest: OrchestrationRequestRecord = {
+      ...request,
+      ancestry: planAncestry,
+    };
+    const result = await runOrchestratorPlan({
+      request: planRequest,
       agent: await loadAgentProfile(args, "codex-orchestrator"),
       repoRoot: orchestratorRepoRoot(args),
-      projectProfiles: await loadProjectProfiles(projectProfilesDir(args)),
+      projectProfiles,
       requestedProjectId,
       requestedScopeId,
       codexBin: codexBin(args),
@@ -2020,6 +2048,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const plan: OrchestratorPlanRecord = {
       schemaVersion: 1,
       id: buildOrchestratorPlanId({ requestId: request.id, createdAt: receivedAt }),
+      ancestry: planAncestry,
       requestId: request.id,
       status: result.status,
       createdAt: receivedAt,
@@ -2032,7 +2061,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     };
     await new OrchestratorPlanStore(orchestratorPlansPath(args)).append(plan);
     const reportedRequest =
-      plan.status === "failed" ? request : await requestStore.markPlanned(request.id, plan.completedAt ?? receivedAt);
+      plan.status === "failed" ? request : await requestStore.markPlanned(request.id, plan.completedAt ?? receivedAt, { ancestry: planAncestry });
     const blocker = await blockerForOrchestratorPlan({
       args,
       plan,
@@ -2475,9 +2504,17 @@ async function main(): Promise<void> {
     }
     const subject = decisionSubject(args);
     if (!subject) throw new Error("orchestrator:question-draft requires --subject-type and --subject-id");
+    const subjectPlan = subject.type === "orchestrator_plan"
+      ? await new OrchestratorPlanStore(orchestratorPlansPath(args)).find(subject.id)
+      : undefined;
     const result = await runOrchestratorQuestionDraft({
       blocker,
-      context: flag(args, "context", "") || undefined,
+      context: [
+        flag(args, "context", "") || "",
+        subjectPlan?.ancestry?.mode === "assigned"
+          ? `ancestry project=${subjectPlan.ancestry.projectId} goal=${subjectPlan.ancestry.goalId} workItem=${subjectPlan.ancestry.workItemId}`
+          : "",
+      ].filter(Boolean).join("\n") || undefined,
       subject,
       agent: await loadAgentProfile(args, "codex-orchestrator"),
       repoRoot: orchestratorRepoRoot(args),
@@ -2489,6 +2526,7 @@ async function main(): Promise<void> {
     }
     const decision = decisionFromQuestionDraft({
       payload: result.payload,
+      ancestry: subjectPlan?.ancestry,
       subject,
       createdAt: flag(args, "created-at", new Date().toISOString()),
       source: "system",

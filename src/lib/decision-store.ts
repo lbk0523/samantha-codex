@@ -54,6 +54,7 @@ export interface DecisionItem {
 }
 
 export interface CreateDecisionItemInput {
+  ancestry?: WorkItemAncestry;
   kind?: DecisionKind;
   title: string;
   prompt: string;
@@ -134,6 +135,7 @@ export function createDecisionItem(input: CreateDecisionItemInput): DecisionItem
   return {
     schemaVersion: 1,
     id: buildDecisionItemId({ createdAt: input.createdAt, title, subject: input.subject }),
+    ancestry: input.ancestry,
     status: "pending",
     kind: input.kind ?? "manual",
     title,
@@ -160,6 +162,7 @@ export function decisionFromOrchestratorPlan(input: {
     const questions = input.plan.payload?.questions.map(oneLine).filter(Boolean) ?? [];
     return createDecisionItem({
       kind: "orchestrator_questions",
+      ancestry: input.plan.ancestry ?? input.request?.ancestry,
       title: `Answer plan questions: ${summary}`,
       prompt: questions.length ? questions.join(" / ") : "BK input is required before this plan can proceed.",
       options: ["answer", "revise", "cancel"],
@@ -174,6 +177,7 @@ export function decisionFromOrchestratorPlan(input: {
     if (planPayloadBlockerViolations(input.plan).length > 0) return undefined;
     return createDecisionItem({
       kind: "orchestrator_plan_approval",
+      ancestry: input.plan.ancestry ?? input.request?.ancestry,
       title: `Review plan: ${summary}`,
       prompt: planApprovalPrompt(input.plan),
       options: ["approve", "revise", "cancel"],
@@ -189,6 +193,7 @@ export function decisionFromOrchestratorPlan(input: {
 
 export function decisionFromQuestionDraft(input: {
   payload: OrchestratorQuestionDraftPayload;
+  ancestry?: WorkItemAncestry;
   subject?: DecisionSubject;
   createdAt: string;
   source?: DecisionItem["source"];
@@ -198,6 +203,7 @@ export function decisionFromQuestionDraft(input: {
 
   return createDecisionItem({
     kind: "blocker_clarification",
+    ancestry: input.ancestry,
     title: input.payload.title,
     prompt: input.payload.prompt,
     options: questionDraftOptions(input.payload.options),

@@ -86,6 +86,87 @@ function plan(tasks: OrchestratorTaskProposal[], batches: string[][]): Orchestra
 }
 
 describe("materializeOrchestratorPlan role-aware specialist contract", () => {
+  test("copies assigned plan ancestry to materialized tasks and actions", () => {
+    const ancestry = {
+      mode: "assigned" as const,
+      projectId: "samantha",
+      goalId: "goal-samantha-operations",
+      workItemId: "request-ancestry-flow",
+    };
+    const result = materializeOrchestratorPlan({
+      plan: { ...plan([proposal({ id: "ancestry-report", title: "Ancestry report", targetAgent: "codex-reviewer" })], [["ancestry-report"]]), ancestry },
+      agents: [reviewer],
+      projects: [project],
+      createdAt: "2026-05-07T00:01:00.000Z",
+      commandId: "remote-go-ancestry",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.tasks[0]?.ancestry).toEqual(ancestry);
+    expect(result.actions[0]?.ancestry).toEqual(ancestry);
+  });
+
+  test("rejects unknown or mismatched project proposals before materialization", () => {
+    const ancestry = {
+      mode: "assigned" as const,
+      projectId: "samantha",
+      goalId: "goal-samantha-operations",
+      workItemId: "request-ancestry-flow",
+    };
+    const unknown = materializeOrchestratorPlan({
+      plan: {
+        ...plan([proposal({ id: "unknown-project", title: "Unknown project", targetAgent: "codex-reviewer", projectId: "missing" })], [["unknown-project"]]),
+        ancestry,
+      },
+      agents: [reviewer],
+      projects: [project],
+      createdAt: "2026-05-07T00:01:00.000Z",
+      commandId: "remote-go-unknown-project",
+    });
+    const mismatched = materializeOrchestratorPlan({
+      plan: {
+        ...plan([proposal({ id: "missing-project", title: "Missing project", targetAgent: "codex-reviewer", projectId: undefined })], [["missing-project"]]),
+        ancestry,
+      },
+      agents: [reviewer],
+      projects: [project],
+      createdAt: "2026-05-07T00:01:00.000Z",
+      commandId: "remote-go-mismatched-project",
+    });
+
+    expect(unknown.ok).toBe(false);
+    expect(unknown.violations).toContain("task proposal unknown-project: projectId is unknown: missing");
+    expect(unknown.violations).toContain("task proposal unknown-project: projectId must match selected project context: missing != samantha");
+    expect(mismatched.ok).toBe(false);
+    expect(mismatched.violations).toContain("task proposal missing-project: projectId must match selected project context: (missing) != samantha");
+  });
+
+  test("question-only plans produce no tasks or actions", () => {
+    const result = materializeOrchestratorPlan({
+      plan: {
+        ...plan([], []),
+        status: "questions",
+        ancestry: {
+          mode: "unassigned",
+          workItemId: "request-needs-project",
+          reason: "BK has not selected a project yet",
+        },
+        payload: {
+          ...plan([], []).payload!,
+          questions: ["어느 project로 진행할까요?"],
+        },
+      },
+      agents: [worker],
+      projects: [project],
+      createdAt: "2026-05-07T00:01:00.000Z",
+      commandId: "remote-go-question-only",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.tasks).toEqual([]);
+    expect(result.actions).toEqual([]);
+  });
+
   test("materializes report-only specialists alongside a single writer", () => {
     const tasks = [
       proposal({ id: "shape-scope", title: "Shape acceptance criteria", targetAgent: "codex-spec" }),

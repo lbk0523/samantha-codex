@@ -163,10 +163,10 @@ export class OrchestrationRequestStore {
     return (await this.list()).slice().reverse().find((request) => request.status === "pending_plan");
   }
 
-  async markPlanned(id: string, plannedAt: string): Promise<OrchestrationRequestRecord> {
+  async markPlanned(id: string, plannedAt: string, input: { ancestry?: WorkItemAncestry } = {}): Promise<OrchestrationRequestRecord> {
     return this.update(id, (request) => {
       if (request.status !== "pending_plan") return request;
-      return { ...request, status: "planned", plannedAt };
+      return { ...request, ancestry: input.ancestry ?? request.ancestry, status: "planned", plannedAt };
     });
   }
 

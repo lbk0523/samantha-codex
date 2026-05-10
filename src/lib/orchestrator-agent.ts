@@ -8,6 +8,7 @@ import type {
   OrchestratorPlanRecord,
   OrchestratorSynthesisPayload,
 } from "./orchestrator-store";
+import { selectedProjectIdFromAncestry } from "./orchestration-ancestry";
 import type { RemoteActionRecord } from "./remote-action-store";
 import type { WorkerRunLog } from "./run-log";
 import { runCommand, type CommandRunResult } from "./worker-dispatch";
@@ -42,6 +43,7 @@ export function buildOrchestratorPrompt(input: {
   requestedScopeId?: string;
 }): string {
   const classification = classifyRemoteRequest(input.request.text);
+  const selectedProjectId = selectedProjectIdFromAncestry(input.request.ancestry);
   return [
     "You are the Samantha Orchestrator Agent.",
     "Your job is to make one bounded planning proposal for the deterministic Samantha CEO office.",
@@ -56,6 +58,17 @@ export function buildOrchestratorPrompt(input: {
     "Command hints:",
     input.requestedProjectId ? `- requested project: ${input.requestedProjectId}` : "- requested project: none",
     input.requestedScopeId ? `- requested scope: ${input.requestedScopeId}` : "- requested scope: none",
+    "",
+    "Selected ancestry context:",
+    input.request.ancestry
+      ? `- mode: ${input.request.ancestry.mode}`
+      : "- mode: legacy",
+    selectedProjectId ? `- projectId: ${selectedProjectId}` : "- projectId: none",
+    input.request.ancestry?.mode === "assigned" ? `- goalId: ${input.request.ancestry.goalId}` : "- goalId: none",
+    input.request.ancestry?.workItemId ? `- workItemId: ${input.request.ancestry.workItemId}` : `- workItemId: ${input.request.id}`,
+    selectedProjectId
+      ? `All executable task proposals must set projectId exactly to ${selectedProjectId}.`
+      : "Project context is unresolved; prefer blocking questions and leave tasks empty.",
     "",
     "Deterministic request classification:",
     `- intent: ${classification.intent}`,
@@ -419,6 +432,9 @@ function buildOrchestratorSynthesisPrompt(input: {
     "",
     `Request: ${input.request?.text ?? input.plan.requestId}`,
     `Plan: ${input.plan.id}`,
+    input.plan.ancestry?.mode === "assigned"
+      ? `Ancestry: project=${input.plan.ancestry.projectId} goal=${input.plan.ancestry.goalId} workItem=${input.plan.ancestry.workItemId}`
+      : `Ancestry: ${input.plan.ancestry?.mode ?? "legacy"}`,
     input.plan.payload ? `Original plan summary: ${input.plan.payload.summary}` : "Original plan summary: missing",
     "",
     "Samantha-provided evidence:",

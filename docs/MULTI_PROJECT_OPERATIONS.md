@@ -218,6 +218,35 @@ Verification focus:
   project
 - question-only and blocker-clarification plans do not create tasks or actions
 
+Outcome:
+
+- Added deterministic orchestration ancestry propagation through request
+  intake, orchestrator prompt context, structured plan records, materialized
+  task records, and materialized action records.
+- Request intake now assigns project, goal, and work-item ancestry when a
+  project can be selected from an explicit project id, a deterministic project
+  keyword match, or the existing single-profile fallback. Ambiguous
+  multi-project requests stay unassigned so the existing question-first flow is
+  preserved.
+- Orchestrator prompts now include the selected ancestry context and instruct
+  executable task proposals to use the selected project id. Synthesis prompts
+  also carry the plan ancestry as evidence context.
+- Materialization now rejects assigned plans whose task proposals use an
+  unknown project id, omit the selected project id, or name a different project
+  id. Plans with unassigned ancestry cannot materialize execution records.
+- Approved plan materialization copies the approved plan ancestry onto every
+  created task and dispatch action without changing writer cap, dispatch
+  authority, remote wrong-project guards, dashboard filters, or per-project
+  safety policy.
+- Recovery requests copy ancestry from the failed plan and include the failed
+  plan project's profile canonical repo root before action/run-log evidence
+  roots. Revision requests and blocker clarification decisions also preserve
+  the linked plan ancestry.
+- Added focused tests for orchestrator prompt ancestry, materializer ancestry
+  copy/rejection behavior, question-only no-materialization behavior,
+  `/work -> /plan -> /go` request/plan/task/action ancestry propagation, and
+  recovery request ancestry plus canonical project root usage.
+
 ## M5: Project-Isolated Queues And Reports
 
 Goal: make project-level queues visible without hiding the cross-project state

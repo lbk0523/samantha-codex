@@ -8,6 +8,7 @@ export interface RecoveryContextInput {
   actions: RemoteActionRecord[];
   failedActions: RemoteActionRecord[];
   request?: OrchestrationRequestRecord;
+  canonicalProjectRepoRoot?: string;
   runLogs: WorkerRunLog[];
   artifactPreviews: RemoteActionArtifactPreview[];
 }
@@ -32,7 +33,10 @@ export function buildRecoveryRequestText(input: RecoveryContextInput): string {
   const evidenceActions = failedActions.length ? failedActions : input.actions;
   const runLogForAction = (action: RemoteActionRecord) =>
     input.runLogs.find((log) => log.runId === action.result?.runId || log.task.id === action.taskId);
-  const canonicalRepoRoots = Array.from(new Set(evidenceActions.map((action) => action.repoRoot).filter(Boolean)));
+  const canonicalRepoRoots = Array.from(new Set([
+    input.canonicalProjectRepoRoot,
+    ...evidenceActions.map((action) => action.repoRoot),
+  ].filter((value): value is string => Boolean(value))));
   const changedFiles = Array.from(
     new Set(
       evidenceActions.flatMap((action) => {

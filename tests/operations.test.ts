@@ -1176,7 +1176,14 @@ describe("inbox and remote commands", () => {
     expect(goReport).toContain("`task-telegram-orchestration-plan`");
     expect(goReport).toContain("status=`approved`");
     const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
+    const expectedAncestry = {
+      mode: "assigned",
+      projectId: "omht",
+      goalId: "goal-omht-operations",
+      workItemId: "request-remote-plan-go",
+    };
     expect(actions[0]).toMatchObject({
+      ancestry: expectedAncestry,
       status: "approved",
       taskId: "task-telegram-orchestration-plan",
       repoRoot: "/repo/omht",
@@ -1187,15 +1194,18 @@ describe("inbox and remote commands", () => {
       .map((line) => JSON.parse(line) as TaskSpec);
     expect(taskRecords[0]).toMatchObject({
       id: "task-telegram-orchestration-plan",
+      ancestry: expectedAncestry,
       projectId: "omht",
       repoRoot: "/repo/omht",
       status: "pending",
       verifyCommands: ["bun test tests/operations.test.ts"],
     });
     expect(await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).find("request-remote-plan-go")).toMatchObject({
+      ancestry: expectedAncestry,
       status: "planned",
     });
     expect((await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).list())[0]).toMatchObject({
+      ancestry: expectedAncestry,
       requestId: "request-remote-plan-go",
       status: "materialized",
       taskIds: ["task-telegram-orchestration-plan"],
@@ -2332,6 +2342,12 @@ describe("inbox and remote commands", () => {
       `${JSON.stringify({
         schemaVersion: 1,
         id: "request-failed-plan",
+        ancestry: {
+          mode: "assigned",
+          projectId: "samantha",
+          goalId: "goal-samantha-operations",
+          workItemId: "request-failed-plan",
+        },
         source: "remote",
         senderId: "bk",
         text: "사만다 실패 복구 테스트",
@@ -2347,6 +2363,12 @@ describe("inbox and remote commands", () => {
       `${JSON.stringify({
         schemaVersion: 1,
         id: "plan-failed-result",
+        ancestry: {
+          mode: "assigned",
+          projectId: "samantha",
+          goalId: "goal-samantha-operations",
+          workItemId: "request-failed-plan",
+        },
         requestId: "request-failed-plan",
         status: "materialized",
         createdAt: "2026-05-06T10:05:00.000Z",
@@ -2407,12 +2429,19 @@ describe("inbox and remote commands", () => {
     const latestRequest = requests.at(-1);
     const recoveryText = String(latestRequest?.text ?? "");
     expect(latestRequest?.id).toMatch(/^request-20260506-102200-recover-plan-failed-result-[0-9a-f]{8}$/);
+    expect(latestRequest?.ancestry).toEqual({
+      mode: "assigned",
+      projectId: "samantha",
+      goalId: "goal-samantha-operations",
+      workItemId: "request-failed-plan",
+    });
     expect(latestRequest?.status).toBe("pending_plan");
     expect(recoveryText).toContain("무작정 retry하지 말고 복구 계획을 제안하세요.");
     expect(recoveryText).toContain("docs/recovery-note.md");
     expect(recoveryText).toContain(runLogPath);
     expect(recoveryText).toContain("# 실패 산출");
     expect(recoveryText).toContain("canonical repoRoot");
+    expect(recoveryText).toContain("samantha-codex");
     expect(recoveryText).toContain("worker worktree path를 repoRoot로 복사하지 마세요.");
   });
 

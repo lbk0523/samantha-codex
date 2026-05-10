@@ -66,6 +66,7 @@ export function createRemoteDispatchAction(input: {
   orchestratorPlanId?: string;
   orchestratorTaskId?: string;
   dependsOnActionIds?: string[];
+  ancestry?: WorkItemAncestry;
 }): RemoteActionRecord {
   return {
     schemaVersion: 1,
@@ -74,6 +75,7 @@ export function createRemoteDispatchAction(input: {
       taskId: input.task.id,
       commandId: input.commandId,
     }),
+    ancestry: input.ancestry ?? input.task.ancestry,
     kind: "dispatch_task",
     status: input.status ?? "pending",
     createdAt: input.createdAt,

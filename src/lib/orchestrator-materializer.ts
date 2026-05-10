@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./contracts";
+import { selectedProjectIdFromAncestry } from "./orchestration-ancestry";
 import { hostOnlyRuntimeViolations, planPayloadBlockerViolations } from "./orchestrator-blockers";
 import type { OrchestratorPlanRecord, OrchestratorTaskProposal } from "./orchestrator-store";
 import type { ProjectProfile } from "./project-profile";
@@ -39,8 +40,12 @@ export function materializeOrchestratorPlan(input: {
   const plannedActionIds = new Set<string>();
   const projectsById = new Map(input.projects.map((project) => [project.id, project]));
   const canonicalProjectRoots = new Set(input.projects.map((project) => normalizePath(project.repoRoot)));
+  const selectedProjectId = selectedProjectIdFromAncestry(input.plan.ancestry);
 
   if (input.plan.status !== "planned") violations.push(`orchestrator plan must be planned: ${input.plan.status}`);
+  if (input.plan.ancestry && input.plan.ancestry.mode !== "assigned") {
+    violations.push(`orchestrator plan must have assigned ancestry before materialization: ${input.plan.ancestry.mode}`);
+  }
   if (!payload) {
     violations.push("orchestrator plan payload is missing");
     return { ok: false, violations, tasks, actions };
@@ -82,11 +87,12 @@ export function materializeOrchestratorPlan(input: {
     proposalActionIds.set(
       proposal.id,
       createRemoteDispatchAction({
-        task: { ...taskFromProposal(proposal, input.projects), id: taskId },
+        task: { ...taskFromProposal(proposal, input.projects, input.plan.ancestry), id: taskId },
         repoRoot: proposal.repoRoot || input.projects.find((project) => project.id === proposal.projectId)?.repoRoot || "",
         createdAt: input.createdAt,
         source: "remote",
         commandId: `${input.commandId ?? input.plan.id}-${taskId}`,
+        ancestry: input.plan.ancestry,
       }).id,
     );
   }
@@ -94,13 +100,14 @@ export function materializeOrchestratorPlan(input: {
   violations.push(...validateUnmergedWriterDependencies(payload.tasks, input.agents, proposalBatchIndex));
 
   for (const proposal of payload.tasks) {
-    const task = taskFromProposal(proposal, input.projects);
+    const task = taskFromProposal(proposal, input.projects, input.plan.ancestry);
     const taskPrefix = `task proposal ${proposal.id}`;
     if (plannedTaskIds.has(task.id)) violations.push(`${taskPrefix} produces duplicate task id: ${task.id}`);
     if (existingTaskIds.has(task.id)) violations.push(`${taskPrefix} conflicts with existing task: ${task.id}`);
     plannedTaskIds.add(task.id);
 
     violations.push(...validateProposalRepoRoot(taskPrefix, proposal, projectsById, canonicalProjectRoots));
+    violations.push(...validateProposalProjectContext(taskPrefix, proposal, selectedProjectId));
     const fieldViolations = validateTaskProposal(taskPrefix, proposal, task, input.agents);
     violations.push(...fieldViolations);
 
@@ -117,6 +124,7 @@ export function materializeOrchestratorPlan(input: {
       orchestratorPlanId: input.plan.id,
       orchestratorTaskId: proposal.id,
       dependsOnActionIds,
+      ancestry: input.plan.ancestry,
     });
     if (plannedActionIds.has(action.id)) violations.push(`${taskPrefix} produces duplicate action id: ${action.id}`);
     if (existingActionIds.has(action.id)) violations.push(`${taskPrefix} conflicts with existing action: ${action.id}`);
@@ -253,10 +261,11 @@ function validateUnmergedWriterDependencies(
   return violations;
 }
 
-function taskFromProposal(proposal: OrchestratorTaskProposal, projects: ProjectProfile[]): TaskSpec {
+function taskFromProposal(proposal: OrchestratorTaskProposal, projects: ProjectProfile[], ancestry?: TaskSpec["ancestry"]): TaskSpec {
   const project = proposal.projectId ? projects.find((item) => item.id === proposal.projectId) : undefined;
   return {
     id: taskIdFromOrchestratorProposal(proposal.id),
+    ancestry,
     title: proposal.title.trim(),
     targetAgent: proposal.targetAgent.trim(),
     projectId: proposal.projectId,
@@ -269,6 +278,14 @@ function taskFromProposal(proposal: OrchestratorTaskProposal, projects: ProjectP
     resultMode: proposal.resultMode,
     status: "pending",
   };
+}
+
+function validateProposalProjectContext(prefix: string, proposal: OrchestratorTaskProposal, selectedProjectId: string | undefined): string[] {
+  if (!selectedProjectId) return [];
+  if (proposal.projectId !== selectedProjectId) {
+    return [`${prefix}: projectId must match selected project context: ${proposal.projectId ?? "(missing)"} != ${selectedProjectId}`];
+  }
+  return [];
 }
 
 function validateTaskProposal(prefix: string, proposal: OrchestratorTaskProposal, task: TaskSpec, agents: AgentProfile[]): string[] {

@@ -13,6 +13,12 @@ describe("orchestrator agent prompt", () => {
     const request: OrchestrationRequestRecord = {
       schemaVersion: 1,
       id: "request-1",
+      ancestry: {
+        mode: "assigned",
+        projectId: "omht",
+        goalId: "goal-omht-operations",
+        workItemId: "request-1",
+      },
       source: "remote",
       text: "보고서 작성 후 검증",
       senderId: "bk",
@@ -70,6 +76,11 @@ describe("orchestrator agent prompt", () => {
     expect(prompt).toContain("Put rejected paths in `rejectedAlternatives` as advisory context only");
     expect(prompt).toContain("Only `tasks` and `batches` represent the selected executable plan path.");
     expect(prompt).toContain("`/go` materializes only that selected task set.");
+    expect(prompt).toContain("Selected ancestry context:");
+    expect(prompt).toContain("- projectId: omht");
+    expect(prompt).toContain("- goalId: goal-omht-operations");
+    expect(prompt).toContain("- workItemId: request-1");
+    expect(prompt).toContain("All executable task proposals must set projectId exactly to omht.");
   });
 
   test("rejects unsafe or ambiguous plan payloads before state mutation", () => {
