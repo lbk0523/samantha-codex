@@ -114,6 +114,54 @@ async function writeJsonLines(path: string, items: unknown[]): Promise<void> {
   await writeFile(path, items.map((item) => JSON.stringify(item)).join("\n") + "\n", "utf8");
 }
 
+async function writeHealthyOpsState(root: string, stateDir: string): Promise<string> {
+  const now = new Date().toISOString();
+  const envFile = join(root, ".env.test");
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(
+    join(stateDir, "host-ownership.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        role: "active_automation_host",
+        hostId: "test-host",
+        updatedAt: now,
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(stateDir, "daemon.lock"),
+    `${JSON.stringify({ schemaVersion: 1, pid: process.pid, command: "inbox:watch", startedAt: now }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(stateDir, "heartbeat.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        pid: process.pid,
+        command: "inbox:watch",
+        status: "running",
+        lockPath: join(stateDir, "daemon.lock"),
+        inboxDir: join(root, "inbox"),
+        outboxDir: join(root, "outbox"),
+        archiveDir: join(root, "archive", "inbox"),
+        processedTotal: 0,
+        updatedAt: now,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(envFile, "TELEGRAM_BOT_TOKEN=test-token\nTELEGRAM_CHAT_ID=12345\nSAMANTHA_CODEX_BIN=bun\n", "utf8");
+  return envFile;
+}
+
 describe("CEO status snapshot", () => {
   test("empty state reports idle with deterministic sections", () => {
     const snapshot = buildCeoStatusSnapshot({ generatedAt: "2026-05-07T00:00:00.000Z" });
@@ -1082,5 +1130,123 @@ describe("CEO status snapshot", () => {
     expect(reportLedger).toEqual([
       expect.objectContaining({ generatedAt: "2026-05-07T11:00:00.000Z", outboxFile: files[0] }),
     ]);
+  });
+
+  test("CLI ceo notify coalesces repeated low-risk notifications into digest audit records", async () => {
+    const root = await makeRoot();
+    const stateDir = join(root, "state");
+    const outbox = join(root, "outbox");
+    const envFile = await writeHealthyOpsState(root, stateDir);
+
+    for (const createdAt of [
+      "2026-05-07T11:00:00.000Z",
+      "2026-05-07T11:00:00.000Z",
+      "2026-05-07T11:30:00.000Z",
+    ]) {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          "run",
+          "src/samantha.ts",
+          "ceo:notify",
+          `--state-dir=${stateDir}`,
+          `--outbox-dir=${outbox}`,
+          `--env-file=${envFile}`,
+          "--host-id=test-host",
+          `--created-at=${createdAt}`,
+        ],
+        { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+      );
+      expect(await new Response(proc.stderr).text()).toBe("");
+      expect(await proc.exited).toBe(0);
+    }
+
+    const files = await readdir(outbox);
+    expect(files).toHaveLength(1);
+    const records = (await readFile(join(stateDir, "ceo-reports.jsonl"), "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    expect(records.map((record) => record.kind)).toEqual(["ceo_notify", "notification_digest"]);
+    expect(records[0]).toMatchObject({
+      notificationUrgency: "low_risk",
+      throttleDecision: "delivered",
+    });
+    expect(records[1]).toMatchObject({
+      notificationUrgency: "low_risk",
+      throttleDecision: "coalesced_digest",
+      sourceReportId: records[0].id,
+      sourceOutboxFile: files[0],
+      coalescedCount: 1,
+    });
+  });
+
+  test("CLI ceo notify bypasses throttling when a BK decision appears", async () => {
+    const root = await makeRoot();
+    const stateDir = join(root, "state");
+    const outbox = join(root, "outbox");
+    const envFile = await writeHealthyOpsState(root, stateDir);
+
+    const first = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "ceo:notify",
+        `--state-dir=${stateDir}`,
+        `--outbox-dir=${outbox}`,
+        `--env-file=${envFile}`,
+        "--host-id=test-host",
+        "--created-at=2026-05-07T11:00:00.000Z",
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect(await new Response(first.stderr).text()).toBe("");
+    expect(await first.exited).toBe(0);
+
+    await writeJsonLines(join(stateDir, "decisions.jsonl"), [
+      createDecisionItem({
+        title: "Review plan: Mobile approval",
+        prompt: "Approve, revise, or cancel.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: "plan-mobile-approval" },
+        createdAt: "2026-05-07T11:30:00.000Z",
+      }),
+    ]);
+    await writeJsonLines(join(stateDir, "orchestrator-plans.jsonl"), [
+      { ...plan, id: "plan-mobile-approval", status: "planned" },
+    ]);
+
+    const urgent = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "ceo:notify",
+        `--state-dir=${stateDir}`,
+        `--outbox-dir=${outbox}`,
+        `--env-file=${envFile}`,
+        "--host-id=test-host",
+        "--created-at=2026-05-07T12:00:00.000Z",
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect(await new Response(urgent.stderr).text()).toBe("");
+    expect(await urgent.exited).toBe(0);
+
+    expect(await readdir(outbox)).toHaveLength(2);
+    const records = (await readFile(join(stateDir, "ceo-reports.jsonl"), "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    expect(records.map((record) => record.kind)).toEqual(["ceo_notify", "ceo_notify"]);
+    expect(records[1]).toMatchObject({
+      notificationUrgency: "urgent",
+      throttleDecision: "delivered",
+      overall: "needs_decision",
+      nextActionKind: "resolve_decision",
+    });
+    expect(records[1].throttleBypassReasons).toContain("pending BK decisions=1");
   });
 });

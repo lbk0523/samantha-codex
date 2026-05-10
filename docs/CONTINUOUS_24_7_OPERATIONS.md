@@ -382,7 +382,25 @@ Verification focus:
 
 Outcome:
 
-- Pending.
+- Added deterministic CEO notification throttle metadata to report audit
+  records: throttle key, urgency, delivery/coalescing decision, reason,
+  bypass reasons, and digest window bounds.
+- Added low-risk digest coalescing for repeated CEO notifications inside the
+  deterministic digest window. Coalesced repeats append `notification_digest`
+  audit records that point back to the delivered outbox file instead of
+  creating duplicate remote outbox reports.
+- Kept urgent notification classes deliverable: pending BK decisions, blocked
+  or recovery items, failures, unsafe host state, budget audit gaps, and
+  queue `block` / `needs_bk` pressure bypass throttling with recorded reasons.
+- Preserved existing outbox and Telegram delivery audit semantics: delivered
+  notifications still write remote outbox files and `ceo_notify` records;
+  digest records do not mark files sent or mutate delivery state.
+- Left work authority unchanged: throttling does not approve, reject, dispatch,
+  merge, push, cleanup, recover, create routine work, or mutate source-of-truth
+  work state.
+- Added focused tests for low-risk digest coalescing and urgent BK decision
+  bypass, and kept existing operator report, CEO status, Telegram adapter,
+  Telegram reply adapter, operating surface, and CEO report store tests passing.
 
 ## M8: Deterministic Budget Enforcement Gates
 

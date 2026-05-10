@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { WorkItemAncestry } from "../src/lib/ancestry";
-import { CeoReportStore, type CeoReportRecord } from "../src/lib/ceo-report-store";
+import { CeoReportStore, type CeoNotifyReportRecord, type CeoReportRecord } from "../src/lib/ceo-report-store";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import { buildDecisionHistorySummary } from "../src/lib/decision-history-summary";
 import { createDecisionItem } from "../src/lib/decision-store";
@@ -132,7 +132,7 @@ function projectBrief(): ProjectBriefRecord {
   };
 }
 
-function ceoReport(input: Partial<CeoReportRecord> = {}): CeoReportRecord {
+function ceoReport(input: Partial<CeoNotifyReportRecord> = {}): CeoReportRecord {
   return {
     schemaVersion: 1,
     id: "ceo-report-memory-context",

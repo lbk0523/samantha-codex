@@ -3,7 +3,16 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
 import { buildCeoStatusSnapshot, formatCeoStatusReport, type CeoStatusSnapshot } from "./lib/ceo-status";
-import { buildCeoReportId, CeoReportStore, type CeoReportRecord } from "./lib/ceo-report-store";
+import {
+  buildCeoReportId,
+  buildNotificationDigestId,
+  buildNotificationThrottleKey,
+  CeoReportStore,
+  classifyNotificationUrgency,
+  notificationDigestWindow,
+  type CeoNotifyReportRecord,
+  type CeoReportRecord,
+} from "./lib/ceo-report-store";
 import { CostBudgetAuditStore, createRunCostBudgetObservation, type CostBudgetAuditFilter, type CostDataKind } from "./lib/cost-budget-audit";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
 import {
@@ -1967,6 +1976,10 @@ async function writeCeoNotificationOutbox(
   createdAt: string,
 ): Promise<{ file: string; path: string; record: CeoReportRecord }> {
   const report = ceoNotificationReport(snapshot);
+  const throttleKey = buildNotificationThrottleKey(snapshot);
+  const urgency = classifyNotificationUrgency(snapshot);
+  const digestWindow = notificationDigestWindow({ generatedAt: createdAt });
+  const store = new CeoReportStore(ceoReportsPath(args));
   const file = compactOutboxFileName({
     createdAt,
     kind: "ceo-notify",
@@ -1975,7 +1988,19 @@ async function writeCeoNotificationOutbox(
   });
   const dir = outboxDir(args);
   const path = join(dir, file);
-  const record: CeoReportRecord = {
+  const throttleBase = {
+    throttleKey,
+    notificationUrgency: urgency.urgency,
+    throttleDecision: "delivered" as const,
+    throttleReason:
+      urgency.urgency === "urgent"
+        ? `urgent notification bypassed throttling: ${urgency.bypassReasons.join("; ")}`
+        : "first low-risk notification in digest window",
+    throttleBypassReasons: urgency.bypassReasons.length ? urgency.bypassReasons : undefined,
+    digestWindowStartedAt: digestWindow.startedAt,
+    digestWindowEndsAt: digestWindow.endsAt,
+  };
+  const record: CeoNotifyReportRecord = {
     schemaVersion: 1,
     id: buildCeoReportId({ generatedAt: createdAt, outboxFile: file, overall: snapshot.overall }),
     kind: "ceo_notify",
@@ -1989,11 +2014,47 @@ async function writeCeoNotificationOutbox(
     activeCount: snapshot.active.length,
     blockedCount: snapshot.blocked.length,
     riskCount: snapshot.risks.length,
+    ...throttleBase,
   };
-  const store = new CeoReportStore(ceoReportsPath(args));
   const existingRecord = await store.find(record.id);
   if (existingRecord) {
-    return { file: existingRecord.outboxFile, path: existingRecord.outboxPath, record: existingRecord };
+    if (existingRecord.kind === "ceo_notify") {
+      return { file: existingRecord.outboxFile, path: existingRecord.outboxPath, record: existingRecord };
+    }
+    return { file, path, record: existingRecord };
+  }
+  const existingDelivered =
+    urgency.urgency === "low_risk"
+      ? await store.findDeliveredInDigestWindow({ throttleKey, generatedAt: createdAt })
+      : undefined;
+  if (existingDelivered) {
+    const digestRecord: CeoReportRecord = {
+      schemaVersion: 1,
+      id: buildNotificationDigestId({
+        generatedAt: createdAt,
+        sourceReportId: existingDelivered.id,
+        throttleKey,
+      }),
+      kind: "notification_digest",
+      generatedAt: createdAt,
+      sourceReportId: existingDelivered.id,
+      sourceOutboxFile: existingDelivered.outboxFile,
+      coalescedCount: (await store.countDigestsForSource(existingDelivered.id)) + 1,
+      overall: snapshot.overall,
+      nextActionKind: snapshot.nextAction.kind,
+      decisionCount: snapshot.needsDecision.length,
+      activeCount: snapshot.active.length,
+      blockedCount: snapshot.blocked.length,
+      riskCount: snapshot.risks.length,
+      throttleKey,
+      notificationUrgency: "low_risk",
+      throttleDecision: "coalesced_digest",
+      throttleReason: `coalesced with ${existingDelivered.outboxFile} in ${digestWindow.startedAt}..${digestWindow.endsAt}`,
+      digestWindowStartedAt: digestWindow.startedAt,
+      digestWindowEndsAt: digestWindow.endsAt,
+    };
+    const persistedDigest = await store.append(digestRecord);
+    return { file: existingDelivered.outboxFile, path: existingDelivered.outboxPath, record: persistedDigest };
   }
   const persistedRecord = await store.append(record);
   await mkdir(dir, { recursive: true });
