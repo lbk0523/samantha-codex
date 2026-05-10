@@ -22,6 +22,8 @@ export interface RemoteActionRecord {
   schemaVersion: 1;
   id: string;
   ancestry?: WorkItemAncestry;
+  routineTriggerId?: string;
+  routineFingerprint?: string;
   kind: RemoteActionKind;
   status: RemoteActionStatus;
   createdAt: string;

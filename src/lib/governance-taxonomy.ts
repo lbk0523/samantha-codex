@@ -89,6 +89,7 @@ export const SOURCE_OF_TRUTH_RECORD_KINDS = [
   "learning_candidate",
   "recovery_context",
   "agent_profile",
+  "routine_trigger",
   "project_profile",
   "safety_policy",
 ] as const;

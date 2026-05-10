@@ -72,6 +72,8 @@ export interface AgentProfile {
 export interface TaskSpec {
   id: string;
   ancestry?: WorkItemAncestry;
+  routineTriggerId?: string;
+  routineFingerprint?: string;
   title: string;
   targetAgent: string;
   projectId?: string;

@@ -290,7 +290,25 @@ Verification focus:
 
 Outcome:
 
-- Pending.
+- Added a deterministic routine trigger contract for schedule-like,
+  webhook-like, and API-like intake records. Routine records require stable
+  trigger ids, project scope, source evidence, enabled status, risk class,
+  activation decision ids for enabled routines, deterministic fingerprint
+  inputs, and explicit intake-only authority flags.
+- Added stable routine fingerprints and coalescing across active orchestration
+  requests, plans, tasks, remote actions, and unresolved decisions. Duplicate
+  live fingerprints become coalesced observations instead of new active work.
+- Added append-only routine trigger and observation stores. Observations can be
+  recorded, coalesced, ignored because disabled, or ignored because stale; they
+  do not dispatch workers, approve work, create requests, merge, push, cleanup,
+  recover, bypass project gates, or expand connector/secret authority.
+- Routed routine activation through governed high-risk approval policy with
+  `routine_change` BK decision evidence and `routine_trigger` governance event
+  source support.
+- Added focused tests for deterministic fingerprints, intake-only authority,
+  duplicate fingerprint coalescing, disabled/stale observations, append-only
+  intake persistence, governed activation approval, and governance taxonomy
+  fixture coverage.
 
 ## M6: Routine Intake Through Existing Gates
 

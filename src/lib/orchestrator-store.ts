@@ -13,6 +13,8 @@ export interface OrchestrationRequestRecord {
   schemaVersion: 1;
   id: string;
   ancestry?: WorkItemAncestry;
+  routineTriggerId?: string;
+  routineFingerprint?: string;
   source: "remote" | "local";
   senderId?: string;
   text: string;
@@ -118,6 +120,8 @@ export interface OrchestratorPlanRecord {
   schemaVersion: 1;
   id: string;
   ancestry?: WorkItemAncestry;
+  routineTriggerId?: string;
+  routineFingerprint?: string;
   requestId: string;
   status: OrchestratorPlanStatus;
   createdAt: string;

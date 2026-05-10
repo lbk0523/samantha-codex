@@ -15,6 +15,7 @@ export type RiskDecisionKind =
   | "risk_acceptance"
   | "agent_profile_change"
   | "capability_change"
+  | "routine_change"
   | "memory_change";
 
 export interface RiskApprovalEvidenceSubject {

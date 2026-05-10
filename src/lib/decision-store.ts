@@ -15,6 +15,7 @@ export type DecisionKind =
   | "risk_acceptance"
   | "agent_profile_change"
   | "capability_change"
+  | "routine_change"
   | "memory_change";
 export type DecisionResolution = "approved" | "rejected" | "needs_revision" | "answered" | "canceled";
 export type DecisionSubjectType =
@@ -25,6 +26,7 @@ export type DecisionSubjectType =
   | "run"
   | "agent_profile"
   | "capability"
+  | "routine"
   | "policy"
   | "memory";
 
@@ -37,6 +39,8 @@ export interface DecisionItem {
   schemaVersion: 1;
   id: string;
   ancestry?: WorkItemAncestry;
+  routineTriggerId?: string;
+  routineFingerprint?: string;
   status: DecisionStatus;
   kind: DecisionKind;
   title: string;
