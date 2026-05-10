@@ -560,15 +560,66 @@ Outcome:
   command authority, connector authority, secret authority, merge/push/cleanup/
   recovery authority, or host active-active runtime.
 
+## M11: Post-Review Consistency Fixes
+
+Goal: close the five Phase 9 code-review gaps without expanding runtime
+authority.
+
+Focus:
+
+- recheck queue, host, and budget admission immediately before approved actions
+  move to `running`
+- keep routine trigger coalescing limited to live active work, not completed
+  historical routine records
+- pass specific budget context for action admission and allow aggregate status
+  views to evaluate approved non-project scoped policies when matching
+  observations exist
+- connect Phase 9 `budget_change` / `routine_change` decision kinds and
+  `budget` / `routine` subjects through the local governance CLI
+- parse and validate routine trigger and observation state during restore
+  validation
+
+Verification focus:
+
+- approved actions remain approved and do not dispatch when admission is blocked
+- completed routine requests/plans/tasks/actions do not permanently suppress
+  later observations
+- action-scoped budget policies can block action admission
+- budget and routine approval decisions create `transition_approved`
+  governance events
+- restore validation catches malformed routine records, missing routine
+  activation governance, and observation-to-trigger gaps
+
+Outcome:
+
+- Added a final action-runner admission check before `markRunning` and before
+  waiting actions become approved. Blocked actions stay in state instead of
+  being dispatched.
+- Narrowed routine active-work matching to pending requests, planned/question
+  plans, pending/in-progress tasks, pending/waiting/approved/running actions,
+  and unresolved decisions.
+- Extended budget evaluation context through queue pressure so action-scoped
+  policies and aggregate policy views are not silently ignored.
+- Allowed local `decisions:create` and approval resolution for
+  `budget_change` / `routine_change`, emitting append-only governance events
+  for `budget` and `routine` subjects.
+- Extended restore validation to parse routine trigger and observation files,
+  verify activation governance for enabled routines, and detect observations
+  pointing at missing or mismatched triggers.
+- Focused M11 tests passed:
+  `bun test tests/routine-trigger-store.test.ts tests/queue-pressure.test.ts
+  tests/governance-decision-cli.test.ts tests/backup-restore.test.ts
+  tests/remote-approval.test.ts`.
+
 ## Phase 9 Exit Review
 
 | Exit criterion | Status | Evidence |
 | --- | --- | --- |
 | Samantha can run for long periods on the active automation host without manual babysitting. | Met for Phase 9 scope. Host ownership, service template, heartbeat, lock, inbox, Telegram reply, outbox, and environment diagnostics are machine-checkable and exposed through `doctor` and `/problems`. Long-run safety is enforced by deterministic stops rather than silent repair. | M2/M3 outcomes above; [tests/ops-diagnostics.test.ts](../tests/ops-diagnostics.test.ts); [tests/continuous-operations-exit.test.ts](../tests/continuous-operations-exit.test.ts); [docs/DAEMON_OPERATIONS.md](DAEMON_OPERATIONS.md#watchdog-diagnostics) |
 | Host failures produce actionable reports instead of silent stalls. | Met. Watchdog diagnostics classify stale, blocked, degraded, needs-BK, and unsafe-to-continue issues with next safe actions and secret redaction. | M3 outcome above; [src/lib/ops-diagnostics.ts](../src/lib/ops-diagnostics.ts); [tests/operator-reports.test.ts](../tests/operator-reports.test.ts) |
-| Routine triggers do not create duplicate active work for the same live fingerprint. | Met. Routine observations coalesce against active requests, plans, tasks, actions, and unresolved decisions. Accepted observations can create only one pending orchestration request and cannot dispatch workers directly. | M5/M6 outcomes above; [src/lib/routine-trigger-store.ts](../src/lib/routine-trigger-store.ts); [tests/routine-trigger-store.test.ts](../tests/routine-trigger-store.test.ts); [tests/continuous-operations-exit.test.ts](../tests/continuous-operations-exit.test.ts) |
-| Budget and queue pressure can stop or defer work through deterministic policy instead of hidden agent judgment. | Met. Queue pressure classifies overload, unsafe host state, BK decisions, recovery needs, lifecycle gaps, outbox backlog, and budget audit gaps. Budget enforcement requires approved local policies and distinguishes measured, estimated, and unknown cost. | M4/M8 outcomes above; [src/lib/queue-pressure.ts](../src/lib/queue-pressure.ts); [src/lib/cost-budget-audit.ts](../src/lib/cost-budget-audit.ts); [tests/queue-pressure.test.ts](../tests/queue-pressure.test.ts); [tests/cost-budget-audit.test.ts](../tests/cost-budget-audit.test.ts) |
-| State can be backed up, restored, and audited. | Met. Backup manifests record hashes, restore-required files, project profiles, host-owned runtime artifacts, and restore authority flags. Restore validation catches missing files, malformed records, duplicate ids, broken ancestry, governance gaps, lifecycle gaps, and stale host ownership. | M9 outcome above; [src/lib/backup-restore.ts](../src/lib/backup-restore.ts); [tests/backup-restore.test.ts](../tests/backup-restore.test.ts) |
+| Routine triggers do not create duplicate active work for the same live fingerprint. | Met. Routine observations coalesce against live active requests, plans, tasks, actions, and unresolved decisions. Completed historical routine work does not permanently suppress future observations. Accepted observations can create only one pending orchestration request and cannot dispatch workers directly. | M5/M6/M11 outcomes above; [src/lib/routine-trigger-store.ts](../src/lib/routine-trigger-store.ts); [tests/routine-trigger-store.test.ts](../tests/routine-trigger-store.test.ts); [tests/continuous-operations-exit.test.ts](../tests/continuous-operations-exit.test.ts) |
+| Budget and queue pressure can stop or defer work through deterministic policy instead of hidden agent judgment. | Met. Queue pressure classifies overload, unsafe host state, BK decisions, recovery needs, lifecycle gaps, outbox backlog, and budget audit gaps. Budget enforcement requires approved local policies, distinguishes measured, estimated, and unknown cost, and rechecks action admission before dispatch. | M4/M8/M11 outcomes above; [src/lib/queue-pressure.ts](../src/lib/queue-pressure.ts); [src/lib/cost-budget-audit.ts](../src/lib/cost-budget-audit.ts); [tests/queue-pressure.test.ts](../tests/queue-pressure.test.ts); [tests/cost-budget-audit.test.ts](../tests/cost-budget-audit.test.ts); [tests/remote-approval.test.ts](../tests/remote-approval.test.ts) |
+| State can be backed up, restored, and audited. | Met. Backup manifests record hashes, restore-required files, project profiles, host-owned runtime artifacts, and restore authority flags. Restore validation catches missing files, malformed records, duplicate ids, broken ancestry, governance gaps, lifecycle gaps, stale host ownership, and routine trigger/observation gaps. | M9/M11 outcomes above; [src/lib/backup-restore.ts](../src/lib/backup-restore.ts); [tests/backup-restore.test.ts](../tests/backup-restore.test.ts) |
 | BK can recover or migrate the system from another machine with documented steps. | Met as a validation and handoff drill, not automatic migration. Migration validation blocks active-active host ownership, and daemon docs require old services to stop before enabling the new host. | M9 outcome above; [docs/DAEMON_OPERATIONS.md](DAEMON_OPERATIONS.md#backup-restore-and-host-migration-drills); [tests/backup-restore.test.ts](../tests/backup-restore.test.ts); [tests/continuous-operations-exit.test.ts](../tests/continuous-operations-exit.test.ts) |
 
 ## Dogfood And Drill Evidence
@@ -577,10 +628,10 @@ Outcome:
 | --- | --- | --- |
 | Host watchdogs | `tests/ops-diagnostics.test.ts` and the M10 exit drill exercise missing, client, stale, and unsafe host ownership; stale heartbeat; missing lock; dead pids; stuck inbox; missing service templates; and redacted Telegram reply failures. | Met. Failures are reported with next safe actions and no runtime mutation. |
 | Queue pressure | `tests/project-queues.test.ts`, `tests/queue-pressure.test.ts`, and the M10 exit drill cover unsafe host blocking, pending BK decisions outranking routine intake, recovery blockers, active action deferral, budget audit gaps, and outbox backlog. | Met. Admission decisions are deterministic and audit-visible. |
-| Routine coalescing | `tests/routine-trigger-store.test.ts` plus the M10 exit drill create an accepted routine request, then prove the duplicate live fingerprint is coalesced and cannot create another request. | Met. Routine triggers remain intake-only. |
+| Routine coalescing | `tests/routine-trigger-store.test.ts` plus the M10 exit drill create an accepted routine request, then prove the duplicate live fingerprint is coalesced and cannot create another request. M11 adds a negative case proving completed historical work does not coalesce forever. | Met. Routine triggers remain intake-only. |
 | Notification throttling | `tests/ceo-status.test.ts` covers low-risk digest records and urgent BK decision bypass; the M10 exit drill verifies digest-window and urgency classification helpers. | Met. Low-risk repeats coalesce, urgent changes deliver. |
-| Budget block and defer | `tests/cost-budget-audit.test.ts`, `tests/queue-pressure.test.ts`, `tests/ceo-status.test.ts`, and the M10 exit drill cover unknown-cost defer, known-cost block, governance evidence, and queue admission effects. | Met. Unknown cost is not treated as zero. |
-| Backup and restore | `tests/backup-restore.test.ts` plus the M10 exit drill cover deterministic manifests, manifest hash validation, malformed records, duplicate ids, ancestry gaps, governance gaps, lifecycle gaps, stale host ownership, and read-only restore authority. | Met. Restore validation does not activate or mutate state. |
+| Budget block and defer | `tests/cost-budget-audit.test.ts`, `tests/queue-pressure.test.ts`, `tests/ceo-status.test.ts`, `tests/remote-approval.test.ts`, and the M10 exit drill cover unknown-cost defer, known-cost block, action-scoped context, governance evidence, and queue admission effects before action dispatch. | Met. Unknown cost is not treated as zero. |
+| Backup and restore | `tests/backup-restore.test.ts` plus the M10 exit drill cover deterministic manifests, manifest hash validation, malformed records, duplicate ids, ancestry gaps, governance gaps, routine trigger gaps, lifecycle gaps, stale host ownership, and read-only restore authority. | Met. Restore validation does not activate or mutate state. |
 | Host migration | `tests/backup-restore.test.ts` and the M10 exit drill block active-active ownership and allow handoff only after the old host is no longer active. | Met. Exactly one automation host remains the contract. |
 
 ## Authority Review
@@ -636,6 +687,13 @@ It did not change host-owned daemon/watch/poll/reply/service-template runtime
 behavior or runtime state, so active-host `bun run verify:host` is not required
 for this M10 review. Run host verification later only when a host-owned runtime
 change is made on the active automation host.
+
+M11 Mac-side focused run on 2026-05-10:
+
+- `bun test tests/routine-trigger-store.test.ts tests/queue-pressure.test.ts
+  tests/governance-decision-cli.test.ts tests/backup-restore.test.ts
+  tests/remote-approval.test.ts` passed: 31 tests, 0 failures.
+- `bun run typecheck` passed.
 
 ## Stage Handoff Prompts
 
@@ -843,3 +901,22 @@ do not add multi-writer execution, and do not expand connector/secret
 authority. Run `bun run verify:docs`, `bun run verify:mac`, and host
 verification when host-owned behavior was touched on the active automation
 host.
+
+### M11 Prompt
+
+Perform Phase 9 M11 from `docs/CONTINUOUS_24_7_OPERATIONS.md`.
+
+먼저 읽을 문서/코드/테스트: `AGENTS.md`, the Phase 9 M11 section above,
+`src/samantha.ts`, `src/lib/queue-pressure.ts`,
+`src/lib/cost-budget-audit.ts`, `src/lib/routine-trigger-store.ts`,
+`src/lib/backup-restore.ts`, `tests/routine-trigger-store.test.ts`,
+`tests/queue-pressure.test.ts`, `tests/governance-decision-cli.test.ts`,
+`tests/backup-restore.test.ts`, and `tests/remote-approval.test.ts`.
+
+Close only the five reviewed consistency gaps: action-runner admission recheck,
+completed-work routine coalescing, non-project budget context, budget/routine
+governance CLI approval events, and routine restore validation. Keep
+`writerCap` at `1`, do not add provider billing integration, direct routine
+dispatch, connector/secret authority, merge, push, cleanup, recovery, restore
+activation, or host active-active runtime. Run the focused M11 test set,
+`bun run typecheck`, `bun run verify:docs`, and `bun run verify:mac`.

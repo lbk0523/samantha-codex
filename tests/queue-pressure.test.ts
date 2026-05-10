@@ -57,6 +57,52 @@ function approvedBudgetPolicy() {
   return { policy, decision, event };
 }
 
+function approvedActionBudgetPolicy(actionId: string) {
+  const policy = createBudgetPolicyRecord({
+    id: `budget-policy-${actionId}`,
+    createdAt: "2026-05-10T01:00:00.000Z",
+    status: "active",
+    scope: { type: "action", id: actionId },
+    thresholds: { currency: "USD", blockAtAmount: 2 },
+    governance: {
+      decisionId: `decision-budget-policy-${actionId}`,
+      governanceEventId: `gov-event-budget-policy-${actionId}`,
+      approvedBy: "bk",
+      approvedAt: "2026-05-10T01:02:00.000Z",
+      summary: "BK approved deterministic action budget policy.",
+    },
+  });
+  const decision = {
+    ...createDecisionItem({
+      kind: "budget_change",
+      title: "Approve action budget policy",
+      prompt: "Approve deterministic action budget enforcement.",
+      source: "system",
+      subject: { type: "budget", id: policy.id },
+      options: ["approve", "reject"],
+      createdAt: "2026-05-10T01:01:00.000Z",
+    }),
+    id: policy.governance!.decisionId,
+    status: "resolved" as const,
+    resolution: "approved" as const,
+    resolvedBy: "bk" as const,
+    resolvedAt: "2026-05-10T01:02:00.000Z",
+    updatedAt: "2026-05-10T01:02:00.000Z",
+  };
+  const event = createGovernanceEvent({
+    id: policy.governance!.governanceEventId,
+    timestamp: "2026-05-10T01:02:00.000Z",
+    actor: "bk",
+    source: { kind: "decision", id: decision.id },
+    subject: { type: "budget", id: policy.id },
+    kind: "transition_approved",
+    riskClass: "high",
+    summary: "Action budget policy approved.",
+    related: { decisionIds: [decision.id] },
+  });
+  return { policy, decision, event };
+}
+
 describe("queue pressure budget enforcement", () => {
   test("unknown cost defers intake when an approved policy applies", () => {
     const { policy, decision, event } = approvedBudgetPolicy();
@@ -116,5 +162,31 @@ describe("queue pressure budget enforcement", () => {
     expect(pressure.budget?.state).toBe("needs_bk");
     expect(admission.decision).toBe("ask_bk");
     expect(admission.reason).toContain("pending BK decisions=1");
+  });
+
+  test("action-scoped budget policies enforce through action admission context", () => {
+    const { policy, decision, event } = approvedActionBudgetPolicy("action-over-budget");
+    const pressure = buildQueuePressureSnapshot({
+      decisions: [decision],
+      governanceEvents: [event],
+      budgetPolicies: [policy],
+      budgetObservations: [
+        createCostBudgetAuditRecord({
+          ancestry,
+          observedAt: "2026-05-10T01:03:00.000Z",
+          actor: "operator",
+          subject: { type: "action", id: "action-over-budget" },
+          cost: { kind: "estimated", amount: 2.5, currency: "USD", basis: "manual estimate" },
+          context: { projectId: "samantha", actionId: "action-over-budget" },
+        }),
+      ],
+    }, {
+      projectId: "samantha",
+      budgetContext: { projectId: "samantha", actionId: "action-over-budget" },
+    });
+    const admission = decideQueueAdmission({ pressure, subjectKind: "action" });
+
+    expect(pressure.budget?.state).toBe("block");
+    expect(admission.decision).toBe("block");
   });
 });

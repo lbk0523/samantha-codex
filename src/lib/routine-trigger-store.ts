@@ -365,15 +365,15 @@ export function parseRoutineTriggerRecord(value: unknown): RoutineTriggerRecord 
 }
 
 function isActiveRequest(record: OrchestrationRequestRecord): boolean {
-  return record.status === "pending_plan" || record.status === "planned";
+  return record.status === "pending_plan";
 }
 
 function isActivePlan(record: OrchestratorPlanRecord): boolean {
-  return record.status !== "superseded" && record.status !== "canceled";
+  return record.status === "planned" || record.status === "questions";
 }
 
 function isActiveTask(record: TaskSpec): boolean {
-  return record.status !== "completed" && record.status !== "archived";
+  return record.status === "pending" || record.status === "in_progress";
 }
 
 function isActiveAction(record: RemoteActionRecord): boolean {

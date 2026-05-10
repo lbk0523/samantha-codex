@@ -118,6 +118,85 @@ describe("governed decision approvals", () => {
     await expect(readFile(join(state, "memory.jsonl"), "utf8")).rejects.toThrow("ENOENT");
   });
 
+  test("creates budget and routine governed approvals with transition audit events", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-phase9-governance-cli-"));
+    tmpRoots.push(root);
+    const state = join(root, "state");
+
+    async function run(args: string[]) {
+      const proc = Bun.spawn(["bun", "run", "src/samantha.ts", ...args, `--state-dir=${state}`], {
+        cwd: process.cwd(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+      return stdout;
+    }
+
+    const budget = JSON.parse(await run([
+      "decisions:create",
+      "--kind=budget_change",
+      "--subject-type=budget",
+      "--subject-id=budget-policy-m11",
+      "--title=Approve M11 budget policy",
+      "--prompt=Approve deterministic budget policy activation.",
+      "--risk=high",
+      "--created-at=2026-05-10T06:00:00.000Z",
+    ])) as { id: string; kind: string; subject: { type: string; id: string } };
+    const routine = JSON.parse(await run([
+      "decisions:create",
+      "--kind=routine_change",
+      "--subject-type=routine",
+      "--subject-id=routine-m11",
+      "--title=Approve M11 routine trigger",
+      "--prompt=Approve deterministic routine trigger activation.",
+      "--risk=high",
+      "--created-at=2026-05-10T06:01:00.000Z",
+    ])) as { id: string; kind: string; subject: { type: string; id: string } };
+
+    expect(budget).toMatchObject({ kind: "budget_change", subject: { type: "budget", id: "budget-policy-m11" } });
+    expect(routine).toMatchObject({ kind: "routine_change", subject: { type: "routine", id: "routine-m11" } });
+
+    await run([
+      "decisions:resolve",
+      budget.id,
+      "--resolution=approved",
+      "--resolved-at=2026-05-10T06:02:00.000Z",
+      "--note=Approved budget policy activation.",
+    ]);
+    await run([
+      "decisions:resolve",
+      routine.id,
+      "--resolution=approved",
+      "--resolved-at=2026-05-10T06:03:00.000Z",
+      "--note=Approved routine trigger activation.",
+    ]);
+
+    const events = (await readFile(join(state, "governance-events.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { kind: string; subject: { type: string; id: string }; related?: { decisionIds?: string[] } });
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "transition_approved",
+          subject: { type: "budget", id: "budget-policy-m11" },
+          related: { decisionIds: [budget.id] },
+        }),
+        expect.objectContaining({
+          kind: "transition_approved",
+          subject: { type: "routine", id: "routine-m11" },
+          related: { decisionIds: [routine.id] },
+        }),
+      ]),
+    );
+  });
+
   test("records approver timestamp risk class and diff summary in the append-only governance audit", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-governed-decision-"));
     tmpRoots.push(root);

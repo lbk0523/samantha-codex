@@ -212,6 +212,80 @@ describe("routine trigger contract", () => {
     expect("actionId" in observation).toBe(false);
   });
 
+  test("does not coalesce against completed historical routine work", () => {
+    const trigger = triggerFixture();
+    const request: OrchestrationRequestRecord = {
+      schemaVersion: 1,
+      id: "request-planned",
+      source: "local",
+      text: "Historical routine-created request.",
+      status: "planned",
+      createdAt: "2026-05-10T01:01:00.000Z",
+      routineTriggerId: trigger.triggerId,
+      routineFingerprint: trigger.fingerprint,
+    };
+    const plan: OrchestratorPlanRecord = {
+      schemaVersion: 1,
+      id: "plan-materialized",
+      requestId: request.id,
+      status: "materialized",
+      createdAt: "2026-05-10T01:02:00.000Z",
+      materializedAt: "2026-05-10T01:03:00.000Z",
+      routineTriggerId: trigger.triggerId,
+      routineFingerprint: trigger.fingerprint,
+    };
+    const task: TaskSpec = {
+      id: "task-completed",
+      title: "Completed routine task",
+      targetAgent: "codex-worker",
+      targetFiles: ["src/lib/routine-trigger-store.ts"],
+      forbiddenChanges: ["state/**"],
+      verifyCommands: ["bun test tests/routine-trigger-store.test.ts"],
+      instructions: "Fixture.",
+      status: "completed",
+      routineTriggerId: trigger.triggerId,
+      routineFingerprint: trigger.fingerprint,
+    };
+    const action: RemoteActionRecord = {
+      schemaVersion: 1,
+      id: "action-completed",
+      kind: "dispatch_task",
+      status: "completed",
+      createdAt: "2026-05-10T01:03:00.000Z",
+      source: "local",
+      taskId: task.id,
+      taskTitle: task.title,
+      targetAgent: task.targetAgent,
+      repoRoot: ".",
+      allocate: true,
+      execute: true,
+      tmux: true,
+      routineTriggerId: trigger.triggerId,
+      routineFingerprint: trigger.fingerprint,
+      result: { pass: true },
+    };
+
+    const observation = createRoutineTriggerObservation({
+      trigger,
+      observedAt: "2026-05-10T02:05:00.000Z",
+      activeWork: {
+        requests: [request],
+        plans: [plan],
+        tasks: [task],
+        actions: [action],
+      },
+    });
+
+    expect(findRoutineFingerprintMatches({
+      fingerprint: trigger.fingerprint,
+      requests: [request],
+      plans: [plan],
+      tasks: [task],
+      actions: [action],
+    })).toEqual([]);
+    expect(observation.status).toBe("recorded");
+  });
+
   test("records disabled and stale routine observations without enqueueing work", () => {
     const disabled = createRoutineTriggerObservation({
       trigger: triggerFixture({ enabled: false }),

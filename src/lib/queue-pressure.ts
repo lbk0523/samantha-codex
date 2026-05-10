@@ -2,6 +2,7 @@ import type { WorkItemAncestry } from "./ancestry";
 import type { TaskSpec } from "./contracts";
 import {
   evaluateBudgetEnforcement,
+  budgetPolicyAppliesToContext,
   type BudgetEnforcementDecision,
   type BudgetEvaluationContext,
   type BudgetPolicyRecord,
@@ -216,7 +217,7 @@ function mergeBudgetPressure(input: {
   };
 }
 
-export function buildQueuePressureSnapshot(input: QueuePressureInput = {}, options: { projectId?: string } = {}): QueuePressureSnapshot {
+export function buildQueuePressureSnapshot(input: QueuePressureInput = {}, options: { projectId?: string; budgetContext?: BudgetEvaluationContext } = {}): QueuePressureSnapshot {
   const requests = filterProject(input.requests, options.projectId);
   const plans = filterProject(input.plans, options.projectId);
   const decisions = filterProject(input.decisions, options.projectId);
@@ -226,7 +227,7 @@ export function buildQueuePressureSnapshot(input: QueuePressureInput = {}, optio
   const runs = filterProject(input.runs, options.projectId);
   const lifecycles = filterProject(input.lifecycles, options.projectId);
   const budgetObservations = filterProject(input.budgetObservations, options.projectId);
-  const budgetContext: BudgetEvaluationContext = { projectId: options.projectId };
+  const budgetContext: BudgetEvaluationContext = { projectId: options.projectId, ...options.budgetContext };
   const budget = evaluateBudgetEnforcement({
     policies: input.budgetPolicies,
     observations: input.budgetObservations,
@@ -266,6 +267,19 @@ export function buildQueuePressureSnapshot(input: QueuePressureInput = {}, optio
     reasons: classification.reasons,
     budget,
   };
+}
+
+export function findBudgetPolicyForGate(input: {
+  policies: BudgetPolicyRecord[];
+  decision: BudgetEnforcementDecision;
+  context?: BudgetEvaluationContext;
+  observations?: CostBudgetAuditRecord[];
+}): BudgetPolicyRecord | undefined {
+  return input.decision.policyEvaluations[0]?.policy ??
+    input.policies.find((policy) =>
+      policy.status !== "disabled" &&
+      budgetPolicyAppliesToContext(policy, input.context ?? {}, input.observations ?? [])
+    );
 }
 
 export function decideQueueAdmission(input: {

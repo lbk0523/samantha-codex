@@ -7,6 +7,10 @@ import {
   validateHostMigration,
   validateRestore,
 } from "../src/lib/backup-restore";
+import {
+  createRoutineTriggerObservation,
+  createRoutineTriggerRecord,
+} from "../src/lib/routine-trigger-store";
 
 let tmpRoots: string[] = [];
 
@@ -264,6 +268,52 @@ describe("backup, restore, and host migration drills", () => {
       expect.arrayContaining([
         expect.objectContaining({ code: "governance_gap", message: expect.stringContaining("gov-event-missing") }),
         expect.objectContaining({ code: "stale_host_ownership", message: expect.stringContaining("expired") }),
+      ]),
+    );
+  });
+
+  test("restore validation parses routine triggers and observations", async () => {
+    const root = await makeRoot();
+    const trigger = createRoutineTriggerRecord({
+      triggerId: "daily-review",
+      sourceKind: "schedule",
+      projectId: "samantha",
+      enabled: true,
+      riskClass: "medium",
+      sourceEvidence: ["docs/CONTINUOUS_24_7_OPERATIONS.md M11"],
+      fingerprintInputs: [{ key: "cadence", value: "daily" }],
+      activationDecisionId: "decision-missing-routine-activation",
+      createdAt: "2026-05-10T02:00:00.000Z",
+    });
+    const observation = {
+      ...createRoutineTriggerObservation({
+        trigger,
+        observedAt: "2026-05-10T02:05:00.000Z",
+      }),
+      routineId: "routine-missing",
+    };
+    await writeJsonl(join(root, "state", "routine-triggers.jsonl"), [trigger]);
+    await writeJsonl(join(root, "state", "routine-trigger-observations.jsonl"), [observation]);
+
+    const result = await validateRestore({
+      root,
+      currentHostId: "host-a",
+      checkedAt: "2026-05-10T02:10:00.000Z",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "governance_gap",
+          path: "state/routine-triggers.jsonl",
+          message: expect.stringContaining("activation governance is invalid"),
+        }),
+        expect.objectContaining({
+          code: "broken_ancestry",
+          path: "state/routine-trigger-observations.jsonl",
+          message: expect.stringContaining("references missing trigger"),
+        }),
       ]),
     );
   });

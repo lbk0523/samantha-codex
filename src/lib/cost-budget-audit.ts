@@ -826,8 +826,30 @@ function budgetScopeValueForRecord(record: CostBudgetAuditRecord, scope: BudgetP
   return undefined;
 }
 
-function policyAppliesToContext(policy: BudgetPolicyRecord, context: BudgetEvaluationContext): boolean {
-  return budgetScopeValueForContext(context, policy.scope) === policy.scope.id;
+function contextHasBudgetScope(context: BudgetEvaluationContext): boolean {
+  return Boolean(
+    context.projectId ??
+    context.goalId ??
+    context.workItemId ??
+    context.runId ??
+    context.actionId ??
+    context.model ??
+    context.provider,
+  );
+}
+
+export function budgetPolicyAppliesToContext(
+  policy: BudgetPolicyRecord,
+  context: BudgetEvaluationContext,
+  observations: CostBudgetAuditRecord[] = [],
+): boolean {
+  const scopedValue = budgetScopeValueForContext(context, policy.scope);
+  if (scopedValue !== undefined) return scopedValue === policy.scope.id;
+  if (!contextHasBudgetScope(context)) return true;
+  if (!context.projectId) return false;
+  return observations.some((record) =>
+    policyMatchesRecord(policy, record) && projectIdForCostBudgetRecord(record) === context.projectId
+  );
 }
 
 function policyMatchesRecord(policy: BudgetPolicyRecord, record: CostBudgetAuditRecord): boolean {
@@ -958,7 +980,9 @@ export function evaluateBudgetEnforcement(input: {
   governanceEvents?: GovernanceEventRecord[];
 }): BudgetEnforcementDecision {
   const context = input.context ?? {};
-  const policies = (input.policies ?? []).filter((policy) => policy.status !== "disabled" && policyAppliesToContext(policy, context));
+  const policies = (input.policies ?? []).filter((policy) =>
+    policy.status !== "disabled" && budgetPolicyAppliesToContext(policy, context, input.observations ?? [])
+  );
   if (!policies.length) {
     return {
       state: "ok",

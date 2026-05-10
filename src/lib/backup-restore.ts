@@ -21,6 +21,13 @@ import type { RunSummary } from "./ledger";
 import type { GovernedMemoryRecord } from "./memory-store";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "./orchestrator-store";
 import type { RemoteActionRecord } from "./remote-action-store";
+import {
+  parseRoutineTriggerObservationRecord,
+  parseRoutineTriggerRecord,
+  routineActivationPolicy,
+  type RoutineTriggerObservationRecord,
+  type RoutineTriggerRecord,
+} from "./routine-trigger-store";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
 import type { TaskSpec } from "./contracts";
 
@@ -423,6 +430,7 @@ function governanceGapIssues(input: {
   events: GovernanceEventRecord[];
   memory: GovernedMemoryRecord[];
   budgetPolicies: BudgetPolicyRecord[];
+  routineTriggers: RoutineTriggerRecord[];
 }): RestoreValidationIssue[] {
   const issues: RestoreValidationIssue[] = [];
   const eventIds = new Set(input.events.map((event) => event.id));
@@ -464,6 +472,54 @@ function governanceGapIssues(input: {
     }
   }
 
+  for (const trigger of input.routineTriggers) {
+    if (!trigger.enabled) continue;
+    const decision = trigger.activationDecisionId
+      ? input.decisions.find((item) => item.id === trigger.activationDecisionId)
+      : undefined;
+    const activation = routineActivationPolicy({
+      routine: trigger,
+      approvalEvidence: decision ? [decision] : [],
+    });
+    if (!activation.mayProceed) {
+      issues.push(issue({
+        severity: "blocker",
+        code: "governance_gap",
+        path: "state/routine-triggers.jsonl",
+        message: `routine trigger ${trigger.id} activation governance is invalid: ${activation.blockedReason ?? "missing approval"}`,
+      }));
+    }
+  }
+
+  return issues;
+}
+
+function routineStateIssues(input: {
+  routineTriggers: RoutineTriggerRecord[];
+  routineObservations: RoutineTriggerObservationRecord[];
+}): RestoreValidationIssue[] {
+  const issues: RestoreValidationIssue[] = [];
+  const triggersById = new Map(input.routineTriggers.map((trigger) => [trigger.id, trigger]));
+  for (const observation of input.routineObservations) {
+    const trigger = triggersById.get(observation.routineId);
+    if (!trigger) {
+      issues.push(issue({
+        severity: "blocker",
+        code: "broken_ancestry",
+        path: "state/routine-trigger-observations.jsonl",
+        message: `routine observation ${observation.id} references missing trigger: ${observation.routineId}`,
+      }));
+      continue;
+    }
+    if (observation.triggerId !== trigger.triggerId || observation.fingerprint !== trigger.fingerprint) {
+      issues.push(issue({
+        severity: "blocker",
+        code: "broken_ancestry",
+        path: "state/routine-trigger-observations.jsonl",
+        message: `routine observation ${observation.id} does not match trigger ${trigger.id}`,
+      }));
+    }
+  }
   return issues;
 }
 
@@ -480,6 +536,8 @@ async function parseKnownState(root: string): Promise<{
   memory: GovernedMemoryRecord[];
   budgetAudit: CostBudgetAuditRecord[];
   budgetPolicies: BudgetPolicyRecord[];
+  routineTriggers: RoutineTriggerRecord[];
+  routineObservations: RoutineTriggerObservationRecord[];
   events: GovernanceEventRecord[];
 }> {
   const state = join(root, "state");
@@ -515,6 +573,8 @@ async function parseKnownState(root: string): Promise<{
   const memory = await parseJsonl<GovernedMemoryRecord>("memory.jsonl", "id", "memory");
   const budgetAuditRaw = await parseJsonl<Record<string, unknown>>("budget-audit.jsonl", "id", "budget audit");
   const budgetPoliciesRaw = await parseJsonl<Record<string, unknown>>("budget-policies.jsonl", "id", "budget policy");
+  const routineTriggersRaw = await parseJsonl<Record<string, unknown>>("routine-triggers.jsonl", "id", "routine trigger");
+  const routineObservationsRaw = await parseJsonl<Record<string, unknown>>("routine-trigger-observations.jsonl", "id", "routine observation");
   const governanceRaw = await parseJsonl<Record<string, unknown>>("governance-events.jsonl", "id", "governance event");
 
   const budgetAudit = budgetAuditRaw.flatMap((record) => {
@@ -541,6 +601,22 @@ async function parseKnownState(root: string): Promise<{
       return [];
     }
   });
+  const routineTriggers = routineTriggersRaw.flatMap((record) => {
+    try {
+      return [parseRoutineTriggerRecord(record)];
+    } catch (err) {
+      issues.push(issue({ severity: "blocker", code: "malformed_record", path: "state/routine-triggers.jsonl", message: (err as Error).message }));
+      return [];
+    }
+  });
+  const routineObservations = routineObservationsRaw.flatMap((record) => {
+    try {
+      return [parseRoutineTriggerObservationRecord(record)];
+    } catch (err) {
+      issues.push(issue({ severity: "blocker", code: "malformed_record", path: "state/routine-trigger-observations.jsonl", message: (err as Error).message }));
+      return [];
+    }
+  });
 
   issues.push(...duplicateIdIssues(parsedGroups));
   return {
@@ -556,6 +632,8 @@ async function parseKnownState(root: string): Promise<{
     memory,
     budgetAudit,
     budgetPolicies,
+    routineTriggers,
+    routineObservations,
     events,
   };
 }
@@ -690,6 +768,11 @@ export async function validateRestore(input: {
     events: state.events,
     memory: state.memory,
     budgetPolicies: state.budgetPolicies,
+    routineTriggers: state.routineTriggers,
+  }));
+  issues.push(...routineStateIssues({
+    routineTriggers: state.routineTriggers,
+    routineObservations: state.routineObservations,
   }));
   issues.push(...lifecycleIssues({
     runs: state.runs,

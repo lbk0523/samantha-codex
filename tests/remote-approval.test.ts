@@ -102,6 +102,88 @@ afterEach(async () => {
 });
 
 describe("remote approval inbox flow", () => {
+  test("approved action runner rechecks admission before dispatch", async () => {
+    const root = await makeRoot();
+    const state = join(root, "state");
+    await mkdir(state, { recursive: true });
+    await writeFile(
+      join(state, "host-ownership.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        role: "client_machine",
+        hostId: "client-host",
+        updatedAt: "2026-05-07T10:58:00.000Z",
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(state, "tasks.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "task-approved",
+        ancestry: { mode: "assigned", projectId: "samantha", goalId: "goal-samantha", workItemId: "work-samantha" },
+        title: "Approved task that must not dispatch",
+        targetAgent: "codex-worker",
+        targetFiles: ["src/lib/policy.ts"],
+        forbiddenChanges: ["state/**"],
+        verifyCommands: ["bun typecheck"],
+        instructions: "Fixture.",
+        status: "pending",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(state, "remote-actions.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "action-approved",
+        ancestry: { mode: "assigned", projectId: "samantha", goalId: "goal-samantha", workItemId: "work-samantha" },
+        kind: "dispatch_task",
+        status: "approved",
+        createdAt: "2026-05-07T11:00:00.000Z",
+        source: "remote",
+        taskId: "task-approved",
+        taskTitle: "Approved task that must not dispatch",
+        targetAgent: "codex-worker",
+        repoRoot: root,
+        allocate: true,
+        execute: true,
+        tmux: true,
+        approvedAt: "2026-05-07T11:01:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "actions:run-pending",
+        `--state-dir=${state}`,
+        "--limit=1",
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(JSON.parse(stdout)).toEqual({
+      processed: [{ actionId: "action-approved", status: "admission_block" }],
+    });
+    const storedActions = (await readFile(join(state, "remote-actions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { id: string; status: string });
+    expect(storedActions).toEqual([
+      expect.objectContaining({ id: "action-approved", status: "approved" }),
+    ]);
+  });
+
   test("records deferred request admission without resolving BK decisions", async () => {
     const root = await makeRoot();
     const state = join(root, "state");

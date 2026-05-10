@@ -17,6 +17,7 @@ import {
   BudgetPolicyStore,
   CostBudgetAuditStore,
   createRunCostBudgetObservation,
+  type BudgetEvaluationContext,
   type CostBudgetAuditFilter,
   type CostDataKind,
 } from "./lib/cost-budget-audit";
@@ -116,7 +117,7 @@ import {
 import { runPlan } from "./lib/plan-runner";
 import { validateDispatch } from "./lib/policy";
 import { validateAgentProfileGovernance } from "./lib/profile-governance";
-import { decideQueueAdmission, formatQueueAdmissionDecision, queueAdmissionRecord, buildQueuePressureSnapshot, type QueueAdmissionDecisionResult } from "./lib/queue-pressure";
+import { decideQueueAdmission, findBudgetPolicyForGate, formatQueueAdmissionDecision, queueAdmissionRecord, buildQueuePressureSnapshot, type QueueAdmissionDecisionResult } from "./lib/queue-pressure";
 import {
   applyProjectDefaults,
   applyProjectRemoteScopeDefaults,
@@ -436,6 +437,8 @@ function decisionKind(value: string): DecisionKind {
     value === "risk_acceptance" ||
     value === "agent_profile_change" ||
     value === "capability_change" ||
+    value === "routine_change" ||
+    value === "budget_change" ||
     value === "memory_change"
   ) {
     return value;
@@ -486,8 +489,10 @@ function decisionSubject(args: ParsedArgs): DecisionSubject | undefined {
     type !== "run" &&
     type !== "agent_profile" &&
     type !== "capability" &&
+    type !== "routine" &&
     type !== "policy" &&
-    type !== "memory"
+    type !== "memory" &&
+    type !== "budget"
   ) {
     throw new Error(`unsupported decision subject type: ${type}`);
   }
@@ -1211,6 +1216,17 @@ async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promis
     const action = (await store.list()).find((item) => item.status === "approved");
     if (!action) break;
     const startedAt = new Date().toISOString();
+    const admission = await queueAdmissionFor({
+      args,
+      subjectKind: "action",
+      projectId: selectedProjectIdFromAncestry(action.ancestry),
+      budgetContext: budgetContextForAction(action),
+      excludeActionId: action.id,
+    });
+    if (admission.decision !== "accept") {
+      results.push({ actionId: action.id, status: `admission_${admission.decision}` });
+      break;
+    }
     const runId = buildWorkerRunId({ startedAt, taskId: action.taskId });
     const tmuxSession = flag(args, "tmux-session", "samantha");
     const running = await store.markRunning(action.id, startedAt, {
@@ -1292,6 +1308,14 @@ async function promoteReadyWaitingActions(args: ParsedArgs, store: RemoteActionS
     }
 
     if (dependencies.every((dependency) => dependency?.status === "completed" && dependency.result?.pass === true)) {
+      const admission = await queueAdmissionFor({
+        args,
+        subjectKind: "action",
+        projectId: selectedProjectIdFromAncestry(action.ancestry),
+        budgetContext: budgetContextForAction(action),
+        excludeActionId: action.id,
+      });
+      if (admission.decision !== "accept") continue;
       await store.markDependenciesSatisfied(action.id, new Date().toISOString());
     }
   }
@@ -1318,6 +1342,7 @@ async function prepareDispatchActionForTask(input: {
     args: input.args,
     subjectKind: "action",
     projectId: selectedProjectIdFromAncestry(task.ancestry) ?? task.projectId,
+    budgetContext: budgetContextForTask(task),
   });
   if (admission.decision !== "accept") return { report: formatQueueAdmissionDecision(admission) };
   const agent = await loadAgentProfile(input.args, task.targetAgent);
@@ -1509,6 +1534,7 @@ async function queueAdmissionFor(input: {
   args: ParsedArgs;
   subjectKind: QueueAdmissionDecisionResult["subjectKind"];
   projectId?: string;
+  budgetContext?: BudgetEvaluationContext;
   excludeActionId?: string;
   excludeRequestId?: string;
 }): Promise<QueueAdmissionDecisionResult> {
@@ -1553,16 +1579,19 @@ async function queueAdmissionFor(input: {
     governanceEvents,
     orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(input.args, plans),
     ops: withoutActiveInboxCommand(ops),
-  }, { projectId: input.projectId });
+  }, { projectId: input.projectId, budgetContext: input.budgetContext });
   const admission = decideQueueAdmission({ pressure, subjectKind: input.subjectKind });
   if (
     admission.decision !== "accept" &&
     pressure.budget &&
     (pressure.budget.state === "defer" || pressure.budget.state === "block" || pressure.budget.state === "needs_bk")
   ) {
-    const policy =
-      pressure.budget.policyEvaluations[0]?.policy ??
-      budgetPolicies.find((record) => record.status === "active" && record.scope.type === "project" && record.scope.id === input.projectId);
+    const policy = findBudgetPolicyForGate({
+      policies: budgetPolicies,
+      decision: pressure.budget,
+      context: { projectId: input.projectId, ...input.budgetContext },
+      observations: budgetObservations,
+    });
     if (policy) {
       await new GovernanceEventStore(governanceEventsPath(input.args)).create({
         timestamp: new Date().toISOString(),
@@ -1650,6 +1679,7 @@ async function observeRoutineTrigger(input: {
     args: input.args,
     subjectKind: "routine_trigger",
     projectId: trigger.projectId,
+    budgetContext: { projectId: trigger.projectId },
   });
   const observation = await new RoutineTriggerObservationStore(routineTriggerObservationsPath(input.args)).observe({
     trigger,
@@ -1756,6 +1786,29 @@ function planProjectId(plan: OrchestratorPlanRecord): string | undefined {
 function planMatchesProject(plan: OrchestratorPlanRecord, requestedProjectId?: string): boolean {
   if (!requestedProjectId) return true;
   return planProjectId(plan) === requestedProjectId;
+}
+
+function budgetContextFromAncestry(ancestry: TaskSpec["ancestry"] | RemoteActionRecord["ancestry"] | OrchestrationRequestRecord["ancestry"] | OrchestratorPlanRecord["ancestry"]): BudgetEvaluationContext {
+  if (ancestry?.mode !== "assigned") return {};
+  return {
+    projectId: ancestry.projectId,
+    goalId: ancestry.goalId,
+    workItemId: ancestry.workItemId,
+  };
+}
+
+function budgetContextForTask(task: TaskSpec): BudgetEvaluationContext {
+  return {
+    ...budgetContextFromAncestry(task.ancestry),
+    projectId: selectedProjectIdFromAncestry(task.ancestry) ?? task.projectId,
+  };
+}
+
+function budgetContextForAction(action: RemoteActionRecord): BudgetEvaluationContext {
+  return {
+    ...budgetContextFromAncestry(action.ancestry),
+    actionId: action.id,
+  };
 }
 
 function decisionMatchesProject(decision: DecisionItem, plans: OrchestratorPlanRecord[], requestedProjectId?: string): boolean {
@@ -1893,15 +1946,19 @@ async function recordGovernedDecisionApproval(args: ParsedArgs, decision: Decisi
   if (
     decision.kind !== "agent_profile_change" &&
     decision.kind !== "capability_change" &&
-    decision.kind !== "memory_change"
+    decision.kind !== "routine_change" &&
+    decision.kind !== "memory_change" &&
+    decision.kind !== "budget_change"
   ) return;
   if (!decision.subject) throw new Error(`${decision.kind} decisions require a subject`);
   if (!decision.risk) throw new Error(`${decision.kind} decisions require a risk class`);
   const subjectType =
     decision.subject.type === "agent_profile" ||
       decision.subject.type === "capability" ||
+      decision.subject.type === "routine" ||
       decision.subject.type === "policy" ||
-      decision.subject.type === "memory"
+      decision.subject.type === "memory" ||
+      decision.subject.type === "budget"
       ? decision.subject.type
       : undefined;
   if (!subjectType) throw new Error(`${decision.kind} decisions cannot approve subject type: ${decision.subject.type}`);
@@ -2499,6 +2556,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       args,
       subjectKind: "request",
       projectId: selectedProjectIdFromAncestry(request.ancestry),
+      budgetContext: budgetContextFromAncestry(request.ancestry),
     });
     request.admission = queueAdmissionRecord({ decidedAt: receivedAt, result: admission });
     if (!request.id) throw new Error("orchestration request id is required");
@@ -2544,6 +2602,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       args,
       subjectKind: "recovery_request",
       projectId: selectedProjectIdFromAncestry(request.ancestry),
+      budgetContext: budgetContextFromAncestry(request.ancestry),
     });
     request.admission = queueAdmissionRecord({ decidedAt: receivedAt, result: admission });
     await new OrchestrationRequestStore(orchestrationRequestsPath(args)).append(request);
@@ -2606,6 +2665,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       args,
       subjectKind: "request",
       projectId: selectedProjectIdFromAncestry(request.ancestry),
+      budgetContext: budgetContextFromAncestry(request.ancestry),
     });
     request.admission = queueAdmissionRecord({ decidedAt: receivedAt, result: admission });
     await requestStore.append(request);
@@ -2652,6 +2712,10 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       args,
       subjectKind: request.recoveryOfPlanId ? "recovery_request" : "request",
       projectId: requestedProjectId ?? selectedProjectIdFromAncestry(request.ancestry),
+      budgetContext: {
+        ...budgetContextFromAncestry(request.ancestry),
+        projectId: requestedProjectId ?? selectedProjectIdFromAncestry(request.ancestry),
+      },
       excludeRequestId: request.id,
     });
     if (requestAdmission.decision !== "accept") return formatQueueAdmissionDecision(requestAdmission);
@@ -3016,6 +3080,10 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
         args,
         subjectKind: "action",
         projectId: requestedProjectId ?? selectedProjectIdFromAncestry(orchestratorPlan.ancestry),
+        budgetContext: {
+          ...budgetContextFromAncestry(orchestratorPlan.ancestry),
+          projectId: requestedProjectId ?? selectedProjectIdFromAncestry(orchestratorPlan.ancestry),
+        },
       });
       if (actionAdmission.decision !== "accept") return formatQueueAdmissionDecision(actionAdmission);
 
@@ -3070,6 +3138,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       args,
       subjectKind: "action",
       projectId: selectedProjectIdFromAncestry(action.ancestry),
+      budgetContext: budgetContextForAction(action),
       excludeActionId: action.id,
     });
     if (admission.decision !== "accept") return formatQueueAdmissionDecision(admission);
@@ -3086,6 +3155,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       args,
       subjectKind: "action",
       projectId: selectedProjectIdFromAncestry(action.ancestry),
+      budgetContext: budgetContextForAction(action),
       excludeActionId: action.id,
     });
     if (admission.decision !== "accept") return formatQueueAdmissionDecision(admission);
