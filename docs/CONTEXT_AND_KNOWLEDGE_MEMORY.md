@@ -581,12 +581,62 @@ Outcome:
   multi-writer execution, connector, secret, routine, budget, merge, push,
   cleanup, recovery, approval, runtime, or host authority was added.
 
+## M11: Memory Approval CLI Closure
+
+Goal: close the operational gap between the governed memory write gate and the
+local decision CLI so behavior-changing memory, SOP, and skill updates can get
+explicit BK approval through the same deterministic decision surface used for
+other governed changes.
+
+Focus:
+
+- allow `decisions:create` to create `memory_change` decisions with
+  `--subject-type=memory`
+- keep `memory_change` approvals subject-linked to the concrete memory id
+- preserve the existing requirement that behavior-changing memory, SOP, and
+  skill writes need approved BK evidence whose prompt includes the diff summary
+- add a CLI regression test proving memory-subject decision creation works
+- add or extend governance approval tests proving approved `memory_change`
+  decisions emit append-only memory governance audit events
+- do not add new memory write commands, automatic promotion, runtime mutation,
+  connector/secret access, scheduler behavior, budget enforcement,
+  multi-writer execution, or writer-cap changes
+
+Verification focus:
+
+- `bun run src/samantha.ts decisions:create --kind=memory_change
+  --subject-type=memory --subject-id=<memory-id> ...` succeeds in an isolated
+  state directory
+- the stored decision has `kind: memory_change` and `subject.type: memory`
+- approving that decision records a governed memory approval event without
+  granting any non-memory authority
+- focused CLI and memory-gate tests pass
+- `bun run verify:docs` and `bun run verify:mac` pass because this stage
+  changes code and tests
+
+Outcome:
+
+- Added `memory` to the local CLI `decisionSubject()` parser so
+  `decisions:create --kind=memory_change --subject-type=memory` can create the
+  approval evidence required by governed memory writes.
+- Added a CLI regression test proving memory-subject `memory_change` creation
+  succeeds in an isolated state directory and stores `subject.type: memory`.
+- The same regression approves the decision and verifies the append-only
+  governance event remains subject-linked to the memory id, sourced to the
+  decision, and does not create a direct memory record or non-memory authority.
+- Left direct memory write commands, automatic candidate promotion, runtime
+  daemon behavior, multi-writer execution, connector/secret access, routines,
+  budget enforcement, merge, push, cleanup, recovery, and writer-cap authority
+  unchanged.
+
 ## Phase 8 Exit Review
+
+Status: implemented after M11 follow-up.
 
 | Exit criterion | Status | Evidence |
 | --- | --- | --- |
 | Samantha can cite prior decisions when planning new work. | Met. Planning prompts now include selected project-scoped memory snippets, and plan payloads can preserve `recommendationTrace` citations. | M4/M6/M10 outcomes above; [src/lib/orchestrator-agent.ts](../src/lib/orchestrator-agent.ts); [tests/orchestrator-agent.test.ts](../tests/orchestrator-agent.test.ts) |
-| Memory updates are explicit, reviewable, and reversible. | Met. Durable memory writes go through append-only governed revisions with citations, diff summaries, actor/timestamp/risk metadata, approval checks for behavior-changing entries, and restore/supersede history. | M8 outcome above; [src/lib/memory-store.ts](../src/lib/memory-store.ts); [tests/memory-store.test.ts](../tests/memory-store.test.ts) |
+| Memory updates are explicit, reviewable, and reversible. | Met. Durable memory writes go through append-only governed revisions with citations, diff summaries, actor/timestamp/risk metadata, approval checks for behavior-changing entries, restore/supersede history, and a local CLI path for memory-subject `memory_change` approvals. | M8/M11 outcomes above; [src/lib/memory-store.ts](../src/lib/memory-store.ts); [src/samantha.ts](../src/samantha.ts); [tests/memory-store.test.ts](../tests/memory-store.test.ts); [tests/governance-decision-cli.test.ts](../tests/governance-decision-cli.test.ts) |
 | LLM-generated summaries cannot silently overwrite source-of-truth state. | Met. Memory synthesis output becomes only pending review candidates, and planning consumes selected existing context without granting write authority. | M5/M7 outcomes above; [src/lib/proposal-store.ts](../src/lib/proposal-store.ts); [tests/proposal-store.test.ts](../tests/proposal-store.test.ts); [tests/orchestrator-agent.test.ts](../tests/orchestrator-agent.test.ts) |
 | SOP or skill documents can guide agents but cannot override safety, worktree, dispatch, merge, push, cleanup, recovery, approval, or project gates. | Met. SOP/skill markdown validation rejects unsafe authority claims, and behavior-changing SOP/skill activation requires governed memory approval evidence. | M9 outcome above; [src/lib/sop-skill-contract.ts](../src/lib/sop-skill-contract.ts); [tests/sop-skill-contract.test.ts](../tests/sop-skill-contract.test.ts); [docs/ARCHITECTURE.md](ARCHITECTURE.md#skill-policy) |
 | BK can ask why a recommendation was made and trace it to stored context. | Met. Plan reports render recommendation traces with citation ids, giving a local "why was this recommended?" surface. | M10 outcome above; [src/lib/operator-reports.ts](../src/lib/operator-reports.ts); [tests/operator-reports.test.ts](../tests/operator-reports.test.ts) |
@@ -642,6 +692,26 @@ Phase 8 M10 did not change host-owned daemon/watch/poll/reply/service-template
 behavior or runtime state. Ubuntu-host `bun run verify:host` is not required
 for this M10 review; run it later only if a host-owned runtime change is made
 on the active automation host.
+
+Post-M10 code review reopened Phase 8 for M11 because the memory approval CLI
+path rejects `--subject-type=memory` even though the store and governance model
+require memory-subject approval evidence for behavior-changing memory, SOP, and
+skill activation.
+
+M11 Mac-side run on 2026-05-10:
+
+- `bun test tests/governance-decision-cli.test.ts tests/memory-store.test.ts
+  tests/decision-store.test.ts` passed: 13 tests, 0 failures.
+- `bun typecheck` passed.
+- `bun run verify:docs` passed.
+- `bun run verify:mac` passed, including TypeScript typecheck, portable tests,
+  and docs verification. Portable test result: 369 passed, 0 failed across 54
+  files.
+
+M11 did not change host-owned daemon/watch/poll/reply/service-template behavior
+or runtime state. Ubuntu-host `bun run verify:host` is not required for this
+M11 review; run it later only if a host-owned runtime change is made on the
+active automation host.
 
 ## Phase 9 Handoff Notes
 
@@ -867,3 +937,28 @@ multi-writer execution, and do not expand connector, secret, routine, budget,
 merge, push, cleanup, recovery, approval, or runtime authority. Run
 `bun run verify:docs` and `bun run verify:mac` unless the M10 change is docs
 only and the narrower docs verification is sufficient.
+
+### M11 Prompt
+
+Implement Phase 8 M11 from `docs/CONTEXT_AND_KNOWLEDGE_MEMORY.md`.
+
+먼저 읽을 문서/코드/테스트: `AGENTS.md`, `docs/CEO_OFFICE_ROADMAP.md`,
+all of `docs/CONTEXT_AND_KNOWLEDGE_MEMORY.md`, every previous Phase 8 stage
+Outcome section, `docs/SAFETY_AUDIT_GOVERNANCE.md`,
+`src/samantha.ts`, `src/lib/decision-store.ts`, `src/lib/memory-store.ts`,
+`src/lib/governance-event-store.ts`, `src/lib/risk-policy.ts`,
+`tests/governance-decision-cli.test.ts`, `tests/memory-store.test.ts`, and
+`tests/decision-store.test.ts`. 이전 stage Outcome을 확인하라.
+
+Fix the post-M10 operational approval gap: `DecisionSubjectType` includes
+`memory`, governed memory writes require approved BK memory-subject evidence,
+and governed approval recording accepts `memory`, but the CLI
+`decisionSubject()` whitelist rejects `--subject-type=memory`. Add `memory` to
+the CLI subject parser and add a regression test proving
+`decisions:create --kind=memory_change --subject-type=memory` succeeds in an
+isolated state directory. Also verify approval still writes append-only
+governance evidence and grants no extra authority. Do not add direct memory
+write commands, automatic candidate promotion, runtime daemon changes,
+multi-writer execution, connector/secret access, routines, budget enforcement,
+merge, push, cleanup, recovery, or writer-cap changes. Run focused tests,
+`bun run verify:docs`, and `bun run verify:mac`.

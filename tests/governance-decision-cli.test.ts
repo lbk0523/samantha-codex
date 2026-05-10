@@ -12,6 +12,112 @@ afterEach(async () => {
 });
 
 describe("governed decision approvals", () => {
+  test("creates and approves memory_change decisions with memory subject only", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-memory-decision-cli-"));
+    tmpRoots.push(root);
+    const state = join(root, "state");
+    const prompt = "Approve memory write. Diff: Activate M11 governed memory approval path.";
+
+    const createProc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "decisions:create",
+        "--kind=memory_change",
+        "--subject-type=memory",
+        "--subject-id=memory-m11-cli-approval",
+        "--title=Approve M11 memory approval path",
+        `--prompt=${prompt}`,
+        "--risk=high",
+        "--created-at=2026-05-10T05:00:00.000Z",
+        `--state-dir=${state}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [createStdout, createStderr, createExitCode] = await Promise.all([
+      new Response(createProc.stdout).text(),
+      new Response(createProc.stderr).text(),
+      createProc.exited,
+    ]);
+
+    expect({ stdout: createStdout, stderr: createStderr, exitCode: createExitCode }).toMatchObject({ exitCode: 0 });
+    const created = JSON.parse(createStdout) as {
+      id: string;
+      kind?: string;
+      subject?: { type?: string; id?: string };
+      prompt?: string;
+      risk?: string;
+    };
+    expect(created).toMatchObject({
+      kind: "memory_change",
+      subject: { type: "memory", id: "memory-m11-cli-approval" },
+      prompt,
+      risk: "high",
+    });
+
+    const storedDecisions = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { kind?: string; subject?: { type?: string; id?: string } });
+    expect(storedDecisions).toEqual([
+      expect.objectContaining({
+        kind: "memory_change",
+        subject: { type: "memory", id: "memory-m11-cli-approval" },
+      }),
+    ]);
+
+    const approveProc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "decisions:resolve",
+        created.id,
+        "--resolution=approved",
+        "--resolved-at=2026-05-10T05:01:00.000Z",
+        "--note=Approved memory-subject decision only.",
+        `--state-dir=${state}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [approveStdout, approveStderr, approveExitCode] = await Promise.all([
+      new Response(approveProc.stdout).text(),
+      new Response(approveProc.stderr).text(),
+      approveProc.exited,
+    ]);
+
+    expect({ stdout: approveStdout, stderr: approveStderr, exitCode: approveExitCode }).toMatchObject({ exitCode: 0 });
+    const resolved = JSON.parse(approveStdout) as { resolvedBy?: string; resolution?: string; subject?: { type?: string; id?: string } };
+    expect(resolved).toMatchObject({
+      resolvedBy: "bk",
+      resolution: "approved",
+      subject: { type: "memory", id: "memory-m11-cli-approval" },
+    });
+
+    const events = (await readFile(join(state, "governance-events.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as {
+        kind: string;
+        riskClass: string;
+        summary: string;
+        source: { kind: string; id: string };
+        subject: { type: string; id: string };
+        related?: { decisionIds?: string[] };
+      });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "transition_approved",
+      riskClass: "high",
+      summary: prompt,
+      source: { kind: "decision", id: created.id },
+      subject: { type: "memory", id: "memory-m11-cli-approval" },
+      related: { decisionIds: [created.id] },
+    });
+    await expect(readFile(join(state, "memory.jsonl"), "utf8")).rejects.toThrow("ENOENT");
+  });
+
   test("records approver timestamp risk class and diff summary in the append-only governance audit", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-governed-decision-"));
     tmpRoots.push(root);

@@ -319,6 +319,10 @@ Exit criteria:
 Detailed stages:
 [CONTEXT_AND_KNOWLEDGE_MEMORY.md](CONTEXT_AND_KNOWLEDGE_MEMORY.md).
 
+M11 follow-up complete: `memory_change` decisions can be created with
+`--subject-type=memory` before behavior-changing memory, SOP, or skill updates
+are activated.
+
 ### 9. Continuous 24/7 Operations
 
 Status: planned.

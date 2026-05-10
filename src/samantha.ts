@@ -442,7 +442,8 @@ function decisionSubject(args: ParsedArgs): DecisionSubject | undefined {
     type !== "run" &&
     type !== "agent_profile" &&
     type !== "capability" &&
-    type !== "policy"
+    type !== "policy" &&
+    type !== "memory"
   ) {
     throw new Error(`unsupported decision subject type: ${type}`);
   }
