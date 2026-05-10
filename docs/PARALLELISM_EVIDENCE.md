@@ -46,6 +46,19 @@ alternatives and selected-plan-only materialization.
 These notes are sufficient for parallel report-only specialists plus one writer.
 They are not sufficient for multi-writer execution.
 
+Phase 7 M10 closed the evidence review on 2026-05-10 with `writerCap` still at
+`1`. The active two-profile baseline remains `samantha` and `omht`; both
+profiles expose report-only planning/report scopes, while the implemented
+single-writer canary remains on `samantha`.
+
+| Phase 7 dogfood item | Evidence | Result |
+| --- | --- | --- |
+| Two active project profiles | [references/project-profiles/samantha.json](../references/project-profiles/samantha.json), [references/project-profiles/omht.json](../references/project-profiles/omht.json), and [tests/project-profile.test.ts](../tests/project-profile.test.ts) cover deterministic loading, scope selection, inference, and environment override behavior. | Met for active-profile baseline. |
+| Parallel non-writer reports | [tests/operations.test.ts](../tests/operations.test.ts) batches reviewer, researcher, and evaluator reports before serialized writers; [tests/orchestrator-materializer.test.ts](../tests/orchestrator-materializer.test.ts) materializes reviewer, researcher, and evaluator report tasks alongside one writer. | Met for report-only parallelism. |
+| One implementation flow with parallel non-writers plus one writer | [tests/orchestrator-materializer.test.ts](../tests/orchestrator-materializer.test.ts) covers reviewer/researcher/evaluator reports plus one `codex-worker`; [tests/operations.test.ts](../tests/operations.test.ts) keeps the role-aware `samantha` reviewer-to-writer canary dependency-gated. | Met for single-writer implementation. |
+| OMHT report-only flow | [tests/operations.test.ts](../tests/operations.test.ts) materializes `omht` report-mode work with no target-file writes or commit requirement. | Met for report-only project evidence; not evidence for OMHT writer concurrency. |
+| Writer-cap increase | [tests/profile-governance.test.ts](../tests/profile-governance.test.ts) and [tests/parallelism-conflict-detector.test.ts](../tests/parallelism-conflict-detector.test.ts) prove the gate shape, but no production multi-writer policy change was applied. | Not approved. `writerCap` remains `1`. |
+
 ## Bar For Writer Cap Increase
 
 Before changing `writerCap` above `1`, update this document first with:

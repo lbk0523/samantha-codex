@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-10
 
-Status: in progress.
+Status: implemented.
 
 This document contains the execution stages for roadmap Phase 7:
 [Evidence-Based Parallelism Expansion](CEO_OFFICE_ROADMAP.md#7-evidence-based-parallelism-expansion).
@@ -207,6 +207,17 @@ Verification focus:
 - no raw action/status/run noise leaks into normal summaries
 - failed specialist reports produce clear next action
 
+Outcome:
+
+- Updated operator plan-result reports, CEO status summaries, dashboard Daily
+  Review, and compact Telegram reports to show role-specific specialist
+  outcomes with project and goal ancestry.
+- Specialist summaries now state what the role checked and which risk it
+  reduced without requiring BK to read raw action/status/run ids.
+- Failed specialist reports now point to recovery as the next safe action.
+- Left execution authority unchanged. Report-only roles remain non-writers and
+  `DEFAULT_SAFETY_POLICY.writerCap` remains `1`.
+
 ## M6: Conflict Detection Before Writer Expansion
 
 Goal: implement deterministic conflict detection before any writer-cap change
@@ -370,6 +381,90 @@ Verification focus:
 - rollback behavior is tested before any multi-writer enablement
 - Mac-side verification passes
 - Ubuntu host verification is run only when host runtime behavior is touched
+
+Outcome:
+
+- Reviewed M1-M9 outcomes and found the staged Phase 7 contract complete:
+  compact parallel evidence ledger, advisory role topology, stronger
+  non-writer report-only batching, role-specific operator reporting,
+  deterministic writer-concurrency conflict checks, merge queue
+  classification, cleanup classification, rollback guidance, and writer-cap
+  governance are all implemented with focused tests.
+- Collected Phase 7 dogfood evidence against the two active bundled project
+  profiles, `samantha` and `omht`. The profiles keep report-only planning
+  scopes and source-controlled identity separate from host-local runtime roots.
+- Kept the implementation-flow evidence on `samantha`: parallel
+  reviewer/researcher/evaluator report-only work can run before or beside one
+  writer, and a reviewer-to-writer canary keeps the writer action dependent on
+  report-only preflight evidence.
+- Kept the `omht` evidence report-only: the active profile supports the
+  planning/report scope and materializes report-mode work without target-file
+  writes or a commit requirement.
+- Decided explicitly that `writerCap` remains `1`. The Phase 7 evidence proves
+  report-only parallelism and governance checks, not production multi-writer
+  readiness or a policy mutation.
+- Updated roadmap, architecture, and parallelism evidence docs only for
+  implemented behavior. No host runtime behavior, daemon/watch/poll/reply,
+  worker dispatch, service template, state, run, merge, push, cleanup, or
+  production writer authority was changed.
+
+## Phase 7 Exit Review
+
+| Exit criterion | Status | Evidence |
+| --- | --- | --- |
+| Parallel non-writer work is routine and auditable. | Met. Ready reviewer, researcher, and evaluator report tasks batch together before serialized writers; invalid non-writer write, worktree, merge, changed-file, and unmerged-writer dependency shapes are rejected before dispatch; compact evidence records preserve successful, mixed, and failed outcomes. | M2/M4 outcomes above; [tests/operations.test.ts](../tests/operations.test.ts); [tests/orchestrator-materializer.test.ts](../tests/orchestrator-materializer.test.ts); [tests/parallelism-evidence.test.ts](../tests/parallelism-evidence.test.ts) |
+| Role relationships are visible for reporting and planning, but they do not grant new execution authority by themselves. | Met. Advisory topology validates known roles, appears in orchestrator prompts and operator summaries, and explicitly grants no dispatch, writer, connector, secret, merge, push, cleanup, rollback, approval, or safety-policy authority. | M3/M5 outcomes above; [tests/policy.test.ts](../tests/policy.test.ts); [tests/profile-governance.test.ts](../tests/profile-governance.test.ts); [tests/orchestrator-agent.test.ts](../tests/orchestrator-agent.test.ts); [tests/operator-reports.test.ts](../tests/operator-reports.test.ts) |
+| Writer cap changes have explicit evidence and BK approval. | Met as a gate, not as an applied increase. A writer-cap increase requires complete dogfood evidence, safe deterministic conflict evidence, completed merge and cleanup evidence, completed rollback drill evidence, and explicit BK approval with an auditable diff. The default policy remains `writerCap: 1`. | M6/M9 outcomes above; [tests/parallelism-conflict-detector.test.ts](../tests/parallelism-conflict-detector.test.ts); [tests/profile-governance.test.ts](../tests/profile-governance.test.ts); [src/lib/policy.ts](../src/lib/policy.ts) |
+| Merge and cleanup gates remain deterministic under higher load. | Met. Merge candidates are sorted and classified as mergeable, already merged, stale base, failed verification, dirty target repo, missing commit, or blocked without creating push commands. Cleanup candidates are classified as completed, dirty, missing, abandoned, already cleaned, or blocked before any destructive cleanup. | M7/M8 outcomes above; [tests/merge-gate.test.ts](../tests/merge-gate.test.ts); [tests/worktree-cleanup.test.ts](../tests/worktree-cleanup.test.ts); [tests/run-lifecycle-store.test.ts](../tests/run-lifecycle-store.test.ts) |
+| Rollback behavior has been tested before any multi-writer enablement. | Met for Phase 7 scope. Recovery drills record rollback authority through deterministic recovery planning, governed corrective work, BK/operator action, or current decision commands only; workers, non-writers, and orchestrator agents cannot roll back state directly. | M8 outcome above; [docs/ROLLBACK_AND_RECOVERY_DRILLS.md](ROLLBACK_AND_RECOVERY_DRILLS.md); [tests/recovery-drills.test.ts](../tests/recovery-drills.test.ts); [tests/recovery-context.test.ts](../tests/recovery-context.test.ts); [tests/recovery-continuity.test.ts](../tests/recovery-continuity.test.ts) |
+
+## Dogfood Evidence
+
+| Requirement | Evidence | Result |
+| --- | --- | --- |
+| At least two active project profiles | The bundled active profiles remain [references/project-profiles/samantha.json](../references/project-profiles/samantha.json) and [references/project-profiles/omht.json](../references/project-profiles/omht.json). Both expose low-risk `planning_report` scopes for report-only work, and profile tests cover deterministic load, inference, scope selection, and environment override behavior. | Met. Phase 7 evidence is tied to the active two-profile baseline without committing host-local absolute paths. |
+| Report-only parallel routine | `tests/operations.test.ts` covers reviewer, researcher, and evaluator reports in one ready batch before serialized writers. `tests/orchestrator-materializer.test.ts` covers reviewer, researcher, and evaluator report tasks alongside a single writer while keeping report tasks empty of target files. | Met. Non-writer parallel work is routine and read-only. |
+| One implementation flow with parallel non-writers plus one writer | `tests/orchestrator-materializer.test.ts` materializes reviewer, researcher, and evaluator reports plus one `codex-worker` write task. `tests/operations.test.ts` keeps the `samantha` reviewer-to-writer canary dependency-gated, with the writer action waiting on the report-only preflight. | Met. Implementation remains single-writer and dependency-gated. |
+| OMHT report-only profile evidence | `tests/operations.test.ts` materializes `omht` report-mode work with no target-file writes and no commit requirement; project profile tests route planning/report requests to `planning_report`. | Met. OMHT participates as a report-only active profile. This is not evidence for OMHT writer concurrency. |
+| Merge, cleanup, and recovery gates under parallel evidence | `tests/merge-gate.test.ts`, `tests/worktree-cleanup.test.ts`, `tests/run-lifecycle-store.test.ts`, `tests/recovery-drills.test.ts`, `tests/recovery-context.test.ts`, and `tests/recovery-continuity.test.ts` cover deterministic integration, cleanup, lifecycle, and rollback/recovery behavior. | Met. Gates stay explicit and deterministic. |
+| Writer-cap increase readiness | Governance and conflict tests prove the required gate shape, but no production multi-writer policy mutation was applied. | Not met by design. `writerCap` remains `1`; Phase 7 exit does not ask BK to approve an increase. |
+
+## Authority Review
+
+- Writer authority: `DEFAULT_SAFETY_POLICY.writerCap` remains `1`; Phase 7 did
+  not add multi-writer execution or mutate the default safety policy.
+- Non-writer authority: reviewer, researcher, evaluator, spec, content, and
+  operations roles remain report-only, read-only, no-worktree, and no-merge.
+- Role topology authority: relationships are advisory planning/reporting
+  metadata only. They grant no dispatch, writer, connector, secret, merge,
+  push, cleanup, rollback, approval, or safety-policy authority.
+- Integration authority: merge, push, cleanup, and rollback remain explicit
+  deterministic gates. Push remains separate from merge.
+- Host/runtime authority: M10 changed docs and verification evidence only.
+  Active automation-host ownership of daemon/watch/poll/reply/dispatch/runtime
+  state remains unchanged.
+
+## Verification Run
+
+Required Mac-side verification for M10:
+
+```bash
+bun run verify:docs
+bun run verify:mac
+```
+
+M10 Mac-side run on 2026-05-10:
+
+- `bun run verify:docs` passed.
+- `bun run verify:mac` passed, including TypeScript typecheck, portable tests,
+  and docs verification. Portable test result: 321 passed, 0 failed across 48
+  files.
+
+Phase 7 M10 changed docs and verification evidence only. It did not touch host
+runtime behavior, daemon/watch/poll/reply/dispatch code, service templates, or
+runtime state, so Ubuntu-host `bun run verify:host` is not required for this
+M10 review. Run host verification later only if a host-owned runtime change is
+made on the active automation host.
 
 ## Stage Handoff Prompts
 

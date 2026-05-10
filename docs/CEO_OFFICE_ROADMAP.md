@@ -250,7 +250,7 @@ Detailed stages: [MULTI_PROJECT_OPERATIONS.md](MULTI_PROJECT_OPERATIONS.md).
 
 ### 7. Evidence-Based Parallelism Expansion
 
-Status: in progress.
+Status: implemented.
 
 Objective: expand parallel execution and role topology only when dogfood
 evidence proves that the safety model can handle it.
