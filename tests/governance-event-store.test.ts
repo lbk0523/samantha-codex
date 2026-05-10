@@ -106,6 +106,24 @@ describe("GovernanceEventStore", () => {
     expect(await store.list()).toEqual([first]);
   });
 
+  test("accepts learning candidate records as governed memory event sources", async () => {
+    const { store } = await makeStore();
+    const event = createGovernanceEvent({
+      timestamp: "2026-05-10T01:10:00.000Z",
+      actor: "deterministic_operator",
+      source: { kind: "learning_candidate", id: "learning-candidate-20260510-010000-recurring-preference" },
+      subject: { type: "memory", id: "learning-candidate-20260510-010000-recurring-preference" },
+      kind: "transition_requested",
+      riskClass: "low",
+      summary: "Learning candidate accepted for later deterministic memory write gate.",
+    });
+
+    await store.append(event);
+
+    expect(await store.list({ source: event.source })).toEqual([event]);
+    expect(await store.list({ subject: event.subject })).toEqual([event]);
+  });
+
   test("reports malformed JSON with line context", async () => {
     const { path, store } = await makeStore();
     await mkdir(dirname(path), { recursive: true });

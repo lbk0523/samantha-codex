@@ -64,6 +64,7 @@
     "run_lifecycle",
     "run_log",
     "proposal",
+    "learning_candidate",
     "recovery_context",
     "agent_profile",
     "project_profile",

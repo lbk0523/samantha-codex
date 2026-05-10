@@ -236,7 +236,7 @@ Verification focus:
 - conflicting prior decisions produce a risk or ambiguity result
 - summary generation does not mutate source-of-truth records
 
-Outcome placeholder:
+Outcome:
 
 - Added a derived decision-history summary builder in
   `src/lib/decision-history-summary.ts`.
@@ -283,9 +283,33 @@ Verification focus:
   approved
 - rejection and supersession remain audit-visible
 
-Outcome placeholder:
+Outcome:
 
-- Fill after M5 implementation and verification.
+- Added a deterministic learning candidate flow in `src/lib/proposal-store.ts`
+  alongside the existing proposal store.
+- Learning candidates now cover recurring preferences, product heuristics,
+  repeated feedback, and known risks with required source evidence, confidence,
+  project or cross-project scope, proposed memory kind, and attribution.
+- LLM-authored candidates must remain `llm_summary` claims until a later
+  deterministic write gate approves durable memory promotion.
+- Candidate status transitions support pending review, accepted, rejected, and
+  archived states. Accepted candidates only record that the deterministic memory
+  write gate is still required; they do not write memory.
+- Candidate validation blocks direct mutation payloads for memory, project
+  briefs, SOPs, skills, profiles, policies, connectors, secrets, tasks,
+  actions, runs, dispatch, merge, push, or cleanup.
+- Added `learning_candidate` as a governance source-of-truth record kind so
+  candidate review events can be audit-linked without treating candidates as
+  active memory.
+- Added focused append, list, filter, status, attribution, direct-mutation, and
+  governance source tests.
+- Left orchestrator prompts, durable memory writes, SOPs, skills, profiles,
+  policies, connectors, secrets, tasks, actions, runs, dispatch, merge, push,
+  cleanup, and `DEFAULT_SAFETY_POLICY.writerCap` unchanged.
+- Verified with `bun test tests/governance-taxonomy.test.ts
+  tests/memory-taxonomy.test.ts tests/proposal-store.test.ts
+  tests/governance-event-store.test.ts tests/decision-store.test.ts`,
+  `bun typecheck`, `bun run test:portable`, and `bun run verify:docs`.
 
 ## M6: Searchable Reports And Artifacts
 

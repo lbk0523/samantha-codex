@@ -83,6 +83,7 @@ export const SOURCE_OF_TRUTH_RECORD_KINDS = [
   "run_lifecycle",
   "run_log",
   "proposal",
+  "learning_candidate",
   "recovery_context",
   "agent_profile",
   "project_profile",
