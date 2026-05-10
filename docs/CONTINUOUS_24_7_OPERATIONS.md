@@ -113,7 +113,22 @@ Verification focus:
 
 Outcome:
 
-- Pending.
+- Created the Phase 9 execution document and linked it from the roadmap phase
+  document list and the Phase 9 roadmap section.
+- Marked Phase 9 `in progress` in both the roadmap and this execution document.
+- Incorporated the Phase 5/6/7/8 handoff boundaries: routines, host lifecycle,
+  queue pressure, budget enforcement, backup/restore, and host migration belong
+  to Phase 9; memory, SOPs, skills, role topology, project profiles, and budget
+  observations remain advisory or audit inputs only.
+- Captured the existing daemon baseline for future stages: `inbox:watch`,
+  `actions:watch`, `telegram:poll`, `telegram:reply`, `ceo:notify`,
+  lock/heartbeat health checks, `doctor`, and systemd/launchd templates.
+- Defined M2-M10 with explicit Goal, Focus, Verification focus, and Outcome
+  placeholders plus copyable handoff prompts.
+- Left runtime authority unchanged: no source code, tests, runtime state,
+  daemon/watch/poll/reply/dispatch behavior, service templates, merge, push,
+  cleanup, recovery, connector/secret access, routines, budget enforcement, or
+  `DEFAULT_SAFETY_POLICY.writerCap` changes were made in M1.
 
 ## M2: Host Runtime Inventory And Ownership Contract
 
