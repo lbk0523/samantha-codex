@@ -686,6 +686,9 @@ describe("operator reports", () => {
     expect(status).toContain("failed_runs=1");
     expect(status).toContain("audit_gaps=1");
     expect(status).toContain("- global blockers: 0");
+    expect(status).toContain("Queue pressure:");
+    expect(status).toContain("- class: needs_bk project=samantha");
+    expect(status).toContain("pending_bk=1");
   });
 
   test("renders task summaries", () => {

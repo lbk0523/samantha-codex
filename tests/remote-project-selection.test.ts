@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import type { AgentProfile } from "../src/lib/contracts";
 import { createDecisionItem, DecisionStore } from "../src/lib/decision-store";
 import { OrchestratorPlanStore, type OrchestratorPlanPayload } from "../src/lib/orchestrator-store";
@@ -72,6 +72,20 @@ async function setupRoot() {
   const agents = join(root, "agents");
   const projects = join(root, "projects");
   await Promise.all([inbox, state, agents, projects].map((path) => mkdir(path, { recursive: true })));
+  await writeFile(
+    join(state, "host-ownership.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        role: "active_automation_host",
+        hostId: process.env.SAMANTHA_HOST_ID ?? hostname(),
+        updatedAt: "2026-05-10T00:00:00.000Z",
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
   await writeFile(join(agents, "codex-worker.json"), `${JSON.stringify(agent, null, 2)}\n`, "utf8");
   for (const projectId of ["samantha", "omht"]) {
     await writeFile(

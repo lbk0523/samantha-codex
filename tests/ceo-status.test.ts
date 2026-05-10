@@ -173,6 +173,14 @@ describe("CEO status snapshot", () => {
         telegram: {},
         health: { ok: true, ageMs: 0, violations: [] },
         launchd: [],
+        issues: [
+          {
+            severity: "unsafe_to_continue",
+            area: "host",
+            message: "host verification failed",
+            action: "repair host ownership",
+          },
+        ],
       } as any,
     });
     const report = formatCeoStatusReport(snapshot);
@@ -189,6 +197,9 @@ describe("CEO status snapshot", () => {
     expect(report).toContain("- project omht:");
     expect(report).toContain("- legacy legacy:");
     expect(report).toContain("- global blockers: 1");
+    expect(report).toContain("Queue pressure:");
+    expect(report).toContain("- class: block project=samantha");
+    expect(report).toContain("unsafe_host=1");
   });
 
   test("planned and question plans appear under Needs BK", () => {

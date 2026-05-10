@@ -4,6 +4,7 @@ import type { WorkItemAncestry } from "./ancestry";
 import type { CommandRunResult } from "./worker-dispatch";
 import { compactEntityId } from "./ids";
 import type { RemoteRequestClassification } from "./project-profile";
+import type { QueueAdmissionRecord } from "./queue-admission";
 
 export type OrchestrationRequestStatus = "pending_plan" | "planned" | "discarded";
 export type OrchestratorPlanStatus = "planned" | "questions" | "failed" | "approved" | "materialized" | "superseded" | "canceled";
@@ -17,6 +18,7 @@ export interface OrchestrationRequestRecord {
   text: string;
   status: OrchestrationRequestStatus;
   createdAt: string;
+  admission?: QueueAdmissionRecord;
   recoveryOfPlanId?: string;
   plannedAt?: string;
   discardedAt?: string;

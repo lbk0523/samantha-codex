@@ -490,6 +490,18 @@ function remoteActionNextLines(action: RemoteActionRecord): string[] {
 }
 
 function orchestrationRequestNextLines(request: OrchestrationRequestRecord): string[] {
+  if (request.admission && request.admission.decision !== "accept") {
+    return [
+      "",
+      "Admission:",
+      `- decision=${code(request.admission.decision)} pressure=${code(request.admission.pressureClass)}`,
+      `- reason=${telegramSafeLine(request.admission.reason)}`,
+      "",
+      "다음 액션:",
+      `- 먼저 ${code("/check")} 또는 ${code("/problems")}로 pressure 원인을 해결하세요.`,
+      `- pressure가 해소된 뒤 ${code("/plan")}으로 같은 저장 요청을 다시 계획할 수 있습니다.`,
+    ];
+  }
   if (request.status === "pending_plan") return ["", "다음 액션:", `- 텔레그램: ${code("/plan")}`, `- 요청 취소: ${code("/cancel")}`];
   return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
 }
@@ -1116,6 +1128,7 @@ export function nowReport(input: {
   const rankingSnapshot = buildCeoStatusSnapshot({
     runs: input.runs,
     tasks: input.tasks,
+    taskDrafts: input.drafts,
     actions: input.actions,
     decisions: input.decisions,
     orchestrationRequests: input.orchestrationRequests,
@@ -2029,6 +2042,9 @@ export function remoteActionPreparedReport(action: RemoteActionRecord): string {
     `태스크: ${code(action.taskId)} - ${oneLine(action.taskTitle)}`,
     `Agent: ${code(action.targetAgent)}`,
     repoSummaryLine(action.repoRoot),
+    action.admission && action.admission.decision !== "accept"
+      ? `Admission: decision=${code(action.admission.decision)} pressure=${code(action.admission.pressureClass)} reason=${telegramSafeLine(action.admission.reason)}`
+      : "",
     "",
     "실행 예정 명령:",
     code(remoteActionCommand(action)),
@@ -2271,6 +2287,7 @@ export function statusReport(input: {
     requests: input.requests,
     plans: input.plans,
     decisions: input.decisions,
+    taskDrafts: input.drafts,
     tasks: input.tasks,
     actions: input.actions,
     runs: input.runs,
@@ -2279,12 +2296,14 @@ export function statusReport(input: {
     governanceEvents: input.governanceEvents,
     budgetObservations: input.budgetObservations,
     orchestratorPlanBlockers: input.orchestratorPlanBlockers,
+    ops: input.ops,
     globalBlockers: [...(input.ops?.failures ?? []), ...(input.ops?.warnings ?? [])],
   }, { filterProjectId: input.projectId });
   const ceoRankingSnapshot = buildCeoStatusSnapshot({
     projectId: input.projectId,
     runs: input.runs,
     tasks: input.tasks,
+    taskDrafts: input.drafts,
     decisions: input.decisions,
     actions: input.actions,
     orchestrationRequests: input.requests,

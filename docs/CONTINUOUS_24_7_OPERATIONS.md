@@ -241,7 +241,28 @@ Verification focus:
 
 Outcome:
 
-- Pending.
+- Added deterministic queue pressure metrics for pending orchestration
+  requests, deferred requests, pending BK decisions, task drafts, active
+  tasks/actions, running actions, failed plans, recovery needs, failed runs,
+  run lifecycle gaps, remote outbox/inbox backlog, budget audit gaps, and
+  unsafe host issues.
+- Added pressure classes `normal`, `watch`, `defer`, `block`, and `needs_bk`
+  plus an admission policy for request, recovery request, routine trigger, and
+  action subjects. Pending BK decisions ask BK or defer intake; recovery and
+  unsafe-host blockers stop routine/action progress before routine intake can
+  advance.
+- Persisted admission evidence on orchestration requests and remote actions so
+  deferred or blocked work remains in state with a deterministic reason instead
+  of being dropped or silently approved.
+- Surfaced pressure and admission reasons through project queue formatting,
+  CEO status, operator status reports, and remote request/action reports.
+- Applied admission checks to new orchestration requests, recovery/revision
+  request intake, planning of pending requests, action preparation, plan
+  materialization action creation, and direct action approval. No dispatch,
+  merge, push, cleanup, or recovery authority was expanded.
+- Added focused tests for project-aware pressure, routine admission blocking,
+  CEO/operator pressure reporting, deferred remote intake preserving pending BK
+  decisions, and `DEFAULT_SAFETY_POLICY.writerCap` remaining `1`.
 
 ## M5: Routine Trigger Contract And Fingerprint Coalescing
 

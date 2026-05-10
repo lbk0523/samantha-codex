@@ -18,6 +18,7 @@ import type { GovernanceEventRecord } from "./governance-event-store";
 import type { RemoteActionRecord } from "./remote-action-store";
 import { recoveryResolvedPlanIds } from "./recovery-continuity";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
+import type { TaskDraftRecord } from "./task-draft-store";
 import { buildOperatingSurfaceView } from "./operating-surface";
 import { buildCeoRanking, type CeoRanking } from "./ceo-ranking";
 import { agentRoleForId, roleOutcomeSummary } from "./role-reporting";
@@ -109,6 +110,7 @@ export interface BuildCeoStatusSnapshotInput {
   runs?: RunSummary[];
   tasks?: TaskSpec[];
   decisions?: DecisionItem[];
+  taskDrafts?: TaskDraftRecord[];
   actions?: RemoteActionRecord[];
   orchestrationRequests?: OrchestrationRequestRecord[];
   orchestratorPlans?: OrchestratorPlanRecord[];
@@ -518,6 +520,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     requests: input.orchestrationRequests,
     plans: input.orchestratorPlans,
     decisions: input.decisions,
+    taskDrafts: input.taskDrafts,
     tasks: input.tasks,
     actions: input.actions,
     runs: input.runs,
@@ -526,6 +529,7 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
     governanceEvents: input.governanceEvents,
     budgetObservations: input.budgetObservations,
     orchestratorPlanBlockers: input.orchestratorPlanBlockers,
+    ops: input.ops,
     globalBlockers: [...(input.ops?.failures ?? []), ...(input.ops?.warnings ?? [])],
   }, { filterProjectId: input.projectId });
   const runs = filterProjectQueueRecords(input.runs ?? [], input.projectId);
@@ -610,7 +614,10 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
         title: oneLine(request.text),
         status: request.status,
         updatedAt: request.createdAt,
-        detail: "waiting for plan",
+        detail:
+          request.admission && request.admission.decision !== "accept"
+            ? `admission=${request.admission.decision}; pressure=${request.admission.pressureClass}; ${request.admission.reason}`
+            : "waiting for plan",
         ...rankingContext(request, goals),
       })),
     ...approvedPlans,

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { createDecisionItem } from "../src/lib/decision-store";
 
 let tmpRoots: string[] = [];
@@ -102,6 +102,74 @@ afterEach(async () => {
 });
 
 describe("remote approval inbox flow", () => {
+  test("records deferred request admission without resolving BK decisions", async () => {
+    const root = await makeRoot();
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    await mkdir(state, { recursive: true });
+    await mkdir(inbox, { recursive: true });
+    await writeFile(
+      join(state, "host-ownership.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        role: "active_automation_host",
+        hostId: process.env.SAMANTHA_HOST_ID ?? hostname(),
+        updatedAt: "2026-05-07T10:58:00.000Z",
+      }),
+      "utf8",
+    );
+    const decision = createDecisionItem({
+      title: "Review active plan",
+      prompt: "Approve before new routine work.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-active" },
+      createdAt: "2026-05-07T10:59:00.000Z",
+    });
+    await writeFile(join(state, "decisions.jsonl"), `${JSON.stringify(decision)}\n`, "utf8");
+    await writeFile(
+      join(inbox, "remote-work.json"),
+      JSON.stringify({
+        id: "remote-work",
+        type: "orchestrator:add-request",
+        args: {
+          source: "remote",
+          receivedAt: "2026-05-07T11:00:00.000Z",
+          text: "Add routine intake while a decision is pending",
+        },
+      }),
+      "utf8",
+    );
+
+    expect(await processInbox({ state, inbox, outbox, archive })).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "remote-work.md"), "utf8");
+    expect(report).toContain("Admission:");
+    expect(report).toContain("decision=`defer`");
+    expect(report).toContain("pending BK decisions=1");
+    const requests = (await readFile(join(state, "orchestration-requests.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { status: string; admission?: { decision: string; pressureClass: string; reason: string } });
+    expect(requests).toEqual([
+      expect.objectContaining({
+        status: "pending_plan",
+        admission: expect.objectContaining({
+          decision: "defer",
+          pressureClass: "needs_bk",
+          reason: "pending BK decisions=1",
+        }),
+      }),
+    ]);
+    const decisions = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { status: string });
+    expect(decisions[0]).toMatchObject({ status: "pending" });
+  });
+
   test("approves only the single pending plan decision without exposing ids", async () => {
     const root = await makeRoot();
     const state = join(root, "state");

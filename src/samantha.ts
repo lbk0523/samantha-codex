@@ -101,6 +101,7 @@ import {
 import { runPlan } from "./lib/plan-runner";
 import { validateDispatch } from "./lib/policy";
 import { validateAgentProfileGovernance } from "./lib/profile-governance";
+import { decideQueueAdmission, formatQueueAdmissionDecision, queueAdmissionRecord, buildQueuePressureSnapshot, type QueueAdmissionDecisionResult } from "./lib/queue-pressure";
 import {
   applyProjectDefaults,
   applyProjectRemoteScopeDefaults,
@@ -566,6 +567,7 @@ async function buildDashboard(args: ParsedArgs, out: string): Promise<number> {
       runs,
       tasks,
       decisions,
+      taskDrafts: drafts,
       actions,
       orchestrationRequests,
       orchestratorPlans,
@@ -1261,10 +1263,17 @@ async function prepareDispatchActionForTask(input: {
   taskId: string;
   commandId?: string;
   receivedAt?: string;
-}) {
+}): Promise<{ action?: RemoteActionRecord; report?: string }> {
   const task = await new TaskStore(tasksPath(input.args)).find(input.taskId);
   if (!task) throw new Error(`task not found: ${input.taskId}`);
   if (task.status !== "pending") throw new Error(`task must be pending to dispatch: ${task.status}`);
+  const receivedAt = input.receivedAt ?? new Date().toISOString();
+  const admission = await queueAdmissionFor({
+    args: input.args,
+    subjectKind: "action",
+    projectId: selectedProjectIdFromAncestry(task.ancestry) ?? task.projectId,
+  });
+  if (admission.decision !== "accept") return { report: formatQueueAdmissionDecision(admission) };
   const agent = await loadAgentProfile(input.args, task.targetAgent);
   const plan = validateDispatch(task, agent, undefined, await governanceDecisions(input.args));
   if (!plan.mayDispatch) {
@@ -1274,12 +1283,13 @@ async function prepareDispatchActionForTask(input: {
   const action = createRemoteDispatchAction({
     task,
     repoRoot: task.repoRoot ? resolve(task.repoRoot) : remoteDispatchRepoRoot(input.args),
-    createdAt: input.receivedAt ?? new Date().toISOString(),
+    createdAt: receivedAt,
     source: "remote",
     commandId: input.commandId,
+    admission: queueAdmissionRecord({ decidedAt: receivedAt, result: admission }),
   });
   await new RemoteActionStore(remoteActionsPath(input.args)).append(action);
-  return action;
+  return { action };
 }
 
 async function projectProfileForRemotePlan(input: {
@@ -1411,9 +1421,10 @@ async function nowReportForInbox(args: ParsedArgs): Promise<string> {
 }
 
 async function loadCeoStatusSnapshot(args: ParsedArgs): Promise<CeoStatusSnapshot> {
-  const [runs, tasks, decisions, actions, orchestrationRequests, orchestratorPlans, ops, lifecycles, reports, governanceEvents, budgetObservations] = await Promise.all([
+  const [runs, tasks, taskDrafts, decisions, actions, orchestrationRequests, orchestratorPlans, ops, lifecycles, reports, governanceEvents, budgetObservations] = await Promise.all([
     new RunIndex(runsPath(args)).list(),
     new TaskStore(tasksPath(args)).list(),
+    new TaskDraftStore(taskDraftsPath(args)).list(),
     new DecisionStore(decisionsPath(args)).list(),
     new RemoteActionStore(remoteActionsPath(args)).list(),
     new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
@@ -1430,6 +1441,7 @@ async function loadCeoStatusSnapshot(args: ParsedArgs): Promise<CeoStatusSnapsho
     projectId,
     runs,
     tasks,
+    taskDrafts,
     decisions,
     actions,
     orchestrationRequests,
@@ -1441,6 +1453,52 @@ async function loadCeoStatusSnapshot(args: ParsedArgs): Promise<CeoStatusSnapsho
     governanceEvents,
     budgetObservations,
   });
+}
+
+async function queueAdmissionFor(input: {
+  args: ParsedArgs;
+  subjectKind: QueueAdmissionDecisionResult["subjectKind"];
+  projectId?: string;
+  excludeActionId?: string;
+  excludeRequestId?: string;
+}): Promise<QueueAdmissionDecisionResult> {
+  const [
+    requests,
+    plans,
+    decisions,
+    taskDrafts,
+    tasks,
+    actions,
+    runs,
+    lifecycles,
+    budgetObservations,
+    ops,
+  ] = await Promise.all([
+    new OrchestrationRequestStore(orchestrationRequestsPath(input.args)).list(),
+    new OrchestratorPlanStore(orchestratorPlansPath(input.args)).list(),
+    new DecisionStore(decisionsPath(input.args)).list(),
+    new TaskDraftStore(taskDraftsPath(input.args)).list(),
+    new TaskStore(tasksPath(input.args)).list(),
+    new RemoteActionStore(remoteActionsPath(input.args)).list(),
+    new RunIndex(runsPath(input.args)).list(),
+    new RunLifecycleStore(runLifecyclePath(input.args)).list(),
+    new CostBudgetAuditStore(costBudgetAuditPath(input.args)).list(),
+    collectOps(input.args),
+  ]);
+  const pressure = buildQueuePressureSnapshot({
+    requests: input.excludeRequestId ? requests.filter((request) => request.id !== input.excludeRequestId) : requests,
+    plans,
+    decisions,
+    taskDrafts,
+    tasks,
+    actions: input.excludeActionId ? actions.filter((action) => action.id !== input.excludeActionId) : actions,
+    runs,
+    lifecycles,
+    budgetObservations,
+    orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(input.args, plans),
+    ops: withoutActiveInboxCommand(ops),
+  }, { projectId: input.projectId });
+  return decideQueueAdmission({ pressure, subjectKind: input.subjectKind });
 }
 
 async function ensureDecisionForOrchestratorPlan(input: {
@@ -2179,6 +2237,12 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       status: "pending_plan",
       createdAt: receivedAt,
     };
+    const admission = await queueAdmissionFor({
+      args,
+      subjectKind: "request",
+      projectId: selectedProjectIdFromAncestry(request.ancestry),
+    });
+    request.admission = queueAdmissionRecord({ decidedAt: receivedAt, result: admission });
     if (!request.id) throw new Error("orchestration request id is required");
     await new OrchestrationRequestStore(orchestrationRequestsPath(args)).append(request);
     return orchestrationRequestAddedReport(request);
@@ -2216,6 +2280,12 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       createdAt: receivedAt,
       recoveryOfPlanId: recoverable.plan.id,
     };
+    const admission = await queueAdmissionFor({
+      args,
+      subjectKind: "recovery_request",
+      projectId: selectedProjectIdFromAncestry(request.ancestry),
+    });
+    request.admission = queueAdmissionRecord({ decidedAt: receivedAt, result: admission });
     await new OrchestrationRequestStore(orchestrationRequestsPath(args)).append(request);
     return orchestratorRecoveryRequestReport({
       request,
@@ -2270,6 +2340,12 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       status: "pending_plan",
       createdAt: receivedAt,
     };
+    const admission = await queueAdmissionFor({
+      args,
+      subjectKind: "request",
+      projectId: selectedProjectIdFromAncestry(request.ancestry),
+    });
+    request.admission = queueAdmissionRecord({ decidedAt: receivedAt, result: admission });
     await requestStore.append(request);
     const supersededPlan = await planStore.markSuperseded(plan.id, {
       supersededAt: receivedAt,
@@ -2310,6 +2386,13 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     if (selectedRequest.report) return selectedRequest.report;
     const request = selectedRequest.request;
     if (!request) return nowReportForInbox(args);
+    const requestAdmission = await queueAdmissionFor({
+      args,
+      subjectKind: request.recoveryOfPlanId ? "recovery_request" : "request",
+      projectId: requestedProjectId ?? selectedProjectIdFromAncestry(request.ancestry),
+      excludeRequestId: request.id,
+    });
+    if (requestAdmission.decision !== "accept") return formatQueueAdmissionDecision(requestAdmission);
 
     const projectProfiles = await loadProjectProfiles(projectProfilesDir(args));
     const planAncestry = ancestryForPlan({
@@ -2583,13 +2666,14 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
   if (command.type === "actions:prepare-dispatch") {
     const taskId = String(command.args?.taskId ?? "");
     if (!taskId) throw new Error("task id is required");
-    const action = await prepareDispatchActionForTask({
+    const prepared = await prepareDispatchActionForTask({
       args,
       taskId,
       receivedAt: String(command.args?.receivedAt ?? new Date().toISOString()),
       commandId: command.id,
     });
-    return remoteActionPreparedReport(action);
+    if (prepared.report) return prepared.report;
+    return remoteActionPreparedReport(prepared.action!);
   }
   if (command.type === "actions:run-next") {
     const existing = (await new RemoteActionStore(remoteActionsPath(args)).list())
@@ -2601,13 +2685,14 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
 
     const task = (await new TaskStore(tasksPath(args)).listActive()).find((item) => item.status === "pending");
     if (!task) return nowReportForInbox(args);
-    const action = await prepareDispatchActionForTask({
+    const prepared = await prepareDispatchActionForTask({
       args,
       taskId: task.id,
       receivedAt: String(command.args?.receivedAt ?? new Date().toISOString()),
       commandId: command.id,
     });
-    return remoteActionPreparedReport(action);
+    if (prepared.report) return prepared.report;
+    return remoteActionPreparedReport(prepared.action!);
   }
   if (command.type === "actions:go") {
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
@@ -2663,6 +2748,12 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       if (!decisionAllowsOrchestratorMaterialization(decision)) {
         return decisionGateReport(decision);
       }
+      const actionAdmission = await queueAdmissionFor({
+        args,
+        subjectKind: "action",
+        projectId: requestedProjectId ?? selectedProjectIdFromAncestry(orchestratorPlan.ancestry),
+      });
+      if (actionAdmission.decision !== "accept") return formatQueueAdmissionDecision(actionAdmission);
 
       const taskStore = new TaskStore(tasksPath(args));
       const actionStore = new RemoteActionStore(remoteActionsPath(args));
@@ -2672,9 +2763,13 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       }
       const materializedActions: RemoteActionRecord[] = [];
       for (const action of materialized.actions) {
-        await actionStore.append(action);
+        const admittedAction = {
+          ...action,
+          admission: queueAdmissionRecord({ decidedAt: receivedAt, result: actionAdmission }),
+        };
+        await actionStore.append(admittedAction);
         materializedActions.push(
-          action.status === "pending" ? await actionStore.markApproved(action.id, receivedAt) : action,
+          admittedAction.status === "pending" ? await actionStore.markApproved(admittedAction.id, receivedAt) : admittedAction,
         );
       }
       const plan = await orchestratorPlanStore.markMaterialized(orchestratorPlan.id, {
@@ -2705,6 +2800,15 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const id = String(command.args?.id ?? "");
     if (!id) throw new Error("action id is required");
     const store = new RemoteActionStore(remoteActionsPath(args));
+    const action = await store.find(id);
+    if (!action) throw new Error(`remote action not found: ${id}`);
+    const admission = await queueAdmissionFor({
+      args,
+      subjectKind: "action",
+      projectId: selectedProjectIdFromAncestry(action.ancestry),
+      excludeActionId: action.id,
+    });
+    if (admission.decision !== "accept") return formatQueueAdmissionDecision(admission);
     const approved = await store.markApproved(id, String(command.args?.receivedAt ?? new Date().toISOString()));
     return remoteActionApprovedReport(approved);
   }
@@ -2714,6 +2818,13 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       .reverse()
       .find((item) => item.status === "pending");
     if (!action) return nowReportForInbox(args);
+    const admission = await queueAdmissionFor({
+      args,
+      subjectKind: "action",
+      projectId: selectedProjectIdFromAncestry(action.ancestry),
+      excludeActionId: action.id,
+    });
+    if (admission.decision !== "accept") return formatQueueAdmissionDecision(admission);
     const approved = await new RemoteActionStore(remoteActionsPath(args)).markApproved(
       action.id,
       String(command.args?.receivedAt ?? new Date().toISOString()),

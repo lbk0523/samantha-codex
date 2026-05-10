@@ -7,13 +7,17 @@ import type { GovernanceEventRecord } from "./governance-event-store";
 import type { RunSummary } from "./ledger";
 import type { OrchestratorPlanBlocker } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "./orchestrator-store";
+import type { OpsSnapshot } from "./ops-diagnostics";
+import { buildQueuePressureSnapshot, formatQueuePressureSnapshot, type QueuePressureSnapshot } from "./queue-pressure";
 import type { RemoteActionRecord } from "./remote-action-store";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
+import type { TaskDraftRecord } from "./task-draft-store";
 
 export type ProjectQueueRecordKind =
   | "request"
   | "plan"
   | "decision"
+  | "task_draft"
   | "task"
   | "action"
   | "run"
@@ -57,12 +61,14 @@ export interface ProjectQueueSnapshot {
   legacy: ProjectQueueSection;
   selectedProject?: ProjectQueueSection;
   globalBlockers: string[];
+  pressure: QueuePressureSnapshot;
 }
 
 export interface ProjectQueueInput {
   requests?: OrchestrationRequestRecord[];
   plans?: OrchestratorPlanRecord[];
   decisions?: DecisionItem[];
+  taskDrafts?: TaskDraftRecord[];
   tasks?: TaskSpec[];
   actions?: RemoteActionRecord[];
   runs?: RunSummary[];
@@ -71,6 +77,7 @@ export interface ProjectQueueInput {
   governanceEvents?: GovernanceEventRecord[];
   budgetObservations?: CostBudgetAuditRecord[];
   orchestratorPlanBlockers?: OrchestratorPlanBlocker[];
+  ops?: OpsSnapshot;
   globalBlockers?: string[];
 }
 
@@ -93,6 +100,7 @@ const recordKinds: ProjectQueueRecordKind[] = [
   "request",
   "plan",
   "decision",
+  "task_draft",
   "task",
   "action",
   "run",
@@ -269,6 +277,16 @@ function queueRecords(input: ProjectQueueInput): QueueRecord[] {
         pendingBkDecision: decision.status === "pending",
       }),
     ),
+    ...(input.taskDrafts ?? []).map((draft) =>
+      baseRecord({
+        kind: "task_draft",
+        id: draft.id,
+        bucket: projectQueueBucketForRecord(draft),
+        status: draft.status,
+        active: draft.status === "drafted",
+        completed: draft.status !== "drafted",
+      }),
+    ),
     ...(input.tasks ?? []).map((task) =>
       baseRecord({
         kind: "task",
@@ -387,6 +405,19 @@ export function buildProjectQueueSnapshot(input: ProjectQueueInput, options: { f
       ? projects.find((item) => item.bucket.projectId === options.filterProjectId) ?? section({ kind: "project", projectId: options.filterProjectId, label: options.filterProjectId })
       : undefined,
     globalBlockers: input.globalBlockers ?? [],
+    pressure: buildQueuePressureSnapshot({
+      requests: input.requests,
+      plans: input.plans,
+      decisions: input.decisions,
+      taskDrafts: input.taskDrafts,
+      tasks: input.tasks,
+      actions: input.actions,
+      runs: input.runs,
+      lifecycles: input.lifecycles,
+      budgetObservations: input.budgetObservations,
+      orchestratorPlanBlockers: input.orchestratorPlanBlockers,
+      ops: input.ops,
+    }, { projectId: options.filterProjectId }),
   };
 }
 
@@ -421,5 +452,6 @@ export function formatProjectQueueSnapshot(snapshot: ProjectQueueSnapshot): stri
     `- unassigned ${formatProjectQueueSection(snapshot.unassigned)}`,
     `- legacy ${formatProjectQueueSection(snapshot.legacy)}`,
     `- global blockers: ${snapshot.globalBlockers.length}`,
+    ...formatQueuePressureSnapshot(snapshot.pressure),
   ];
 }

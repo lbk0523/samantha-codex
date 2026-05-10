@@ -7,6 +7,8 @@ import { createGovernanceEvent } from "../src/lib/governance-event-store";
 import type { RunSummary } from "../src/lib/ledger";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "../src/lib/orchestrator-store";
 import type { RemoteActionRecord } from "../src/lib/remote-action-store";
+import { DEFAULT_SAFETY_POLICY } from "../src/lib/policy";
+import { buildQueuePressureSnapshot, decideQueueAdmission } from "../src/lib/queue-pressure";
 import { buildProjectQueueSnapshot, filterProjectQueueRecords } from "../src/lib/project-queues";
 
 const samanthaAncestry: WorkItemAncestry = {
@@ -180,5 +182,48 @@ describe("project-isolated queues", () => {
     expect(snapshot.selectedProject?.counts.pendingBkDecisions).toBe(1);
     expect(snapshot.selectedProject?.counts.records.plan).toBe(1);
     expect(snapshot.selectedProject?.counts.records.decision).toBe(1);
+  });
+
+  test("classifies queue pressure deterministically and keeps BK decisions above routine intake", () => {
+    const decision = createDecisionItem({
+      ancestry: samanthaAncestry,
+      title: "Approve Samantha plan",
+      prompt: "Approve before materialization.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-samantha" },
+      options: ["approve", "revise", "cancel"],
+      createdAt: "2026-05-10T00:09:00.000Z",
+    });
+    const pressure = buildQueuePressureSnapshot({
+      decisions: [decision],
+      actions: [action],
+    }, { projectId: "samantha" });
+    const admission = decideQueueAdmission({ pressure, subjectKind: "routine_trigger" });
+
+    expect(pressure.pressureClass).toBe("needs_bk");
+    expect(pressure.reasons[0]).toBe("pending BK decisions=1");
+    expect(admission.decision).toBe("ask_bk");
+    expect(DEFAULT_SAFETY_POLICY.writerCap).toBe(1);
+  });
+
+  test("blocks routine intake when host state is unsafe", () => {
+    const pressure = buildQueuePressureSnapshot({
+      ops: {
+        issues: [
+          {
+            severity: "unsafe_to_continue",
+            area: "host",
+            message: "host ownership is stale",
+            action: "repair host ownership",
+          },
+        ],
+        queues: { pendingInboxCount: 0, unsentRemoteOutboxCount: 0 },
+      } as any,
+    });
+    const admission = decideQueueAdmission({ pressure, subjectKind: "routine_trigger" });
+
+    expect(pressure.pressureClass).toBe("block");
+    expect(admission.decision).toBe("block");
   });
 });

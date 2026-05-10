@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { WorkItemAncestry } from "./ancestry";
 import type { TaskSpec } from "./contracts";
 import { compactEntityId } from "./ids";
+import type { QueueAdmissionRecord } from "./queue-admission";
 
 export type RemoteActionStatus = "pending" | "waiting" | "approved" | "running" | "completed" | "failed";
 export type RemoteActionKind = "dispatch_task";
@@ -25,6 +26,7 @@ export interface RemoteActionRecord {
   status: RemoteActionStatus;
   createdAt: string;
   source: "remote" | "local";
+  admission?: QueueAdmissionRecord;
   taskId: string;
   taskTitle: string;
   targetAgent: string;
@@ -67,6 +69,7 @@ export function createRemoteDispatchAction(input: {
   orchestratorTaskId?: string;
   dependsOnActionIds?: string[];
   ancestry?: WorkItemAncestry;
+  admission?: QueueAdmissionRecord;
 }): RemoteActionRecord {
   return {
     schemaVersion: 1,
@@ -80,6 +83,7 @@ export function createRemoteDispatchAction(input: {
     status: input.status ?? "pending",
     createdAt: input.createdAt,
     source: input.source,
+    admission: input.admission,
     taskId: input.task.id,
     taskTitle: input.task.title,
     targetAgent: input.task.targetAgent,
