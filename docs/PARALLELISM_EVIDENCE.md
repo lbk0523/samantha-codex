@@ -23,9 +23,9 @@ There is no automatic Phase 7 writer cap increase.
 | Decision | Evidence | Verification |
 | --- | --- | --- |
 | Keep writer cap at `1` | `tests/policy.test.ts` checks `DEFAULT_SAFETY_POLICY.writerCap`; `tests/orchestrator-materializer.test.ts` blocks a batch with two writer tasks. | `bun run test:portable` |
-| Prefer non-writer parallel confidence first | `tests/operations.test.ts` covers ready non-writers in the same plan batch before writers. | `bun run test:portable` |
+| Prefer non-writer parallel confidence first | `tests/operations.test.ts` covers ready reviewer, researcher, and evaluator reports in the same plan batch before writers. | `bun run test:portable` |
 | Serialize ready writers | `tests/operations.test.ts` covers two ready writers becoming separate batches. | `bun run test:portable` |
-| Keep non-writers read-only | `tests/policy.test.ts` and `tests/orchestrator-materializer.test.ts` reject non-writer write proposals. | `bun run test:portable` |
+| Keep non-writers read-only | `tests/policy.test.ts`, `tests/operations.test.ts`, and `tests/orchestrator-materializer.test.ts` reject non-writer write proposals, worktree allocation, merge authority, and report-only dependencies on unmerged writer output. | `bun run test:portable` |
 | Record compact parallel evidence | `src/lib/parallelism-evidence-store.ts` records plan/action/task/run refs, roles, result modes, writer count, changed files, verification summary, merge status, cleanup status, and outcome without copying full run logs. `tests/parallelism-evidence.test.ts` covers append/list/filter, successful report-only evidence, failed evidence preservation, and writer-cap preservation. | `bun test tests/parallelism-evidence.test.ts` |
 | Keep parallel reports readable | `tests/parallelism-evidence.test.ts` covers parallel specialist plus single-writer role outcomes without raw action/status noise. | `bun run test:portable` |
 | Keep integration deterministic | `tests/merge-gate.test.ts` covers merge and push gates; `tests/worktree-cleanup.test.ts` covers cleanup gates; `tests/run-lifecycle-store.test.ts` records lifecycle status in `state/run-lifecycle.jsonl`. | `bun run test:portable` |

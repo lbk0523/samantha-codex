@@ -59,7 +59,59 @@ export async function loadPlan(planPath: string): Promise<{ plan: PlanSpec; task
   return { plan, tasks };
 }
 
+function isWriteProducingTask(task: LoadedPlanTask): boolean {
+  return task.agent.writerClass === "writer" && task.task.resultMode !== "report";
+}
+
+function validatePlanTaskContracts(tasks: LoadedPlanTask[]): string[] {
+  const violations: string[] = [];
+  const taskById = new Map(tasks.map((task) => [task.ref.id, task]));
+  const writeProducingTaskIds = new Set(
+    tasks.filter((task) => isWriteProducingTask(task)).map((task) => task.ref.id),
+  );
+
+  for (const loaded of tasks) {
+    const prefix = `plan task ${loaded.ref.id}`;
+
+    if (loaded.agent.writerClass === "non-writer") {
+      if (loaded.task.resultMode !== "report") {
+        violations.push(`${prefix}: non-writer tasks must use report resultMode`);
+      }
+      if (loaded.task.targetFiles.length > 0) {
+        violations.push(`${prefix}: non-writer report tasks must not declare targetFiles`);
+      }
+      if (loaded.agent.worktreePolicy !== "none") {
+        violations.push(`${prefix}: non-writer agents must not allocate worktrees`);
+      }
+      if (loaded.ref.allocate === true) {
+        violations.push(`${prefix}: non-writer plan refs must not request worktree allocation`);
+      }
+      if (loaded.agent.mergePolicy !== "none") {
+        violations.push(`${prefix}: non-writer agents must not use merge policy`);
+      }
+    }
+
+    if (loaded.task.resultMode === "report") {
+      for (const dependency of loaded.ref.dependsOn ?? []) {
+        if (!taskById.has(dependency)) continue;
+        if (writeProducingTaskIds.has(dependency)) {
+          violations.push(
+            `${prefix}: report-only tasks must not depend on unmerged writer output from ${dependency}; put verification in the writer task's verifyCommands`,
+          );
+        }
+      }
+    }
+  }
+
+  return violations;
+}
+
 export function buildPlanBatches(tasks: LoadedPlanTask[]): string[][] {
+  const contractViolations = validatePlanTaskContracts(tasks);
+  if (contractViolations.length > 0) {
+    throw new Error(`plan blocked:\n${contractViolations.join("\n")}`);
+  }
+
   const remaining = new Map(tasks.map((task) => [task.ref.id, task]));
   const completed = new Set<string>();
   const batches: string[][] = [];

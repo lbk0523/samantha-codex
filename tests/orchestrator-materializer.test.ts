@@ -34,6 +34,12 @@ const evaluator: AgentProfile = {
   role: "evaluator",
 };
 
+const researcher: AgentProfile = {
+  ...reviewer,
+  id: "codex-researcher",
+  role: "researcher",
+};
+
 const spec: AgentProfile = {
   ...reviewer,
   id: "codex-spec",
@@ -199,10 +205,10 @@ describe("materializeOrchestratorPlan role-aware specialist contract", () => {
     expect(result.actions).toEqual([]);
   });
 
-  test("materializes report-only specialists alongside a single writer", () => {
+  test("materializes reviewer, researcher, and evaluator reports alongside a single writer", () => {
     const tasks = [
-      proposal({ id: "shape-scope", title: "Shape acceptance criteria", targetAgent: "codex-spec" }),
       proposal({ id: "review-risk", title: "Review implementation risk", targetAgent: "codex-reviewer" }),
+      proposal({ id: "research-context", title: "Research repository context", targetAgent: "codex-researcher" }),
       proposal({ id: "plan-verify", title: "Plan validation checks", targetAgent: "codex-evaluator" }),
       proposal({
         id: "apply-change",
@@ -215,8 +221,8 @@ describe("materializeOrchestratorPlan role-aware specialist contract", () => {
     ];
 
     const result = materializeOrchestratorPlan({
-      plan: plan(tasks, [["shape-scope", "review-risk", "plan-verify", "apply-change"]]),
-      agents: [worker, reviewer, evaluator, spec],
+      plan: plan(tasks, [["review-risk", "research-context", "plan-verify", "apply-change"]]),
+      agents: [worker, reviewer, researcher, evaluator, spec],
       projects: [project],
       createdAt: "2026-05-07T00:01:00.000Z",
       commandId: "remote-go-role-aware",
@@ -225,14 +231,14 @@ describe("materializeOrchestratorPlan role-aware specialist contract", () => {
     expect(result.ok).toBe(true);
     expect(result.violations).toEqual([]);
     expect(result.tasks.map((task) => [task.targetAgent, task.resultMode, task.targetFiles])).toEqual([
-      ["codex-spec", "report", []],
       ["codex-reviewer", "report", []],
+      ["codex-researcher", "report", []],
       ["codex-evaluator", "report", []],
       ["codex-worker", "write", ["src/lib/orchestrator-materializer.ts", "tests/orchestrator-materializer.test.ts"]],
     ]);
     expect(result.actions.map((action) => [action.targetAgent, action.status])).toEqual([
-      ["codex-spec", "pending"],
       ["codex-reviewer", "pending"],
+      ["codex-researcher", "pending"],
       ["codex-evaluator", "pending"],
       ["codex-worker", "pending"],
     ]);

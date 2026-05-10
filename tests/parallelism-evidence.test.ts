@@ -445,7 +445,7 @@ describe("parallelism evidence", () => {
     }
 
     expect(policyTests).toContain('test("keeps the default writer cap at one"');
-    expect(operationsTests).toContain('test("runs ready non-writers in parallel before serialized writers"');
+    expect(operationsTests).toContain('test("runs ready reviewer, researcher, and evaluator reports in parallel before serialized writers"');
     expect(operationsTests).toContain('test("serializes ready writers under writer cap one"');
     expect(materializerTests).toContain('test("blocks a batch that exceeds writer cap one"');
     expect(materializerTests).toContain('test("blocks non-writer proposals that request write behavior"');

@@ -172,6 +172,20 @@ Verification focus:
 - report-only tasks cannot depend on unmerged writer output
 - writer tasks remain serialized under writerCap `1`
 
+Outcome:
+
+- Strengthened `buildPlanBatches` so invalid non-writer plan shapes fail before
+  dispatch: non-writers must stay report-only, read-only, no-worktree, and
+  no-merge.
+- Added plan-runner coverage for reviewer + researcher + evaluator parallel
+  report batches, non-writer write rejection, non-writer worktree/merge
+  rejection, report-only dependency rejection after writer output, and
+  serialized writers under writerCap `1`.
+- Extended materializer coverage for a reviewer + researcher + evaluator
+  report-only batch alongside a single writer.
+- Left dispatch authority unchanged. `DEFAULT_SAFETY_POLICY.writerCap` remains
+  `1`.
+
 ## M5: Operator Reporting For Parallel Roles
 
 Goal: make parallel specialist outcomes readable to BK without raw internal

@@ -37,6 +37,18 @@ const reviewer: AgentProfile = {
   mergePolicy: "none",
 };
 
+const researcher: AgentProfile = {
+  ...reviewer,
+  id: "codex-researcher",
+  role: "researcher",
+};
+
+const evaluator: AgentProfile = {
+  ...reviewer,
+  id: "codex-evaluator",
+  role: "evaluator",
+};
+
 const orchestrator: AgentProfile = {
   ...reviewer,
   id: "codex-orchestrator",
@@ -53,6 +65,16 @@ const task: TaskSpec = {
   instructions: "Fixture.",
   status: "pending",
 };
+
+function reportTask(targetAgent: string): TaskSpec {
+  return {
+    ...task,
+    targetAgent,
+    targetFiles: [],
+    forbiddenChanges: ["**/*"],
+    resultMode: "report",
+  };
+}
 
 async function writeFakeCodex(root: string, payload: OrchestratorPlanPayload): Promise<string> {
   const path = join(root, "fake-codex");
@@ -175,24 +197,67 @@ afterEach(async () => {
 });
 
 describe("plan batches", () => {
-  test("runs ready non-writers in parallel before serialized writers", () => {
+  test("runs ready reviewer, researcher, and evaluator reports in parallel before serialized writers", () => {
     const tasks: LoadedPlanTask[] = [
-      { ref: { id: "review-a", task: "a.json", agent: "reviewer.json", repoRoot: "." }, task, agent: reviewer },
-      { ref: { id: "review-b", task: "b.json", agent: "reviewer.json", repoRoot: "." }, task, agent: reviewer },
-      { ref: { id: "write", task: "w.json", agent: "writer.json", repoRoot: ".", dependsOn: ["review-a"] }, task, agent: writer },
+      { ref: { id: "review-risk", task: "review.json", agent: "reviewer.json", repoRoot: "." }, task: reportTask("codex-reviewer"), agent: reviewer },
+      { ref: { id: "research-context", task: "research.json", agent: "researcher.json", repoRoot: "." }, task: reportTask("codex-researcher"), agent: researcher },
+      { ref: { id: "evaluate-plan", task: "evaluate.json", agent: "evaluator.json", repoRoot: "." }, task: reportTask("codex-evaluator"), agent: evaluator },
+      { ref: { id: "write", task: "w.json", agent: "writer.json", repoRoot: ".", dependsOn: ["review-risk"] }, task, agent: writer },
     ];
 
-    expect(buildPlanBatches(tasks)).toEqual([["review-a", "review-b"], ["write"]]);
+    expect(buildPlanBatches(tasks)).toEqual([["review-risk", "research-context", "evaluate-plan"], ["write"]]);
   });
 
   test("serializes ready writers under writer cap one", () => {
     const tasks: LoadedPlanTask[] = [
       { ref: { id: "write-a", task: "a.json", agent: "writer.json", repoRoot: "." }, task, agent: writer },
       { ref: { id: "write-b", task: "b.json", agent: "writer.json", repoRoot: "." }, task, agent: writer },
-      { ref: { id: "review", task: "r.json", agent: "reviewer.json", repoRoot: "." }, task, agent: reviewer },
+      { ref: { id: "review", task: "r.json", agent: "reviewer.json", repoRoot: "." }, task: reportTask("codex-reviewer"), agent: reviewer },
     ];
 
     expect(buildPlanBatches(tasks)).toEqual([["review"], ["write-a"], ["write-b"]]);
+  });
+
+  test("rejects non-writer write plans before dispatch", () => {
+    const tasks: LoadedPlanTask[] = [
+      {
+        ref: { id: "review-edit", task: "review.json", agent: "reviewer.json", repoRoot: "." },
+        task: { ...task, targetAgent: "codex-reviewer", resultMode: "write", targetFiles: ["src/lib/policy.ts"] },
+        agent: reviewer,
+      },
+    ];
+
+    expect(() => buildPlanBatches(tasks)).toThrow("plan task review-edit: non-writer tasks must use report resultMode");
+    expect(() => buildPlanBatches(tasks)).toThrow("plan task review-edit: non-writer report tasks must not declare targetFiles");
+  });
+
+  test("rejects non-writer worktree allocation and merge authority before dispatch", () => {
+    const tasks: LoadedPlanTask[] = [
+      {
+        ref: { id: "review-with-worktree", task: "review.json", agent: "reviewer.json", repoRoot: ".", allocate: true },
+        task: reportTask("codex-reviewer"),
+        agent: { ...reviewer, worktreePolicy: "per-task", mergePolicy: "samantha-controlled" },
+      },
+    ];
+
+    expect(() => buildPlanBatches(tasks)).toThrow("plan task review-with-worktree: non-writer agents must not allocate worktrees");
+    expect(() => buildPlanBatches(tasks)).toThrow("plan task review-with-worktree: non-writer plan refs must not request worktree allocation");
+    expect(() => buildPlanBatches(tasks)).toThrow("plan task review-with-worktree: non-writer agents must not use merge policy");
+  });
+
+  test("rejects report-only tasks that depend on unmerged writer output", () => {
+    const tasks: LoadedPlanTask[] = [
+      { ref: { id: "write", task: "write.json", agent: "writer.json", repoRoot: "." }, task, agent: writer },
+      {
+        ref: { id: "evaluate-output", task: "evaluate.json", agent: "evaluator.json", repoRoot: ".", dependsOn: ["write"] },
+        task: reportTask("codex-evaluator"),
+        agent: evaluator,
+      },
+    ];
+
+    expect(() => buildPlanBatches(tasks)).toThrow(
+      "plan task evaluate-output: report-only tasks must not depend on unmerged writer output from write; put verification in the writer task's verifyCommands",
+    );
   });
 });
 
@@ -1763,8 +1828,8 @@ describe("inbox and remote commands", () => {
       id: "task-read-only-audit",
       resultMode: "report",
       targetFiles: [],
-      forbiddenChanges: ["**/*"],
     });
+    expect(result.tasks[0]?.forbiddenChanges).toEqual(["state/**", "**/*"]);
     expect(result.actions[0]).toMatchObject({
       taskId: "task-read-only-audit",
       repoRoot: "/repo/omht",
