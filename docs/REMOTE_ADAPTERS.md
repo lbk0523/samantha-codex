@@ -1,6 +1,6 @@
 # Samantha Remote Adapters
 
-Last updated: 2026-05-09
+Last updated: 2026-05-10
 
 ## Policy
 
@@ -210,6 +210,35 @@ Required:
 
 `TELEGRAM_CHAT_ID` is supported for compatibility with the older Claude-side Samantha Telegram environment.
 `telegram:poll` authorizes by Telegram `chat.id` first, then falls back to `from.id`.
+
+## Multi-Project Selection
+
+Remote commands are project-aware but still narrow. `/plan` may include a
+project id and scope id, and compact current-item commands may include
+`project:<id>` when more than one active project has a current item:
+
+```text
+/plan samantha implementation
+/plan omht planning_report
+/approve project:samantha
+/answer project:omht <answer>
+/go project:samantha
+/recover project:omht
+```
+
+Unknown project ids, unknown scope ids, and scope-without-project inputs fail
+closed before planning writes executable work. If multiple project current
+items could match `/approve`, `/go`, `/answer`, `/revise`, `/cancel`,
+`/recover`, or `/plan_current`, Samantha asks BK to name the project instead of
+choosing by recency or accepting internal ids. `/now` reports the
+project-specific safest next actions and does not present `/go` as safe during
+cross-project ambiguity.
+
+The local fallback for precise inspection is:
+
+```bash
+bun run samantha orchestrator:current [--project=<id>]
+```
 
 Example:
 

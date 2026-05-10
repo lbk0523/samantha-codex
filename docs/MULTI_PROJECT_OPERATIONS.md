@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-10
 
-Status: planned.
+Status: implemented.
 
 This document contains the execution stages for roadmap Phase 6:
 [Multi-Project Operations](CEO_OFFICE_ROADMAP.md#6-multi-project-operations).
@@ -497,6 +497,122 @@ Verification focus:
 - `writerCap` remains `1`
 - Mac-side verification passes
 - Ubuntu host verification is run only when host runtime behavior is touched
+
+Outcome:
+
+- Reviewed M1-M9 outcomes and found the staged Phase 6 contract complete:
+  baseline inventory, project profile resolution, ancestry contract,
+  planning/materialization propagation, project-isolated queues, remote
+  wrong-project guards, per-project safety policy, project/goal budget
+  reporting, and cross-project CEO ranking are all implemented with focused
+  tests.
+- Dogfooded the two active bundled project profiles, `samantha` and `omht`, as
+  the Phase 6 active-project baseline. The profiles remain source-controlled
+  identity records with runtime root expressions and remote scope recipes, not
+  host-local absolute-path state.
+- Kept the implementation-flow evidence on `samantha`: a role-aware canary
+  materializes one report-only reviewer task followed by one writer task, with
+  the writer action waiting on the reviewer action.
+- Kept the report-only-flow evidence on `omht`: a planning/report scope can
+  materialize and dispatch report-mode work with no target-file writes or
+  commit requirement.
+- Classified old or missing ancestry as explicit `legacy` records and unclear
+  BK/project selection as explicit `unassigned` records. No destructive edits
+  were made to `state/`, `runs/`, or existing runtime records.
+- Updated the Phase 6 status and supporting docs only for behavior already
+  implemented: multi-project ancestry, remote project disambiguation,
+  project queues/dashboard summaries, operations host ownership, and roadmap
+  status.
+- Left runtime scope unchanged: no `writerCap` increase, no routine layer, no
+  durable memory/SOP layer, no automatic budget enforcement, no new connector
+  or secret authority, and no host runtime behavior change.
+
+## Phase 6 Exit Review
+
+| Exit criterion | Status | Evidence |
+| --- | --- | --- |
+| BK can ask what matters across projects and get one ranked answer. | Met. Cross-project ranking is deterministic, explainable, recommendation-only, and shared by CLI, dashboard, compact remote notifications, and `/now`. | M9 outcome above; [tests/ceo-ranking.test.ts](../tests/ceo-ranking.test.ts); [src/lib/ceo-ranking.ts](../src/lib/ceo-ranking.ts) |
+| Project state is isolated where needed and aggregated where useful. | Met. Project queue snapshots bucket assigned project records separately from explicit `unassigned` and `legacy` records while CEO status, operator reports, and dashboard views retain cross-project counts and global blockers. | M5 outcome above; [tests/project-queues.test.ts](../tests/project-queues.test.ts); [tests/ceo-status.test.ts](../tests/ceo-status.test.ts); [src/lib/project-queues.ts](../src/lib/project-queues.ts) |
+| BK can trace a recommendation or completed task back to the project and goal it served. | Met. Project -> goal -> work-item ancestry is carried from request to plan, decision, task, action, run, lifecycle, recovery, report, governance event, and budget observation records without reading prose. | M3/M4 outcomes above; [tests/ancestry.test.ts](../tests/ancestry.test.ts); [tests/operations.test.ts](../tests/operations.test.ts); [src/lib/ancestry.ts](../src/lib/ancestry.ts) |
+| Remote commands cannot accidentally operate on the wrong project. | Met. Ambiguous `/approve`, `/go`, and `/now` refuse cross-project current plans; unsupported projects/scopes fail closed before plan writes; project-qualified compact commands narrow selection without accepting internal ids. | M6 outcome above; [tests/remote-project-selection.test.ts](../tests/remote-project-selection.test.ts); [docs/REMOTE_ADAPTERS.md](REMOTE_ADAPTERS.md) |
+| Host runtime remains portable between Mac client and Ubuntu automation host. | Met for Phase 6 scope. Profiles keep source-controlled identity separate from resolved runtime roots, environment overrides preserve identity, docs avoid committed host-local absolute paths, and host-owned runtime verification remains separate from Mac-side portable verification. | M2 outcome above; [tests/project-profile.test.ts](../tests/project-profile.test.ts); [docs/DAEMON_OPERATIONS.md](DAEMON_OPERATIONS.md); `bun run verify:docs` |
+
+## Dogfood Evidence
+
+| Requirement | Evidence | Result |
+| --- | --- | --- |
+| At least two active project profiles | The bundled active baseline profiles are [references/project-profiles/samantha.json](../references/project-profiles/samantha.json) and [references/project-profiles/omht.json](../references/project-profiles/omht.json). Profile tests cover stable multi-profile loading, deterministic inference, env override identity preservation, and ambiguous-match failure. | Met. Phase 6 uses two active profiles without hard-coding local absolute paths into docs or source-controlled profile identity. |
+| One implementation flow | `tests/operations.test.ts` includes the role-aware canary plan for project `samantha`: report-only `codex-reviewer` first, then one waiting `codex-worker` write action. | Met. Implementation remains single-writer and dependency-gated. |
+| One report-only flow | `tests/operations.test.ts`, `tests/worker-dispatch.test.ts`, and `tests/orchestrator-materializer.test.ts` cover report-mode work with no changed files, no commit, report-only specialist behavior, and `omht` planning/report scope materialization. | Met. Report-only work remains read-only and does not widen writer authority. |
+| Wrong-project command blocked in dogfood/test | `tests/remote-project-selection.test.ts` seeds simultaneous `samantha` and `omht` plans and verifies ambiguous remote `/approve`, `/go`, and `/now` refuse to advance or present `/go` as safe. | Met. The blocked state is recorded by outbox reports and no cross-project materialization occurs. |
+| Completed work item can be reconstructed by project/goal ancestry | `tests/operations.test.ts` verifies `/work -> /plan -> /go` records the same assigned ancestry on request, plan, task, and action; `tests/ancestry.test.ts` verifies the complete request-to-report/governance/budget chain. | Met. Reconstruction does not depend on prose, latest active item, or repo path inference. |
+| Legacy records classified without destructive edit | `tests/ancestry.test.ts` normalizes missing ancestry to `legacy`; `tests/project-queues.test.ts` keeps `legacy` and `unassigned` visible in queue summaries and filters. | Met. No `state/` or `runs/` surgery is required for Phase 6 exit. |
+
+## Authority Review
+
+- Writer authority: `DEFAULT_SAFETY_POLICY.writerCap` remains `1`; Phase 6 did
+  not add multi-writer execution or change writer-cap governance.
+- Project authority: project safety overlays can only narrow remote scopes,
+  add forbidden changes, add host-only verification needs, raise risk defaults,
+  or add prerequisites unless an approved governed capability change exists.
+- Remote authority: Telegram remains a compact adapter. It may name project ids
+  and scope ids for current-item disambiguation, but it still cannot accept
+  shell commands, arbitrary repo paths, run/task/action/decision ids, dispatch
+  instructions, merge commands, push commands, cleanup commands, connector
+  grants, secret grants, routines, or budget enforcement.
+- Budget authority: Phase 6 adds project/goal budget observation reporting
+  only. Unknown cost remains missing data, not zero, and no automatic budget
+  stop, quota, throttle, or provider-billing integration was added.
+- Host/runtime authority: Mac-side work may edit, test, and document repo code.
+  Active automation-host ownership of daemon/watch/poll/reply/dispatch/runtime
+  state remains unchanged.
+
+## Verification Run
+
+Required Mac-side verification for M10:
+
+```bash
+bun run verify:docs
+bun run verify:mac
+```
+
+M10 Mac-side run on 2026-05-10:
+
+- `bun run verify:docs` passed.
+- `bun run verify:mac` passed, including TypeScript typecheck, portable tests,
+  and docs verification. Portable test result: 298 passed, 0 failed.
+
+Phase 6 M10 changed docs and verification evidence only. It did not touch host
+runtime behavior, daemon/watch/poll/reply/dispatch code, service templates, or
+runtime state, so Ubuntu-host `bun run verify:host` is not required for this
+M10 review. Run host verification later only if a host-owned runtime change is
+made on the active automation host.
+
+## Phase 7/8/9 Handoff Notes
+
+Phase 7 should take only the evidence-based parallelism work:
+
+- build an explicit evidence ledger for successful report-only parallel runs
+- define role relationships for planning/reporting visibility without granting
+  authority
+- keep writer-cap changes behind dogfood evidence, deterministic conflict
+  detection, rollback tests, and explicit BK approval
+
+Phase 8 should take durable context and knowledge memory:
+
+- project briefs, prior decisions, recurring preferences, and SOP/skill docs
+  need explicit source-backed write gates
+- memory or SOP updates must be reviewable, reversible, and unable to override
+  safety policy, dispatch, merge, push, cleanup, approval, or project gates
+
+Phase 9 should take continuous operation, routines, and enforcement:
+
+- routine scheduling, trigger coalescing, host lifecycle hardening, and
+  automation-health recovery belong there
+- budget stops, quotas, throttles, provider billing reconciliation, and
+  continuous-cost enforcement should build on the Phase 6 read-only
+  project/goal budget observations, not bypass them
+- host verification and migration drills remain active-automation-host work
 
 ## Standard Verification
 

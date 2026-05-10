@@ -6,7 +6,7 @@
 BK
   <-> CLI / dashboard / Telegram approval adapter / future UI
 Deterministic CEO Office
-  - stores requests, plans, tasks, actions, and audit logs
+  - stores requests, plans, goals, tasks, actions, and audit logs
   - tracks status, blockers, risks, next actions, and BK decision needs
   - enforces safety policy before any dispatch
   - governs agent profiles, capabilities, skills, connectors, routines, and
@@ -52,12 +52,13 @@ Telegram is intentionally small and is an adapter for notification, approval, sh
 
 Telegram notifications are compact outbox reports. On the active automation host, `ceo:notify` runs periodically, writes a remote outbox CEO summary, and records generation in `state/ceo-reports.jsonl`; `telegram:reply` delivers it through the existing Telegram reply adapter and records delivery in `state/telegram-replies.json`. Telegram can approve only the single current plan-approval decision through `/approve`; ambiguous or multiple pending decisions redirect BK back to `/now`, CLI, or dashboard. Telegram never accepts shell commands, repo paths, or task/action/run/decision ids as workflow inputs.
 
-The Phase 4 planning and delegation maturity path is implemented. The next
-planned product phase is Safety, Audit, And Governance: stronger traceability,
-policy enforcement, post-fact review, and explicit governance for changes that
-expand agent authority. New roles, profile changes, allowed skills, connector
-or secret access, routines, and budget enforcement should be introduced only
-behind deterministic approvals and audit trails.
+The Phase 6 multi-project operations path is implemented. Samantha now treats
+project profiles as deterministic identity records, carries project -> goal ->
+work-item ancestry through planning and materialization, shows project queues
+and cross-project ranking, and blocks ambiguous remote commands before they can
+advance the wrong project. New roles, profile changes, allowed skills,
+connector or secret access, routines, and budget enforcement should still be
+introduced only behind deterministic approvals and audit trails.
 
 The current architecture canary is role-aware but intentionally small: the Orchestrator Agent may choose report-only `codex-reviewer`, `codex-evaluator`, `codex-spec`, `codex-researcher`, `codex-content`, or `codex-operations` tasks before or alongside one `codex-worker` write task. The Control Plane keeps non-writers read-only, rejects non-writer write proposals, and keeps writer concurrency capped at one. This is not general multi-agent team construction.
 
@@ -65,10 +66,10 @@ The existing deterministic CEO office should remain responsible for safety, stat
 
 Future expansion should stay governance-first:
 
-- Phase 5 hardens approval and audit for agent/profile/capability changes before
-  adding broader authority.
-- Phase 6 adds project and goal ancestry before Samantha aggregates work across
-  multiple projects.
+- Phase 5 hardened approval and audit for agent/profile/capability changes
+  before adding broader authority.
+- Phase 6 added project and goal ancestry before Samantha aggregates work
+  across multiple projects.
 - Phase 7 may add an advisory role graph and stronger non-writer parallelism,
   but role relationships do not grant execution authority by themselves.
 - Phase 8 may add durable SOP/skill memory, but those documents cannot override

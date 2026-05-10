@@ -215,7 +215,7 @@ Detailed stages: [SAFETY_AUDIT_GOVERNANCE.md](SAFETY_AUDIT_GOVERNANCE.md).
 
 ### 6. Multi-Project Operations
 
-Status: ready for staged implementation.
+Status: implemented.
 
 Objective: let Samantha manage multiple active projects without path drift,
 state confusion, cross-project safety leaks, or lost goal ancestry.

@@ -1,6 +1,6 @@
 # Samantha Daemon Operations
 
-Last updated: 2026-05-09
+Last updated: 2026-05-10
 
 ## Purpose
 
@@ -38,7 +38,9 @@ Build the read-only operations dashboard:
 bun run samantha dashboard:build
 ```
 
-The dashboard includes daemon, queue, Telegram, latest remote command/report, proposal/draft/task counts, recent runs, and latest run lifecycle state. It does not expose write actions.
+The dashboard includes daemon, queue, Telegram, latest remote command/report,
+proposal/draft/task counts, project queue summaries, cross-project ranking,
+recent runs, and latest run lifecycle state. It does not expose write actions.
 
 ## Runtime Files
 
@@ -48,6 +50,12 @@ The dashboard includes daemon, queue, Telegram, latest remote command/report, pr
 - `state/task-drafts.jsonl`: task drafts created from accepted proposals
 - `state/remote-actions.jsonl`: pending/approved/running/finished Telegram-approved dispatch actions
 - `state/run-lifecycle.jsonl`: merge, push, and cleanup state for completed runs
+- `state/orchestration-requests.jsonl`: orchestration requests with assigned,
+  unassigned, or legacy ancestry
+- `state/orchestrator-plans.jsonl`: bounded orchestrator plans with project,
+  goal, and work-item ancestry when assigned
+- `state/ceo-reports.jsonl`: generated CEO reports, including project queues
+  and ranking evidence when available
 - `inbox/*.json`: queued local commands
 - `outbox/*.md`: command reports
 - `archive/inbox/*.json`: processed input commands
@@ -170,6 +178,10 @@ SAMANTHA_CODEX_BIN=$HOME/.local/bin/codex
 SAMANTHA_PROJECT_OMHT_REPO_ROOT=$HOME/projects/oh-my-health-trainer
 SAMANTHA_PROJECT_SAMANTHA_REPO_ROOT=$HOME/projects/samantha-codex
 ```
+
+Project profile ids and source-controlled repo-root expressions remain the
+portable identity. The `SAMANTHA_PROJECT_<ID>_REPO_ROOT` values are
+host-local runtime resolution only and must stay in uncommitted host env.
 
 Install and enable on Linux/WSL:
 

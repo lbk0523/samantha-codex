@@ -1,6 +1,6 @@
 # Operating Surface Consolidation
 
-Last updated: 2026-05-08
+Last updated: 2026-05-10
 
 Status: implemented.
 
@@ -76,6 +76,14 @@ Verification focus:
 - dashboard presents daily review before raw run tables
 - dashboard has no buttons or forms for unsupported mutations
 - text remains escaped before HTML rendering
+
+Phase 6 update:
+
+- the read-only dashboard also shows project queue summaries, explicit
+  `legacy` and `unassigned` counts, and the same cross-project top
+  recommendation used by CLI status, compact CEO notifications, and `/now`
+- project filters may narrow displayed work, but dashboard filters do not
+  mutate state or bypass deterministic write gates
 
 ## S4: Telegram-First Compact Approval
 
