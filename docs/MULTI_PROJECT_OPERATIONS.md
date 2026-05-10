@@ -409,6 +409,23 @@ Verification focus:
 - cross-project cost summaries do not imply totals where data is missing
 - missing budget data does not block existing work execution
 
+Outcome:
+
+- Extended budget audit context propagation so run observations preserve
+  available project, goal, and work-item ancestry and copy assigned ancestry
+  onto the budget observation record.
+- Added project, goal, and work-item budget observation filtering without
+  inferring missing ancestry from prose or paths.
+- Added read-only rollups for measured, estimated, and unknown observations by
+  project, goal, action, run, model, and command.
+- Kept measured zero as known measured cost while unknown cost remains missing
+  cost data and is excluded from known measured or estimated totals.
+- Added budget-relevant audit gaps for unknown cost and missing, legacy,
+  unassigned, project, or goal attribution data.
+- Updated operator reports to show known measured and estimated totals,
+  attribution rollups, and gap counts without implying automatic enforcement,
+  provider billing integration, throttling, or budget stops.
+
 ## M9: Cross-Project Prioritization And CEO Ranking
 
 Goal: let BK ask what matters across projects and receive one ranked,

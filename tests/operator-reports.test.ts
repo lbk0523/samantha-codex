@@ -499,11 +499,18 @@ describe("operator reports", () => {
   });
 
   test("renders budget audit observations without implying enforcement or zero cost", () => {
+    const ancestry = {
+      mode: "assigned" as const,
+      projectId: "samantha",
+      goalId: "goal-budget",
+      workItemId: "work-budget",
+    };
     const status = statusReport({
       runs: [passRun],
       pendingInboxCount: 0,
       budgetObservations: [
         createCostBudgetAuditRecord({
+          ancestry,
           observedAt: "2026-05-09T01:00:00.000Z",
           actor: "samantha",
           subject: { type: "run", id: "run-pass" },
@@ -514,10 +521,14 @@ describe("operator reports", () => {
           context: {
             runId: "run-pass",
             projectId: "samantha",
+            goalId: "goal-budget",
+            workItemId: "work-budget",
             model: "gpt-5.5",
+            command: { executable: "codex", args: ["exec", "--model", "gpt-5.5"] },
           },
         }),
         createCostBudgetAuditRecord({
+          ancestry,
           observedAt: "2026-05-09T01:01:00.000Z",
           actor: "operator",
           subject: { type: "action", id: "action-zero" },
@@ -530,10 +541,15 @@ describe("operator reports", () => {
           context: {
             actionId: "action-zero",
             runId: "run-pass",
+            projectId: "samantha",
+            goalId: "goal-budget",
+            workItemId: "work-budget",
             model: "gpt-5.5",
+            command: { executable: "codex", args: ["exec", "--model", "gpt-5.5"] },
           },
         }),
         createCostBudgetAuditRecord({
+          ancestry,
           observedAt: "2026-05-09T01:02:00.000Z",
           actor: "operator",
           subject: { type: "project", id: "samantha" },
@@ -545,6 +561,8 @@ describe("operator reports", () => {
           },
           context: {
             projectId: "samantha",
+            goalId: "goal-budget",
+            workItemId: "work-budget",
             model: "gpt-5.5",
           },
         }),
@@ -553,8 +571,16 @@ describe("operator reports", () => {
 
     expect(status).toContain("Budget audit:");
     expect(status).toContain("observations: total=3 measured=1 estimated=1 unknown=1");
-    expect(status).toContain("measured total: USD 0");
-    expect(status).toContain("estimated total: USD 0.125");
+    expect(status).toContain("known measured total: USD 0");
+    expect(status).toContain("known estimated total: USD 0.125");
+    expect(status).toContain("unknown observations are missing cost data, not zero cost");
+    expect(status).toContain("budget audit gaps: 1 records unknown_cost=1");
+    expect(status).toContain("project rollup: samantha observations=3 measured=1 estimated=1 unknown=1 known_measured=USD 0 known_estimated=USD 0.125 audit_gaps=1");
+    expect(status).toContain("goal rollup: goal-budget observations=3 measured=1 estimated=1 unknown=1 known_measured=USD 0 known_estimated=USD 0.125 audit_gaps=1");
+    expect(status).toContain("action rollup: action-zero observations=1 measured=1 estimated=0 unknown=0 known_measured=USD 0 known_estimated=unavailable audit_gaps=0");
+    expect(status).toContain("run rollup: run-pass observations=2 measured=1 estimated=0 unknown=1 known_measured=USD 0 known_estimated=unavailable audit_gaps=1");
+    expect(status).toContain("model rollup: gpt-5.5 observations=3 measured=1 estimated=1 unknown=1 known_measured=USD 0 known_estimated=USD 0.125 audit_gaps=1");
+    expect(status).toContain("command rollup: codex exec --model gpt-5.5 observations=2 measured=1 estimated=0 unknown=1 known_measured=USD 0 known_estimated=unavailable audit_gaps=1");
     expect(status).toContain("cost=`estimated USD 0.125`");
     expect(status).not.toContain("budget stop");
 

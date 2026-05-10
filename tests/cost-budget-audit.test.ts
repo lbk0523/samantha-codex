@@ -6,6 +6,7 @@ import {
   CostBudgetAuditStore,
   createCostBudgetAuditRecord,
   createRunCostBudgetObservation,
+  summarizeCostBudgetAuditRollups,
   summarizeCostBudgetAuditRecords,
   type CostBudgetAuditRecord,
 } from "../src/lib/cost-budget-audit";
@@ -63,6 +64,13 @@ const agent: AgentProfile = {
   worktreePolicy: "per-task",
   mergePolicy: "samantha-controlled",
   skillPolicy: { requiredBundles: [], blockedSkills: [] },
+};
+
+const ancestry = {
+  mode: "assigned" as const,
+  projectId: "samantha",
+  goalId: "goal-budget",
+  workItemId: "work-budget",
 };
 
 function measuredZero(): CostBudgetAuditRecord {
@@ -139,6 +147,124 @@ describe("CostBudgetAuditStore", () => {
     expect(summary.unknown).toBe(1);
     expect(summary.measured).toBe(1);
     expect(summary.measuredTotals).toEqual([{ currency: "USD", amount: 0 }]);
+  });
+
+  test("filters budget observations by project and goal from ancestry, context, and subject", async () => {
+    const { store } = await makeStore();
+    const inherited = createRunCostBudgetObservation({
+      observedAt: "2026-05-09T01:02:00.000Z",
+      run: { ...run, ancestry },
+      task: { ...task, ancestry },
+      agent,
+    });
+    const contextOnly = createCostBudgetAuditRecord({
+      observedAt: "2026-05-09T01:03:00.000Z",
+      actor: "operator",
+      subject: { type: "action", id: "action-context" },
+      cost: { kind: "estimated", amount: 0.25, currency: "usd", basis: "manual estimate" },
+      context: { projectId: "samantha", goalId: "goal-budget", workItemId: "work-budget", actionId: "action-context" },
+    });
+    const subjectOnly = createCostBudgetAuditRecord({
+      observedAt: "2026-05-09T01:04:00.000Z",
+      actor: "operator",
+      subject: { type: "goal", id: "goal-budget" },
+      cost: { kind: "measured", amount: 1.5, currency: "usd", source: "manual receipt" },
+      context: { projectId: "samantha" },
+    });
+    const other = createCostBudgetAuditRecord({
+      observedAt: "2026-05-09T01:05:00.000Z",
+      actor: "operator",
+      subject: { type: "project", id: "omht" },
+      cost: { kind: "estimated", amount: 2, currency: "usd", basis: "manual estimate" },
+      context: { goalId: "goal-omht" },
+    });
+
+    await store.append(inherited);
+    await store.append(contextOnly);
+    await store.append(subjectOnly);
+    await store.append(other);
+
+    expect(inherited.context).toMatchObject({
+      projectId: "samantha",
+      goalId: "goal-budget",
+      workItemId: "work-budget",
+    });
+    expect(inherited.ancestry).toEqual(ancestry);
+    expect(await store.list({ projectId: "samantha" })).toEqual([inherited, contextOnly, subjectOnly]);
+    expect(await store.list({ goalId: "goal-budget" })).toEqual([inherited, contextOnly, subjectOnly]);
+    expect(await store.list({ workItemId: "work-budget" })).toEqual([inherited, contextOnly]);
+  });
+
+  test("rolls up cost observations without treating unknown or missing data as zero", () => {
+    const zero = createCostBudgetAuditRecord({
+      ancestry,
+      observedAt: "2026-05-09T01:03:00.000Z",
+      actor: "operator",
+      subject: { type: "run", id: "run-zero" },
+      cost: { kind: "measured", amount: 0, currency: "USD", source: "provider receipt" },
+      context: {
+        projectId: "samantha",
+        goalId: "goal-budget",
+        workItemId: "work-budget",
+        runId: "run-zero",
+        actionId: "action-zero",
+        model: "gpt-5.5",
+        command: { executable: "codex", args: ["exec", "--model", "gpt-5.5"] },
+      },
+    });
+    const estimated = createCostBudgetAuditRecord({
+      ancestry,
+      observedAt: "2026-05-09T01:04:00.000Z",
+      actor: "operator",
+      subject: { type: "action", id: "action-zero" },
+      cost: { kind: "estimated", amount: 0.125, currency: "USD", basis: "manual token estimate" },
+      context: {
+        projectId: "samantha",
+        goalId: "goal-budget",
+        workItemId: "work-budget",
+        actionId: "action-zero",
+        model: "gpt-5.5",
+        command: { executable: "codex", args: ["exec", "--model", "gpt-5.5"] },
+      },
+    });
+    const unknownMissingAncestry = createCostBudgetAuditRecord({
+      observedAt: "2026-05-09T01:05:00.000Z",
+      actor: "samantha",
+      subject: { type: "run", id: "run-unknown" },
+      cost: { kind: "unknown", reason: "worker run did not report measured or estimated cost" },
+      context: { runId: "run-unknown", model: "gpt-5.5" },
+    });
+
+    const rollups = summarizeCostBudgetAuditRollups([zero, estimated, unknownMissingAncestry]);
+
+    expect(rollups.summary).toMatchObject({ total: 3, measured: 1, estimated: 1, unknown: 1 });
+    expect(rollups.summary.measuredTotals).toEqual([{ currency: "USD", amount: 0 }]);
+    expect(rollups.summary.estimatedTotals).toEqual([{ currency: "USD", amount: 0.125 }]);
+    expect(rollups.gaps).toEqual([
+      {
+        recordId: unknownMissingAncestry.id,
+        reasons: ["unknown_cost", "missing_ancestry", "missing_project", "missing_goal"],
+      },
+    ]);
+    expect(rollups.rollups.project).toMatchObject([
+      { key: "samantha", total: 2, measured: 1, estimated: 1, unknown: 0, auditGaps: 0 },
+    ]);
+    expect(rollups.rollups.goal).toMatchObject([
+      { key: "goal-budget", total: 2, measured: 1, estimated: 1, unknown: 0, auditGaps: 0 },
+    ]);
+    expect(rollups.rollups.action).toMatchObject([
+      { key: "action-zero", total: 2, measured: 1, estimated: 1, unknown: 0, auditGaps: 0 },
+    ]);
+    expect(rollups.rollups.run).toMatchObject([
+      { key: "run-unknown", total: 1, measured: 0, estimated: 0, unknown: 1, auditGaps: 1 },
+      { key: "run-zero", total: 1, measured: 1, estimated: 0, unknown: 0, auditGaps: 0 },
+    ]);
+    expect(rollups.rollups.model).toMatchObject([
+      { key: "gpt-5.5", total: 3, measured: 1, estimated: 1, unknown: 1, auditGaps: 1 },
+    ]);
+    expect(rollups.rollups.command).toMatchObject([
+      { key: "codex exec --model gpt-5.5", total: 2, measured: 1, estimated: 1, unknown: 0, auditGaps: 0 },
+    ]);
   });
 
   test("rejects malformed unknown cost amounts instead of treating them as zero", async () => {

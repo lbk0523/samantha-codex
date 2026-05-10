@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
 import { buildCeoStatusSnapshot, formatCeoStatusReport, type CeoStatusSnapshot } from "./lib/ceo-status";
 import { buildCeoReportId, CeoReportStore, type CeoReportRecord } from "./lib/ceo-report-store";
-import { CostBudgetAuditStore, createRunCostBudgetObservation } from "./lib/cost-budget-audit";
+import { CostBudgetAuditStore, createRunCostBudgetObservation, type CostBudgetAuditFilter, type CostDataKind } from "./lib/cost-budget-audit";
 import { acquireDaemonLock, checkDaemonHealth, readDaemonHeartbeat, writeDaemonHeartbeat } from "./lib/daemon";
 import {
   decisionAllowsOrchestratorMaterialization,
@@ -170,6 +170,12 @@ function parseArgs(argv: string[]): ParsedArgs {
 function flag(args: ParsedArgs, name: string, fallback: string): string {
   const value = args.flags.get(name);
   return typeof value === "string" ? value : fallback;
+}
+
+function budgetCostKind(value: string): CostDataKind | undefined {
+  if (!value) return undefined;
+  if (value === "measured" || value === "estimated" || value === "unknown") return value;
+  throw new Error(`unknown cost kind: ${value}`);
 }
 
 function stateDir(args: ParsedArgs): string {
@@ -2815,7 +2821,16 @@ async function main(): Promise<void> {
   }
 
   if (args.command === "budget:list") {
-    printJson(await new CostBudgetAuditStore(costBudgetAuditPath(args)).list());
+    const filter: CostBudgetAuditFilter = {
+      projectId: flag(args, "project", "") || undefined,
+      goalId: flag(args, "goal", "") || undefined,
+      workItemId: flag(args, "work-item", "") || undefined,
+      runId: flag(args, "run", "") || undefined,
+      actionId: flag(args, "action", "") || undefined,
+      model: flag(args, "model", "") || undefined,
+      costKind: budgetCostKind(flag(args, "cost-kind", "")),
+    };
+    printJson(await new CostBudgetAuditStore(costBudgetAuditPath(args)).list(filter));
     return;
   }
 
@@ -3638,6 +3653,7 @@ async function main(): Promise<void> {
       "local debug and recovery:",
       "  runs:list",
       "  runs:show <run-id>",
+      "  budget:list [--project=<id>] [--goal=<id>] [--work-item=<id>] [--run=<id>] [--action=<id>] [--model=<id>] [--cost-kind=<measured|estimated|unknown>]",
       "  review:show <id> [--subject=auto|request|plan|decision|task|action|run]",
       "  drills:list",
       "  drills:show <drill-id>",

@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { parseOptionalWorkItemAncestry, type WorkItemAncestry } from "./ancestry";
+import { parseOptionalWorkItemAncestry, type AssignedWorkItemAncestry, type WorkItemAncestry } from "./ancestry";
 import type { AgentProfile, TaskSpec } from "./contracts";
 import { compactEntityId } from "./ids";
 import type { RunSummary } from "./ledger";
@@ -26,6 +26,7 @@ export interface CostBudgetContext {
   runLogPath?: string;
   projectId?: string;
   goalId?: string;
+  workItemId?: string;
   planId?: string;
   actionId?: string;
   taskId?: string;
@@ -86,6 +87,7 @@ export interface CostBudgetAuditFilter {
   actionId?: string;
   projectId?: string;
   goalId?: string;
+  workItemId?: string;
 }
 
 export interface CostBudgetTotal {
@@ -101,6 +103,31 @@ export interface CostBudgetAuditSummary {
   measuredTotals: CostBudgetTotal[];
   estimatedTotals: CostBudgetTotal[];
   latest?: CostBudgetAuditRecord;
+}
+
+export type CostBudgetRollupDimension = "project" | "goal" | "action" | "run" | "model" | "command";
+
+export interface CostBudgetAuditGap {
+  recordId: string;
+  reasons: string[];
+}
+
+export interface CostBudgetAuditRollup {
+  dimension: CostBudgetRollupDimension;
+  key: string;
+  total: number;
+  measured: number;
+  estimated: number;
+  unknown: number;
+  measuredTotals: CostBudgetTotal[];
+  estimatedTotals: CostBudgetTotal[];
+  auditGaps: number;
+}
+
+export interface CostBudgetAuditRollupSummary {
+  summary: CostBudgetAuditSummary;
+  gaps: CostBudgetAuditGap[];
+  rollups: Record<CostBudgetRollupDimension, CostBudgetAuditRollup[]>;
 }
 
 function oneLine(value: string): string {
@@ -195,6 +222,7 @@ function normalizeContext(value: unknown): CostBudgetContext | undefined {
     runLogPath: optionalString(context.runLogPath, "context.runLogPath"),
     projectId: optionalString(context.projectId, "context.projectId"),
     goalId: optionalString(context.goalId, "context.goalId"),
+    workItemId: optionalString(context.workItemId, "context.workItemId"),
     planId: optionalString(context.planId, "context.planId"),
     actionId: optionalString(context.actionId, "context.actionId"),
     taskId: optionalString(context.taskId, "context.taskId"),
@@ -315,8 +343,11 @@ export function createRunCostBudgetObservation(input: {
   const action = input.action;
   const task = input.task;
   const agent = input.agent;
+  const ancestry = task?.ancestry ?? action?.ancestry ?? input.run.ancestry;
+  const assignedAncestry = ancestry?.mode === "assigned" ? ancestry : undefined;
   return createCostBudgetAuditRecord({
     observedAt: input.observedAt,
+    ancestry,
     actor: input.actor ?? "samantha",
     subject: { type: "run", id: input.run.runId },
     cost: input.cost ?? {
@@ -328,7 +359,9 @@ export function createRunCostBudgetObservation(input: {
       command: commandContextForBudgetAudit(input.command, { omitTrailingPrompt: true }),
       runId: input.run.runId,
       runLogPath: input.run.logPath,
-      projectId: task?.projectId,
+      projectId: assignedAncestry?.projectId ?? task?.projectId,
+      goalId: assignedAncestry?.goalId,
+      workItemId: assignedAncestry?.workItemId,
       planId: action?.orchestratorPlanId,
       actionId: action?.id,
       taskId: input.run.taskId,
@@ -337,6 +370,46 @@ export function createRunCostBudgetObservation(input: {
     },
     summary: input.summary ?? `Budget observation for run ${input.run.runId}.`,
   });
+}
+
+function assignedAncestry(record: CostBudgetAuditRecord): AssignedWorkItemAncestry | undefined {
+  return record.ancestry?.mode === "assigned" ? record.ancestry : undefined;
+}
+
+export function projectIdForCostBudgetRecord(record: CostBudgetAuditRecord): string | undefined {
+  return assignedAncestry(record)?.projectId ?? record.context?.projectId ?? (record.subject.type === "project" ? record.subject.id : undefined);
+}
+
+export function goalIdForCostBudgetRecord(record: CostBudgetAuditRecord): string | undefined {
+  return assignedAncestry(record)?.goalId ?? record.context?.goalId ?? (record.subject.type === "goal" ? record.subject.id : undefined);
+}
+
+export function workItemIdForCostBudgetRecord(record: CostBudgetAuditRecord): string | undefined {
+  return assignedAncestry(record)?.workItemId ?? record.context?.workItemId;
+}
+
+function actionIdForCostBudgetRecord(record: CostBudgetAuditRecord): string | undefined {
+  return record.context?.actionId ?? (record.subject.type === "action" ? record.subject.id : undefined);
+}
+
+function runIdForCostBudgetRecord(record: CostBudgetAuditRecord): string | undefined {
+  return record.context?.runId ?? (record.subject.type === "run" ? record.subject.id : undefined);
+}
+
+function commandKey(command: CostBudgetCommandContext | undefined): string | undefined {
+  if (!command) return undefined;
+  return [command.executable, ...command.args].join(" ");
+}
+
+function gapReasonsForCostBudgetRecord(record: CostBudgetAuditRecord): string[] {
+  const reasons: string[] = [];
+  if (record.cost.kind === "unknown") reasons.push("unknown_cost");
+  if (!record.ancestry) reasons.push("missing_ancestry");
+  else if (record.ancestry.mode === "legacy") reasons.push("legacy_ancestry");
+  else if (record.ancestry.mode === "unassigned") reasons.push("unassigned_ancestry");
+  if (!projectIdForCostBudgetRecord(record)) reasons.push("missing_project");
+  if (!goalIdForCostBudgetRecord(record)) reasons.push("missing_goal");
+  return reasons;
 }
 
 export function parseCostBudgetAuditRecord(value: unknown): CostBudgetAuditRecord {
@@ -360,10 +433,11 @@ function matchesFilter(record: CostBudgetAuditRecord, filter: CostBudgetAuditFil
   if (filter.subject && subjectKey(record.subject) !== subjectKey(filter.subject)) return false;
   if (filter.costKind && record.cost.kind !== filter.costKind) return false;
   if (filter.model && record.context?.model !== filter.model) return false;
-  if (filter.runId && record.context?.runId !== filter.runId) return false;
-  if (filter.actionId && record.context?.actionId !== filter.actionId) return false;
-  if (filter.projectId && record.context?.projectId !== filter.projectId) return false;
-  if (filter.goalId && record.context?.goalId !== filter.goalId) return false;
+  if (filter.runId && runIdForCostBudgetRecord(record) !== filter.runId) return false;
+  if (filter.actionId && actionIdForCostBudgetRecord(record) !== filter.actionId) return false;
+  if (filter.projectId && projectIdForCostBudgetRecord(record) !== filter.projectId) return false;
+  if (filter.goalId && goalIdForCostBudgetRecord(record) !== filter.goalId) return false;
+  if (filter.workItemId && workItemIdForCostBudgetRecord(record) !== filter.workItemId) return false;
   return true;
 }
 
@@ -427,6 +501,59 @@ export function summarizeCostBudgetAuditRecords(records: CostBudgetAuditRecord[]
     measuredTotals: totalsByCurrency(records, "measured"),
     estimatedTotals: totalsByCurrency(records, "estimated"),
     latest,
+  };
+}
+
+function rollupKey(record: CostBudgetAuditRecord, dimension: CostBudgetRollupDimension): string | undefined {
+  if (dimension === "project") return projectIdForCostBudgetRecord(record);
+  if (dimension === "goal") return goalIdForCostBudgetRecord(record);
+  if (dimension === "action") return actionIdForCostBudgetRecord(record);
+  if (dimension === "run") return runIdForCostBudgetRecord(record);
+  if (dimension === "model") return record.context?.model;
+  return commandKey(record.context?.command);
+}
+
+function rollupRecords(records: CostBudgetAuditRecord[], dimension: CostBudgetRollupDimension, gaps: Map<string, CostBudgetAuditGap>): CostBudgetAuditRollup[] {
+  const grouped = new Map<string, CostBudgetAuditRecord[]>();
+  for (const record of records) {
+    const key = rollupKey(record, dimension);
+    if (!key) continue;
+    grouped.set(key, [...(grouped.get(key) ?? []), record]);
+  }
+  return [...grouped.entries()]
+    .map(([key, group]) => {
+      const summary = summarizeCostBudgetAuditRecords(group);
+      return {
+        dimension,
+        key,
+        total: summary.total,
+        measured: summary.measured,
+        estimated: summary.estimated,
+        unknown: summary.unknown,
+        measuredTotals: summary.measuredTotals,
+        estimatedTotals: summary.estimatedTotals,
+        auditGaps: group.filter((record) => gaps.has(record.id)).length,
+      };
+    })
+    .sort((left, right) => right.total - left.total || left.key.localeCompare(right.key));
+}
+
+export function summarizeCostBudgetAuditRollups(records: CostBudgetAuditRecord[]): CostBudgetAuditRollupSummary {
+  const gapEntries = records
+    .map((record) => ({ recordId: record.id, reasons: gapReasonsForCostBudgetRecord(record) }))
+    .filter((gap) => gap.reasons.length > 0);
+  const gaps = new Map(gapEntries.map((gap) => [gap.recordId, gap]));
+  return {
+    summary: summarizeCostBudgetAuditRecords(records),
+    gaps: gapEntries,
+    rollups: {
+      project: rollupRecords(records, "project", gaps),
+      goal: rollupRecords(records, "goal", gaps),
+      action: rollupRecords(records, "action", gaps),
+      run: rollupRecords(records, "run", gaps),
+      model: rollupRecords(records, "model", gaps),
+      command: rollupRecords(records, "command", gaps),
+    },
   };
 }
 

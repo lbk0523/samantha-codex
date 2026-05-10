@@ -1,6 +1,12 @@
 import type { TaskSpec } from "./contracts";
 import type { CeoStatusSnapshot } from "./ceo-status";
-import { summarizeCostBudgetAuditRecords, type CostBudgetAuditRecord, type CostBudgetTotal } from "./cost-budget-audit";
+import {
+  summarizeCostBudgetAuditRollups,
+  summarizeCostBudgetAuditRecords,
+  type CostBudgetAuditRecord,
+  type CostBudgetAuditRollup,
+  type CostBudgetTotal,
+} from "./cost-budget-audit";
 import type { DaemonHealthResult, DaemonHeartbeat } from "./daemon";
 import { latestCurrentPendingBlockerClarification, type DecisionItem } from "./decision-store";
 import type { RunSummary } from "./ledger";
@@ -186,6 +192,26 @@ function costDataText(record: CostBudgetAuditRecord): string {
   return `${record.cost.kind} ${record.cost.currency} ${costAmount(record.cost.amount)}`;
 }
 
+function gapReasonText(records: ReturnType<typeof summarizeCostBudgetAuditRollups>["gaps"]): string {
+  const counts = new Map<string, number>();
+  for (const gap of records) {
+    for (const reason of gap.reasons) counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((left, right) => left[0].localeCompare(right[0]))
+    .map(([reason, count]) => `${reason}=${count}`)
+    .join(" ");
+}
+
+function rollupLine(label: string, rollups: CostBudgetAuditRollup[]): string {
+  if (rollups.length === 0) return `- ${label} rollup: no attributed observations`;
+  const visible = rollups.slice(0, 3).map((rollup) =>
+    `${rollup.key} observations=${rollup.total} measured=${rollup.measured} estimated=${rollup.estimated} unknown=${rollup.unknown} known_measured=${costTotalText(rollup.measuredTotals)} known_estimated=${costTotalText(rollup.estimatedTotals)} audit_gaps=${rollup.auditGaps}`,
+  );
+  const more = rollups.length > visible.length ? `; +${rollups.length - visible.length} more` : "";
+  return `- ${label} rollup: ${visible.join("; ")}${more}`;
+}
+
 function budgetAuditLines(records: CostBudgetAuditRecord[] | undefined): string[] {
   if (!records) return [];
   const summary = summarizeCostBudgetAuditRecords(records);
@@ -199,12 +225,23 @@ function budgetAuditLines(records: CostBudgetAuditRecord[] | undefined): string[
   }
 
   const latest = summary.latest;
+  const rollupSummary = summarizeCostBudgetAuditRollups(records);
   return [
     "",
     "Budget audit:",
     `- observations: total=${summary.total} measured=${summary.measured} estimated=${summary.estimated} unknown=${summary.unknown}`,
-    `- measured total: ${costTotalText(summary.measuredTotals)}`,
-    `- estimated total: ${costTotalText(summary.estimatedTotals)}`,
+    `- known measured total: ${costTotalText(summary.measuredTotals)}`,
+    `- known estimated total: ${costTotalText(summary.estimatedTotals)}`,
+    "- unknown observations are missing cost data, not zero cost",
+    rollupSummary.gaps.length
+      ? `- budget audit gaps: ${rollupSummary.gaps.length} records ${gapReasonText(rollupSummary.gaps)}`
+      : "- budget audit gaps: none",
+    rollupLine("project", rollupSummary.rollups.project),
+    rollupLine("goal", rollupSummary.rollups.goal),
+    rollupLine("action", rollupSummary.rollups.action),
+    rollupLine("run", rollupSummary.rollups.run),
+    rollupLine("model", rollupSummary.rollups.model),
+    rollupLine("command", rollupSummary.rollups.command),
     latest
       ? `- latest: subject=${code(`${latest.subject.type}:${latest.subject.id}`)} run=${code(latest.context?.runId ?? "unknown")} action=${code(latest.context?.actionId ?? "unknown")} model=${code(latest.context?.model ?? "unknown")} cost=${code(costDataText(latest))}`
       : "",
