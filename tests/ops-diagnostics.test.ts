@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { acquireDaemonLock, writeDaemonHeartbeat } from "../src/lib/daemon";
@@ -125,6 +125,7 @@ describe("collectOpsSnapshot", () => {
     });
 
     expect(snapshot.ok).toBe(true);
+    expect(snapshot.issues).toEqual([]);
     expect(snapshot.hostOwnership.state).toBe("active");
     expect(snapshot.hostOwnership.automationAllowed).toBe(true);
     expect(snapshot.env.hasBotToken).toBe(true);
@@ -167,6 +168,13 @@ describe("collectOpsSnapshot", () => {
     expect(snapshot.serviceTemplates?.directory).toBe(launchdDir);
     expect(snapshot.serviceTemplates?.files.map((file) => file.file)).toContain("com.bk.samantha.inbox-watch.plist");
     expect(snapshot.warnings).toContain("launchd template not installed: com.bk.samantha.actions-watch.plist");
+    expect(snapshot.issues).toContainEqual(
+      expect.objectContaining({
+        severity: "degraded",
+        area: "service",
+        message: "launchd template not installed: com.bk.samantha.actions-watch.plist",
+      }),
+    );
   });
 
   test("distinguishes active, client, stale, and unknown host ownership states", async () => {
@@ -237,6 +245,14 @@ describe("collectOpsSnapshot", () => {
     expect(snapshot.failures).toContain("TELEGRAM_BOT_TOKEN is missing");
     expect(snapshot.failures).toContain("Codex executable is missing: codex");
     expect(snapshot.failures).toContain("daemon lock is missing");
+    expect(snapshot.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "unsafe_to_continue", area: "host" }),
+        expect.objectContaining({ severity: "blocked", area: "environment" }),
+        expect.objectContaining({ severity: "blocked", area: "daemon", message: "daemon lock is missing" }),
+        expect.objectContaining({ severity: "degraded", area: "service" }),
+      ]),
+    );
     expect(snapshot.warnings).toContain("telegram offset state is missing");
     expect(snapshot.warnings).toContain("telegram reply state is missing");
     expect(snapshot.warnings).toContain("systemd template not installed: samantha-ceo-notify.timer");
@@ -337,6 +353,171 @@ describe("collectOpsSnapshot", () => {
     expect(snapshot.failures.some((failure) => failure.startsWith("heartbeat is stale"))).toBe(true);
     expect(snapshot.failures).toContain("heartbeat pid is not running: 101");
     expect(snapshot.failures).toContain("lock pid is not running: 202");
+    expect(snapshot.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "stale", area: "daemon" }),
+        expect.objectContaining({ severity: "unsafe_to_continue", area: "daemon", message: "heartbeat pid is not running: 101" }),
+        expect.objectContaining({ severity: "unsafe_to_continue", area: "daemon", message: "lock pid is not running: 202" }),
+      ]),
+    );
+  });
+
+  test("classifies stuck inbox commands without mutating the queue", async () => {
+    const root = await makeRoot();
+    const stateDir = join(root, "state");
+    const inboxDir = join(root, "inbox");
+    const systemdDir = join(root, "systemd");
+    const binDir = join(root, "bin");
+    const lockPath = join(stateDir, "daemon.lock");
+    const heartbeatPath = join(stateDir, "heartbeat.json");
+    const hostOwnershipPath = join(stateDir, "host-ownership.json");
+    await Promise.all([
+      mkdir(stateDir, { recursive: true }),
+      mkdir(inboxDir, { recursive: true }),
+      mkdir(systemdDir, { recursive: true }),
+      mkdir(binDir, { recursive: true }),
+    ]);
+    await writeHostOwnership(hostOwnershipPath);
+    await writeFile(join(root, ".env"), "TELEGRAM_BOT_TOKEN=secret\nTELEGRAM_CHAT_ID=12345\n", "utf8");
+    await writeFile(join(binDir, "codex"), "", "utf8");
+    await writeFile(join(stateDir, "telegram-offset.json"), JSON.stringify({ nextOffset: 77 }), "utf8");
+    await writeFile(
+      join(stateDir, "telegram-replies.json"),
+      JSON.stringify({ schemaVersion: 1, sentFiles: [], updatedAt: "2026-05-03T10:00:00.000Z" }),
+      "utf8",
+    );
+    for (const file of [
+      "samantha-inbox-watch.service",
+      "samantha-actions-watch.service",
+      "samantha-telegram-poll.service",
+      "samantha-telegram-poll.timer",
+      "samantha-telegram-reply.service",
+      "samantha-telegram-reply.timer",
+      "samantha-ceo-notify.service",
+      "samantha-ceo-notify.timer",
+    ]) {
+      await writeFile(join(systemdDir, file), "", "utf8");
+    }
+    const pendingPath = join(inboxDir, "pending.json");
+    await writeFile(pendingPath, "{}", "utf8");
+    await utimes(pendingPath, new Date("2026-05-03T09:50:00.000Z"), new Date("2026-05-03T09:50:00.000Z"));
+    await acquireDaemonLock({
+      lockPath,
+      command: "inbox:watch",
+      pid: 101,
+      now: new Date("2026-05-03T10:00:00.000Z"),
+      isAlive: (pid) => pid === 101,
+    });
+    await writeDaemonHeartbeat(heartbeatPath, {
+      schemaVersion: 1,
+      pid: 101,
+      command: "inbox:watch",
+      status: "running",
+      lockPath,
+      inboxDir,
+      outboxDir: join(root, "outbox"),
+      archiveDir: join(root, "archive"),
+      processedTotal: 1,
+      updatedAt: "2026-05-03T10:00:10.000Z",
+    });
+
+    const snapshot = await collectOpsSnapshot({
+      envFilePath: join(root, ".env"),
+      hostOwnershipPath,
+      currentHostId: "host-a",
+      inboxDir,
+      outboxDir: join(root, "outbox"),
+      heartbeatPath,
+      lockPath,
+      telegramOffsetPath: join(stateDir, "telegram-offset.json"),
+      telegramRepliesPath: join(stateDir, "telegram-replies.json"),
+      systemdUserDir: systemdDir,
+      env: { PATH: binDir },
+      now: new Date("2026-05-03T10:00:11.000Z"),
+      isAlive: (pid) => pid === 101,
+      maxPendingInboxAgeMs: 5_000,
+    });
+
+    expect(snapshot.queues.pendingInboxCount).toBe(1);
+    expect(snapshot.queues.oldestPendingInbox?.file).toBe("pending.json");
+    expect(snapshot.issues).toContainEqual(
+      expect.objectContaining({
+        severity: "blocked",
+        area: "inbox",
+        message: "oldest inbox command is stuck: 611000ms",
+      }),
+    );
+  });
+
+  test("redacts Telegram reply failure secrets in diagnostics", async () => {
+    const root = await makeRoot();
+    const stateDir = join(root, "state");
+    const systemdDir = join(root, "systemd");
+    const binDir = join(root, "bin");
+    await Promise.all([
+      mkdir(stateDir, { recursive: true }),
+      mkdir(systemdDir, { recursive: true }),
+      mkdir(binDir, { recursive: true }),
+    ]);
+    await writeHostOwnership(join(stateDir, "host-ownership.json"));
+    await writeFile(join(root, ".env"), "TELEGRAM_BOT_TOKEN=secret\nTELEGRAM_CHAT_ID=12345\n", "utf8");
+    await writeFile(join(binDir, "codex"), "", "utf8");
+    await writeFile(join(stateDir, "telegram-offset.json"), JSON.stringify({ nextOffset: 77 }), "utf8");
+    await writeFile(
+      join(stateDir, "telegram-replies.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        sentFiles: [],
+        failures: [
+          {
+            file: "remote-a.md",
+            attempts: 1,
+            lastError: "Telegram rejected TELEGRAM_BOT_TOKEN=123456:ABCDEFGHIJKLMNOPQRSTUVWX",
+            updatedAt: "2026-05-03T10:00:00.000Z",
+          },
+        ],
+        updatedAt: "2026-05-03T10:00:00.000Z",
+      }),
+      "utf8",
+    );
+    for (const file of [
+      "samantha-inbox-watch.service",
+      "samantha-actions-watch.service",
+      "samantha-telegram-poll.service",
+      "samantha-telegram-poll.timer",
+      "samantha-telegram-reply.service",
+      "samantha-telegram-reply.timer",
+      "samantha-ceo-notify.service",
+      "samantha-ceo-notify.timer",
+    ]) {
+      await writeFile(join(systemdDir, file), "", "utf8");
+    }
+
+    const snapshot = await collectOpsSnapshot({
+      envFilePath: join(root, ".env"),
+      hostOwnershipPath: join(stateDir, "host-ownership.json"),
+      currentHostId: "host-a",
+      inboxDir: join(root, "inbox"),
+      outboxDir: join(root, "outbox"),
+      heartbeatPath: join(stateDir, "heartbeat.json"),
+      lockPath: join(stateDir, "daemon.lock"),
+      telegramOffsetPath: join(stateDir, "telegram-offset.json"),
+      telegramRepliesPath: join(stateDir, "telegram-replies.json"),
+      systemdUserDir: systemdDir,
+      env: { PATH: binDir },
+    });
+
+    expect(snapshot.telegram.replyState?.failures?.[0]?.lastError).toBe(
+      "Telegram rejected TELEGRAM_BOT_TOKEN=[redacted]",
+    );
+    expect(snapshot.issues).toContainEqual(
+      expect.objectContaining({
+        severity: "needs_bk",
+        area: "telegram",
+        message: "Telegram reply failed for remote-a.md: Telegram rejected TELEGRAM_BOT_TOKEN=[redacted]",
+      }),
+    );
+    expect(JSON.stringify(snapshot)).not.toContain("123456:ABCDEFGHIJKLMNOPQRSTUVWX");
   });
 
   test("can exclude the currently processed inbox command from queue counts", async () => {

@@ -455,6 +455,7 @@ describe("operator reports", () => {
         platform: "linux",
         files: [{ file: "samantha-inbox-watch.service", installed: true }],
       },
+      issues: [],
       warnings: [],
       failures: [],
     };
@@ -510,6 +511,38 @@ describe("operator reports", () => {
     expect(doctorReport(ops)).toContain("TELEGRAM_BOT_TOKEN: 있음");
     expect(doctorReport(ops)).toContain("최근 원격 명령: type=`status:show`");
     expect(doctorReport(ops)).toContain("최근 reply 실패: remote-b.md attempts=2 error=Telegram error");
+    const secretReport = doctorReport({
+      ...ops,
+      ok: false,
+      issues: [
+        {
+          severity: "needs_bk",
+          area: "telegram",
+          message: "Telegram reply failed with TELEGRAM_BOT_TOKEN=123456:ABCDEFGHIJKLMNOPQRSTUVWX",
+          action: "Inspect Telegram env and rerun doctor",
+        },
+      ],
+      telegram: {
+        ...ops.telegram,
+        replyState: {
+          schemaVersion: 1,
+          sentFiles: [],
+          failures: [
+            {
+              file: "remote-secret.md",
+              attempts: 1,
+              lastError: "token=123456:ABCDEFGHIJKLMNOPQRSTUVWX",
+              updatedAt: "2026-05-03T10:02:00.000Z",
+            },
+          ],
+          updatedAt: "2026-05-03T10:02:00.000Z",
+        },
+      },
+    });
+    expect(secretReport).toContain("needs_bk telegram");
+    expect(secretReport).toContain("TELEGRAM_BOT_TOKEN=[redacted]");
+    expect(secretReport).toContain("token=[redacted]");
+    expect(secretReport).not.toContain("123456:ABCDEFGHIJKLMNOPQRSTUVWX");
   });
 
   test("renders budget audit observations without implying enforcement or zero cost", () => {

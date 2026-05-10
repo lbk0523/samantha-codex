@@ -111,6 +111,26 @@ Diagnostic states:
 This stage adds diagnostics only. It does not start services, stop old hosts,
 dispatch workers, migrate state, merge, push, cleanup, or recover.
 
+## Watchdog Diagnostics
+
+`doctor` and `/problems` classify host issues without changing runtime state.
+Each issue has a severity, area, message, and next safe action:
+
+- `stale`: heartbeat or host ownership evidence is too old
+- `blocked`: a required runtime prerequisite or queue-processing path is
+  blocked
+- `degraded`: optional service-manager installation or delivery state is
+  incomplete, but no destructive action should run automatically
+- `needs_bk`: BK/operator attention is required, such as repeated Telegram
+  reply failures
+- `unsafe_to_continue`: the current machine should not run automation, or lock
+  and heartbeat evidence points at dead pids
+
+Diagnostics cover stale heartbeats, missing locks, dead pids, missing service
+templates or timers for the active provider, old unprocessed inbox files,
+Telegram reply failures, and missing local env prerequisites. Reports redact
+known token/secret patterns from diagnostic messages.
+
 ## Linux systemd User Service
 
 Install the template:

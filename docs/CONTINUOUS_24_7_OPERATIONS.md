@@ -199,7 +199,20 @@ Verification focus:
 
 Outcome:
 
-- Pending.
+- Added deterministic watchdog issue records with severity, area, message, and
+  next safe action. Severities are `stale`, `blocked`, `degraded`, `needs_bk`,
+  and `unsafe_to_continue`.
+- Classified stale heartbeat, missing lock, dead heartbeat/lock pid, missing
+  service templates or timers, stuck inbox files, Telegram reply failures, host
+  ownership problems, and missing local env prerequisites in `doctor` and
+  `/problems` diagnostics.
+- Added oldest pending inbox age diagnostics with a configurable
+  `--max-pending-inbox-age-ms` threshold for `doctor`.
+- Redacted known token/secret patterns from Telegram reply failure diagnostics
+  and compact doctor reports.
+- Kept watchdog behavior report-first only: no services were started or
+  stopped, no workers were dispatched, and no merge, push, cleanup, restore, or
+  migration behavior was added.
 
 ## M4: Queue Backpressure And Admission Policy
 

@@ -20,6 +20,8 @@ export interface EnvDiagnostics {
 
 export interface QueueDiagnostics {
   pendingInboxCount: number;
+  oldestPendingInbox?: FileDiagnostics;
+  oldestPendingInboxAgeMs?: number;
   outboxCount: number;
   remoteOutboxCount: number;
   unsentRemoteOutboxCount: number;
@@ -84,6 +86,15 @@ export interface HostOwnershipDiagnostics {
   record?: HostOwnershipRecord;
 }
 
+export type OpsDiagnosticSeverity = "stale" | "blocked" | "degraded" | "needs_bk" | "unsafe_to_continue";
+
+export interface OpsDiagnosticIssue {
+  severity: OpsDiagnosticSeverity;
+  area: "host" | "daemon" | "service" | "inbox" | "telegram" | "environment";
+  message: string;
+  action: string;
+}
+
 export interface OpsSnapshot {
   ok: boolean;
   checkedAt: string;
@@ -94,6 +105,7 @@ export interface OpsSnapshot {
   telegram: TelegramStateDiagnostics;
   serviceTemplates?: ServiceTemplateDiagnostics;
   systemd: SystemdTemplateDiagnostics;
+  issues: OpsDiagnosticIssue[];
   warnings: string[];
   failures: string[];
 }
@@ -138,6 +150,24 @@ async function readOptionalJson<T>(path: string): Promise<T | undefined> {
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function redactDiagnosticValue(value: string): string {
+  return value
+    .replace(/\b\d{6,}:[A-Za-z0-9_-]{16,}\b/g, "[redacted]")
+    .replace(/\b(Bearer|token|secret|password|api[_-]?key)=\S+/gi, "$1=[redacted]")
+    .replace(/\b(TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID|TELEGRAM_REPLY_CHAT_ID)=\S+/g, "$1=[redacted]");
+}
+
+function sanitizeReplyState(state: TelegramReplyState | undefined): TelegramReplyState | undefined {
+  if (!state) return undefined;
+  return {
+    ...state,
+    failures: state.failures?.map((failure) => ({
+      ...failure,
+      lastError: redactDiagnosticValue(failure.lastError),
+    })),
+  };
 }
 
 function parseHostOwnershipRecord(value: unknown): HostOwnershipRecord | undefined {
@@ -221,6 +251,24 @@ async function latestFile(path: string, predicate: (file: string) => boolean): P
     if (!file) return undefined;
     const info = await stat(join(path, file));
     return { file, updatedAt: info.mtime.toISOString() };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+}
+
+async function oldestFile(path: string, predicate: (file: string) => boolean): Promise<FileDiagnostics | undefined> {
+  try {
+    const files = (await readdir(path)).filter(predicate).sort();
+    const entries = await Promise.all(
+      files.map(async (file) => ({
+        file,
+        info: await stat(join(path, file)),
+      })),
+    );
+    const oldest = entries.sort((a, b) => a.info.mtimeMs - b.info.mtimeMs || a.file.localeCompare(b.file)).at(0);
+    if (!oldest) return undefined;
+    return { file: oldest.file, updatedAt: oldest.info.mtime.toISOString() };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw err;
@@ -321,6 +369,31 @@ async function hostOwnershipDiagnostics(input: {
   };
 }
 
+function healthIssue(violation: string): OpsDiagnosticIssue {
+  if (violation.startsWith("heartbeat is stale")) {
+    return {
+      severity: "stale",
+      area: "daemon",
+      message: violation,
+      action: "Run `bun run samantha health:check`, then inspect the active host service manager status.",
+    };
+  }
+  if (violation.includes("pid is not running")) {
+    return {
+      severity: "unsafe_to_continue",
+      area: "daemon",
+      message: violation,
+      action: "Do not start a second watcher; inspect the active host service manager and stale lock state first.",
+    };
+  }
+  return {
+    severity: "blocked",
+    area: "daemon",
+    message: violation,
+    action: "Run `bun run samantha health:check` and inspect the active host service manager status.",
+  };
+}
+
 export async function collectOpsSnapshot(input: {
   envFilePath: string;
   inboxDir: string;
@@ -338,6 +411,7 @@ export async function collectOpsSnapshot(input: {
   launchdUserDir?: string;
   hostPlatform?: NodeJS.Platform;
   maxAgeMs?: number;
+  maxPendingInboxAgeMs?: number;
   env?: NodeJS.ProcessEnv;
   now?: Date;
   isAlive?: (pid: number) => boolean;
@@ -360,7 +434,7 @@ export async function collectOpsSnapshot(input: {
   const codexCommand = env.SAMANTHA_CODEX_BIN?.trim() || envValues.get("SAMANTHA_CODEX_BIN") || "codex";
   const hasCodexExecutable = await hasExecutable(codexCommand, env);
   const remoteOutbox = await remoteOutboxFiles(input.outboxDir);
-  const replyState = await readOptionalJson<TelegramReplyState>(input.telegramRepliesPath);
+  const replyState = sanitizeReplyState(await readOptionalJson<TelegramReplyState>(input.telegramRepliesPath));
   const sentFiles = new Set(replyState?.sentFiles ?? []);
   const hostPlatform = input.hostPlatform ?? platform();
   const shouldCheckSystemd = input.systemdUserDir !== undefined || hostPlatform === "linux";
@@ -379,6 +453,7 @@ export async function collectOpsSnapshot(input: {
   const serviceTemplateDir =
     input.serviceTemplateDir ?? (serviceProvider === "launchd" ? launchdUserDir : systemdUserDir);
   const maxAgeMs = input.maxAgeMs ?? 15_000;
+  const maxPendingInboxAgeMs = input.maxPendingInboxAgeMs ?? 300_000;
   const systemd = {
     directory: systemdUserDir,
     checked: shouldCheckSystemd,
@@ -421,8 +496,14 @@ export async function collectOpsSnapshot(input: {
     input.outboxDir,
     (file) => file.startsWith("remote-") && file.endsWith(".md"),
   );
+  const oldestPendingInbox = await oldestFile(input.inboxDir, (file) => file.endsWith(".json"));
+  const oldestPendingInboxAgeMs = oldestPendingInbox
+    ? now.getTime() - Date.parse(oldestPendingInbox.updatedAt)
+    : undefined;
   const queues: QueueDiagnostics = {
     pendingInboxCount: await countFiles(input.inboxDir, (file) => file.endsWith(".json")),
+    ...(oldestPendingInbox ? { oldestPendingInbox } : {}),
+    ...(oldestPendingInboxAgeMs !== undefined ? { oldestPendingInboxAgeMs } : {}),
     outboxCount: await countFiles(input.outboxDir, (file) => file.endsWith(".md")),
     remoteOutboxCount: remoteOutbox.length,
     unsentRemoteOutboxCount: remoteOutbox.filter((file) => !sentFiles.has(file)).length,
@@ -447,21 +528,96 @@ export async function collectOpsSnapshot(input: {
     currentHostId,
     now,
   });
-  const failures = [
-    ...(!hostOwnership.automationAllowed ? [`host ownership is ${hostOwnership.state}: ${hostOwnership.reason}`] : []),
-    ...(!hasBotToken ? ["TELEGRAM_BOT_TOKEN is missing"] : []),
-    ...(!hasPollChatId ? ["Telegram poll chat id is missing"] : []),
-    ...(!hasReplyChatId ? ["Telegram reply chat id is missing"] : []),
-    ...(!hasCodexExecutable ? [`Codex executable is missing: ${codexCommand}`] : []),
-    ...(!effectiveHealth.ok ? effectiveHealth.violations : []),
+  const missingServiceTemplates = serviceTemplates.files.filter((file) => !file.installed);
+  const replyFailures = replyState?.failures ?? [];
+  const latestReplyFailure = replyFailures.at(-1);
+  const issues: OpsDiagnosticIssue[] = [
+    ...(!hostOwnership.automationAllowed
+      ? [
+          {
+            severity: "unsafe_to_continue" as const,
+            area: "host" as const,
+            message: `host ownership is ${hostOwnership.state}: ${hostOwnership.reason}`,
+            action: "Repair `state/host-ownership.json` on the active automation host before running automation.",
+          },
+        ]
+      : []),
+    ...(!hasBotToken
+      ? [
+          {
+            severity: "blocked" as const,
+            area: "environment" as const,
+            message: "TELEGRAM_BOT_TOKEN is missing",
+            action: "Set TELEGRAM_BOT_TOKEN in the active host .env, then rerun `bun run samantha doctor`.",
+          },
+        ]
+      : []),
+    ...(!hasPollChatId
+      ? [
+          {
+            severity: "blocked" as const,
+            area: "environment" as const,
+            message: "Telegram poll chat id is missing",
+            action: "Set TELEGRAM_ALLOWED_SENDER_ID or TELEGRAM_CHAT_ID in the active host .env, then rerun `bun run samantha doctor`.",
+          },
+        ]
+      : []),
+    ...(!hasReplyChatId
+      ? [
+          {
+            severity: "blocked" as const,
+            area: "environment" as const,
+            message: "Telegram reply chat id is missing",
+            action: "Set TELEGRAM_REPLY_CHAT_ID or TELEGRAM_CHAT_ID in the active host .env, then rerun `bun run samantha doctor`.",
+          },
+        ]
+      : []),
+    ...(!hasCodexExecutable
+      ? [
+          {
+            severity: "blocked" as const,
+            area: "environment" as const,
+            message: `Codex executable is missing: ${codexCommand}`,
+            action: "Set SAMANTHA_CODEX_BIN in the active host .env or install codex on PATH, then rerun `bun run samantha doctor`.",
+          },
+        ]
+      : []),
+    ...effectiveHealth.violations.map(healthIssue),
+    ...(oldestPendingInboxAgeMs !== undefined && oldestPendingInboxAgeMs > maxPendingInboxAgeMs
+      ? [
+          {
+            severity: "blocked" as const,
+            area: "inbox" as const,
+            message: `oldest inbox command is stuck: ${oldestPendingInboxAgeMs}ms`,
+            action: "Inspect `inbox/` and run `bun run samantha doctor`; do not start another watcher until host ownership is active.",
+          },
+        ]
+      : []),
+    ...missingServiceTemplates.map((file) => ({
+      severity: "degraded" as const,
+      area: "service" as const,
+      message: `${serviceTemplates.provider} template not installed: ${file.file}`,
+      action: `Install the ${serviceTemplates.provider} template from docs/DAEMON_OPERATIONS.md on the active automation host.`,
+    })),
+    ...(latestReplyFailure
+      ? [
+          {
+            severity: "needs_bk" as const,
+            area: "telegram" as const,
+            message: `Telegram reply failed for ${latestReplyFailure.file}: ${latestReplyFailure.lastError}`,
+            action: "Inspect Telegram env/network and `state/telegram-replies.json`, then rerun `bun run samantha doctor`.",
+          },
+        ]
+      : []),
   ];
+  const failures = issues
+    .filter((issue) => issue.severity === "blocked" || issue.severity === "stale" || issue.severity === "unsafe_to_continue")
+    .map((issue) => issue.message);
   const warnings = [
     ...pidVisibilityViolations.map((violation) => `pid visibility check failed: ${violation}`),
     ...(!telegram.offset ? ["telegram offset state is missing"] : []),
     ...(!telegram.replyState ? ["telegram reply state is missing"] : []),
-    ...serviceTemplates.files
-      .filter((file) => !file.installed)
-      .map((file) => `${serviceTemplates.provider} template not installed: ${file.file}`),
+    ...missingServiceTemplates.map((file) => `${serviceTemplates.provider} template not installed: ${file.file}`),
     ...(queues.unsentRemoteOutboxCount > 0 ? [`${queues.unsentRemoteOutboxCount} unsent remote outbox report(s)`] : []),
     ...((replyState?.failures?.length ?? 0) > 0 ? [`${replyState?.failures?.length ?? 0} Telegram reply failure(s)`] : []),
   ];
@@ -476,6 +632,7 @@ export async function collectOpsSnapshot(input: {
     telegram,
     serviceTemplates,
     systemd,
+    issues,
     warnings,
     failures,
   };

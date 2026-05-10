@@ -740,6 +740,7 @@ async function collectOps(args: ParsedArgs) {
     telegramOffsetPath: telegramOffsetPath(args),
     telegramRepliesPath: telegramRepliesPath(args),
     maxAgeMs: Number(flag(args, "max-age-ms", "15000")),
+    maxPendingInboxAgeMs: Number(flag(args, "max-pending-inbox-age-ms", "300000")),
   });
 }
 
@@ -1868,6 +1869,7 @@ function isCeoNotifyDeliveryStateRisk(risk: string): boolean {
   return (
     normalized.includes("telegram reply state") ||
     normalized.includes("telegram reply failure") ||
+    normalized.includes("telegram reply failed") ||
     normalized.includes("unsent remote outbox")
   );
 }
@@ -3727,7 +3729,7 @@ async function main(): Promise<void> {
       "  orchestrator:current [--project=<id>]",
       "  orchestrator:question-draft --blocker=<text> --subject-type=<type> --subject-id=<id> [--context=<text>]",
       "  next-action",
-      "  doctor [--json] [--host-id=<id>] [--host-ownership-path=<path>]",
+      "  doctor [--json] [--host-id=<id>] [--host-ownership-path=<path>] [--max-pending-inbox-age-ms=300000]",
       "  health:check [--max-age-ms=15000]",
       "  dashboard:build [--project=<id>]",
       "  dashboard:serve [--port=4173] [--host=127.0.0.1]",

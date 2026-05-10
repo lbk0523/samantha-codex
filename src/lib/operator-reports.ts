@@ -730,7 +730,14 @@ function proposalNextLines(proposal: ProposalRecord): string[] {
 function latestReplyFailure(snapshot: OpsSnapshot): string {
   const failure = snapshot.telegram.replyState?.failures?.at(-1);
   if (!failure) return "none";
-  return `${failure.file} attempts=${failure.attempts} error=${failure.lastError}`;
+  return `${failure.file} attempts=${failure.attempts} error=${redactDiagnosticValue(failure.lastError)}`;
+}
+
+function redactDiagnosticValue(value: string): string {
+  return value
+    .replace(/\b\d{6,}:[A-Za-z0-9_-]{16,}\b/g, "[redacted]")
+    .replace(/\b(Bearer|token|secret|password|api[_-]?key)=\S+/gi, "$1=[redacted]")
+    .replace(/\b(TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID|TELEGRAM_REPLY_CHAT_ID)=\S+/g, "$1=[redacted]");
 }
 
 function nextActionLinesForRun(run: RunSummary): string[] {
@@ -2418,8 +2425,19 @@ export function doctorReport(snapshot: OpsSnapshot): string {
       ? `- heartbeat: ${code(`${snapshot.health.heartbeat.status} pid=${snapshot.health.heartbeat.pid} updated=${snapshot.health.heartbeat.updatedAt}`)}`
       : "- heartbeat: missing",
     "",
+    "Issues:",
+    ...(snapshot.issues.length
+      ? snapshot.issues.map(
+          (issue) =>
+            `- ${issue.severity} ${issue.area}: ${oneLine(redactDiagnosticValue(issue.message))} | next: ${oneLine(redactDiagnosticValue(issue.action))}`,
+        )
+      : ["- 없음"]),
+    "",
     "큐:",
     `- pending inbox: ${snapshot.queues.pendingInboxCount}`,
+    snapshot.queues.oldestPendingInbox
+      ? `- oldest inbox: ${code(snapshot.queues.oldestPendingInbox.file)} age=${snapshot.queues.oldestPendingInboxAgeMs ?? "unknown"}ms`
+      : "- oldest inbox: 없음",
     `- outbox reports: ${snapshot.queues.outboxCount}`,
     `- remote outbox reports: ${snapshot.queues.remoteOutboxCount}`,
     `- unsent remote outbox reports: ${snapshot.queues.unsentRemoteOutboxCount}`,
