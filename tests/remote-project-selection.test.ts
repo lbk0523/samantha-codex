@@ -290,13 +290,62 @@ describe("remote project selection guards", () => {
 
     await runInbox(ctx);
 
-    expect(await readFile(join(ctx.outbox, "001-approve.md"), "utf8")).toContain("두 개 이상의 현재 계획 승인 결정");
-    expect(await readFile(join(ctx.outbox, "002-go.md"), "utf8")).toContain("두 개 이상의 현재 계획");
+    const approve = await readFile(join(ctx.outbox, "001-approve.md"), "utf8");
+    expect(approve).toContain("두 개 이상의 현재 계획 승인 결정");
+    expect(approve).toContain("/approve project:samantha");
+    expect(approve).toContain("/approve project:omht");
+    const go = await readFile(join(ctx.outbox, "002-go.md"), "utf8");
+    expect(go).toContain("두 개 이상의 현재 계획");
+    expect(go).toContain("/go project:samantha");
+    expect(go).toContain("/go project:omht");
     const now = await readFile(join(ctx.outbox, "003-now.md"), "utf8");
     expect(now).toContain("여러 프로젝트에 현재 계획");
-    expect(now).toContain("samantha: 계획 검토");
-    expect(now).toContain("omht: 계획 검토");
+    expect(now).toContain("samantha: 확인 `/plan_current project:samantha`");
+    expect(now).toContain("승인+실행 `/go project:samantha`");
+    expect(now).toContain("omht: 확인 `/plan_current project:omht`");
+    expect(now).toContain("승인+실행 `/go project:omht`");
     expect(now).not.toContain("계획 승인 및 worker 실행 큐 등록: `/go`");
+  });
+
+  test("ambiguous remote plan and now show exact project plan commands", async () => {
+    const ctx = await setupRoot();
+    await writeFile(
+      join(ctx.state, "orchestration-requests.jsonl"),
+      [
+        {
+          schemaVersion: 1,
+          id: "request-samantha",
+          ancestry: ancestry("samantha", "request-samantha"),
+          source: "remote",
+          text: "Samantha work",
+          status: "pending_plan",
+          createdAt: "2026-05-10T01:00:00.000Z",
+        },
+        {
+          schemaVersion: 1,
+          id: "request-omht",
+          ancestry: ancestry("omht", "request-omht"),
+          source: "remote",
+          text: "OMHT work",
+          status: "pending_plan",
+          createdAt: "2026-05-10T01:01:00.000Z",
+        },
+      ].map((record) => JSON.stringify(record)).join("\n") + "\n",
+      "utf8",
+    );
+    await writeFile(join(ctx.inbox, "001-plan.json"), JSON.stringify({ type: "orchestrator:plan-latest", args: { receivedAt: "2026-05-10T01:02:00.000Z" } }), "utf8");
+    await writeFile(join(ctx.inbox, "002-now.json"), JSON.stringify({ type: "ops:now", args: { receivedAt: "2026-05-10T01:03:00.000Z" } }), "utf8");
+
+    await runInbox(ctx);
+
+    const plan = await readFile(join(ctx.outbox, "001-plan.md"), "utf8");
+    expect(plan).toContain("두 개 이상의 현재 작업 요청");
+    expect(plan).toContain("/plan samantha");
+    expect(plan).toContain("/plan omht");
+    const now = await readFile(join(ctx.outbox, "002-now.md"), "utf8");
+    expect(now).toContain("여러 프로젝트에 현재 작업 요청");
+    expect(now).toContain("samantha: 계획 생성 `/plan samantha`");
+    expect(now).toContain("omht: 계획 생성 `/plan omht`");
   });
 
   test("stale project context cannot approve or materialize another project's newer plan", async () => {

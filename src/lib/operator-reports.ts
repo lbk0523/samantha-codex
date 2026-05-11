@@ -85,14 +85,29 @@ function timestamp(value: string | undefined): number {
   return value ? Date.parse(value) || 0 : 0;
 }
 
+function recordProjectId(record: { ancestry?: { mode: string; projectId?: string } }): string | undefined {
+  return record.ancestry?.mode === "assigned" && record.ancestry.projectId ? record.ancestry.projectId : undefined;
+}
+
 function recordProjectLabel(record: { ancestry?: { mode: string; projectId?: string } }): string {
-  return record.ancestry?.mode === "assigned" && record.ancestry.projectId ? record.ancestry.projectId : "unassigned";
+  return recordProjectId(record) ?? "unassigned";
 }
 
 function currentProjectAction(plan: OrchestratorPlanRecord): string {
-  const project = recordProjectLabel(plan);
-  if (plan.status === "questions") return `${project}: 확인 답변 또는 계획 수정 필요`;
-  return `${project}: 계획 검토 후 승인 또는 수정 필요`;
+  const project = recordProjectId(plan);
+  const label = project ?? "unassigned";
+  if (!project) return `${label}: 프로젝트를 먼저 확정해야 합니다`;
+  if (plan.status === "questions") {
+    return `${label}: 답변 ${code(`/answer project:${project} <답변>`)} 또는 수정 ${code(`/revise project:${project} <피드백>`)}`;
+  }
+  return `${label}: 확인 ${code(`/plan_current project:${project}`)} / 승인+실행 ${code(`/go project:${project}`)} / 취소 ${code(`/cancel project:${project}`)}`;
+}
+
+function currentRequestAction(request: OrchestrationRequestRecord): string {
+  const project = recordProjectId(request);
+  const label = project ?? "unassigned";
+  if (!project) return `${label}: 프로젝트를 골라 ${code("/plan <project>")}로 계획 생성`;
+  return `${label}: 계획 생성 ${code(`/plan ${project}`)} / 요청 취소 ${code(`/cancel project:${project}`)}`;
 }
 
 function currentPlanAmbiguityReport(input: { plans: OrchestratorPlanRecord[] }): string {
@@ -105,8 +120,23 @@ function currentPlanAmbiguityReport(input: { plans: OrchestratorPlanRecord[] }):
     ...input.plans.map((plan) => `- ${currentProjectAction(plan)}`),
     "",
     "다음 액션:",
-    `- 프로젝트를 지정해서 다시 요청하세요.`,
-    `- 텔레그램: ${code("/check")}`,
+    `- 위 목록에서 프로젝트 하나를 골라 해당 명령을 그대로 보내세요.`,
+    `- 전체 상태 확인: ${code("/check")}`,
+  ].join("\n");
+}
+
+function currentRequestAmbiguityReport(input: { requests: OrchestrationRequestRecord[] }): string {
+  return [
+    "# now",
+    "",
+    "여러 프로젝트에 현재 작업 요청이 있어 원격 계획 생성을 보류합니다.",
+    "",
+    "프로젝트별 안전 액션:",
+    ...input.requests.map((request) => `- ${currentRequestAction(request)}`),
+    "",
+    "다음 액션:",
+    `- 위 목록에서 프로젝트 하나를 골라 해당 명령을 그대로 보내세요.`,
+    `- 전체 상태 확인: ${code("/check")}`,
   ].join("\n");
 }
 
@@ -974,7 +1004,9 @@ export function remoteProjectAmbiguityReport(input: {
   command: string;
   reason: string;
   example?: string;
+  examples?: string[];
 }): string {
+  const examples = [...new Set(input.examples ?? [])].filter(Boolean);
   return [
     `# ${input.command.replace(/^\//, "")}`,
     "",
@@ -983,11 +1015,13 @@ export function remoteProjectAmbiguityReport(input: {
     "state는 변경하지 않았고 실행 가능한 work도 만들지 않았습니다.",
     "",
     "다음 액션:",
-    input.example ? `- 프로젝트 지정: ${code(input.example)}` : "- 프로젝트를 지정해서 다시 요청하세요.",
+    ...examples.map((example) => `- 프로젝트 지정: ${code(example)}`),
+    examples.length === 0 && input.example ? `- 프로젝트 지정: ${code(input.example)}` : "",
+    examples.length === 0 && !input.example ? "- 프로젝트를 지정해서 다시 요청하세요." : "",
     `- 텔레그램: ${code("/now")}`,
     "",
     "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 export function remoteAnswerRecordedReport(): string {
@@ -1163,6 +1197,8 @@ export function nowReport(input: {
   const rankingLines = compactRankingLines(rankingSnapshot);
   const currentPlans = (input.orchestratorPlans ?? []).filter((plan) => plan.status === "planned" || plan.status === "questions");
   if (currentPlans.length > 1) return [...rankingLines, "", currentPlanAmbiguityReport({ plans: currentPlans })].join("\n");
+  const currentRequests = (input.orchestrationRequests ?? []).filter((request) => request.status === "pending_plan");
+  if (currentRequests.length > 1) return [...rankingLines, "", currentRequestAmbiguityReport({ requests: currentRequests })].join("\n");
 
   const blockerClarification = latestCurrentPendingBlockerClarification(
     input.decisions ?? [],

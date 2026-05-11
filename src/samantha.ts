@@ -1869,6 +1869,52 @@ function currentActionablePlans(plans: OrchestratorPlanRecord[], requestedProjec
   return plans.filter((plan) => (plan.status === "planned" || plan.status === "questions") && planMatchesProject(plan, requestedProjectId));
 }
 
+function projectScopedRemoteCommand(command: string, projectId: string): string {
+  if (command === "/plan") return `/plan ${projectId}`;
+  if (command === "/answer") return `/answer project:${projectId} <답변>`;
+  if (command === "/revise") return `/revise project:${projectId} <피드백>`;
+  return `${command} project:${projectId}`;
+}
+
+function projectExamplesForRecords(
+  records: Array<{ ancestry?: OrchestratorPlanRecord["ancestry"] }>,
+  command: string,
+): string[] {
+  const seen = new Set<string>();
+  const examples: string[] = [];
+  for (const record of records) {
+    const projectId = selectedProjectIdFromAncestry(record.ancestry);
+    if (!projectId || seen.has(projectId)) continue;
+    seen.add(projectId);
+    examples.push(projectScopedRemoteCommand(command, projectId));
+  }
+  return examples;
+}
+
+function projectIdForPlanDecision(decision: DecisionItem, plans: OrchestratorPlanRecord[]): string | undefined {
+  const decisionProjectId = selectedProjectIdFromAncestry(decision.ancestry);
+  if (decisionProjectId) return decisionProjectId;
+  if (decision.subject?.type !== "orchestrator_plan") return undefined;
+  const plan = plans.find((item) => item.id === decision.subject?.id);
+  return selectedProjectIdFromAncestry(plan?.ancestry);
+}
+
+function projectExamplesForPlanDecisions(
+  decisions: DecisionItem[],
+  plans: OrchestratorPlanRecord[],
+  command: string,
+): string[] {
+  const seen = new Set<string>();
+  const examples: string[] = [];
+  for (const decision of decisions) {
+    const projectId = projectIdForPlanDecision(decision, plans);
+    if (!projectId || seen.has(projectId)) continue;
+    seen.add(projectId);
+    examples.push(projectScopedRemoteCommand(command, projectId));
+  }
+  return examples;
+}
+
 async function selectSingleCurrentPlan(input: {
   args: ParsedArgs;
   requestedProjectId?: string;
@@ -1884,7 +1930,8 @@ async function selectSingleCurrentPlan(input: {
       report: remoteProjectAmbiguityReport({
         command: input.command,
         reason: "두 개 이상의 현재 계획이 명령 대상이 될 수 있습니다. 잘못된 프로젝트 진행을 막기 위해 실행하지 않았습니다.",
-        example: input.example,
+        example: input.requestedProjectId ? input.example : undefined,
+        examples: input.requestedProjectId ? undefined : projectExamplesForRecords(candidates, input.command),
       }),
     };
   }
@@ -1919,6 +1966,7 @@ async function selectPendingRequestForPlan(input: {
           command: "/plan",
           reason: "현재 요청의 프로젝트가 확정되지 않았습니다. 계획을 만들기 전에 프로젝트를 지정해야 합니다.",
           example: "/plan <project>",
+          examples: projectProfiles.map((project) => projectScopedRemoteCommand("/plan", project.id)),
         }),
       };
     }
@@ -1931,6 +1979,7 @@ async function selectPendingRequestForPlan(input: {
         command: "/plan",
         reason: "두 개 이상의 현재 작업 요청이 계획 대상이 될 수 있습니다. 프로젝트를 지정해도 여러 요청이 남으면 로컬에서 정확한 요청을 확인하세요.",
         example: input.requestedProjectId ? undefined : "/plan <project>",
+        examples: input.requestedProjectId ? undefined : projectExamplesForRecords(pending, "/plan"),
       }),
     };
   }
@@ -2055,7 +2104,10 @@ async function resolveLatestRemotePlanApprovalDecision(
           resolution === "approved"
             ? "Telegram approval is only allowed when exactly one current plan approval decision is pending. 두 개 이상의 현재 계획 승인 결정이 명령 대상이 될 수 있습니다. 잘못된 프로젝트 승인을 막기 위해 승인하지 않았습니다."
             : "Telegram rejection is only allowed when exactly one current plan approval decision is pending. 두 개 이상의 현재 계획 승인 결정이 명령 대상이 될 수 있습니다. 잘못된 프로젝트 취소를 막기 위해 거절하지 않았습니다.",
-        example: resolution === "approved" ? "/approve project:<project>" : "/cancel project:<project>",
+        example: requestedProjectId ? (resolution === "approved" ? "/approve project:<project>" : "/cancel project:<project>") : undefined,
+        examples: requestedProjectId
+          ? undefined
+          : projectExamplesForPlanDecisions(candidates, plans, resolution === "approved" ? "/approve" : "/cancel"),
       });
     }
     return remoteApprovalRedirectReport({
@@ -2106,7 +2158,8 @@ async function answerLatestRemoteBlockerClarification(args: ParsedArgs, received
       return remoteProjectAmbiguityReport({
         command: "/answer",
         reason: "Telegram answer is only allowed when exactly one current blocker clarification is pending. 두 개 이상의 현재 blocker clarification이 명령 대상이 될 수 있습니다. 잘못된 프로젝트에 답변하지 않도록 기록하지 않았습니다.",
-        example: "/answer project:<project> <답변>",
+        example: requestedProjectId ? "/answer project:<project> <답변>" : undefined,
+        examples: requestedProjectId ? undefined : projectExamplesForPlanDecisions(candidates, plans, "/answer"),
       });
     }
     return remoteAnswerRedirectReport({
@@ -2617,7 +2670,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       return remoteProjectAmbiguityReport({
         command: "/recover",
         reason: "두 개 이상의 현재 복구 후보가 명령 대상이 될 수 있습니다. 잘못된 프로젝트 복구를 막기 위해 요청을 만들지 않았습니다.",
-        example: "/recover project:<project>",
+        example: requestedProjectId ? "/recover project:<project>" : undefined,
+        examples: requestedProjectId ? undefined : projectExamplesForRecords(recoverableCandidates.map((candidate) => candidate.plan), "/recover"),
       });
     }
     const recoverable = recoverableCandidates[0];
@@ -3091,7 +3145,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
         return remoteProjectAmbiguityReport({
           command: "/go",
           reason: "두 개 이상의 현재 blocker clarification이 명령 대상이 될 수 있습니다. 먼저 프로젝트를 지정하거나 로컬에서 정확한 항목을 확인하세요.",
-          example: "/go project:<project>",
+          example: requestedProjectId ? "/go project:<project>" : undefined,
+          examples: requestedProjectId ? undefined : projectExamplesForPlanDecisions(blockerClarificationCandidates, currentPlans, "/go"),
         });
       }
       const currentBlockerClarification = blockerClarificationCandidates.slice().reverse()[0];
