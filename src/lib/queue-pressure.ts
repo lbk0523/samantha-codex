@@ -353,6 +353,63 @@ export function formatQueuePressureSnapshot(pressure: QueuePressureSnapshot): st
   ];
 }
 
+export function formatQueuePressureGuidance(pressure: QueuePressureSnapshot): string[] {
+  const metrics = pressure.metrics;
+  const project = pressure.projectId;
+  const lines: string[] = [];
+
+  if (metrics.pendingBkDecisions > 0) {
+    lines.push(
+      project
+        ? `- pending BK decisions=${metrics.pendingBkDecisions}: /approve project:${project}로 결정 대상을 확인하고 /approve, /revise <피드백>, /cancel 중 하나를 선택하세요.`
+        : `- pending BK decisions=${metrics.pendingBkDecisions}: /now에서 결정 대상을 확인하고 /approve, /revise <피드백>, /cancel 중 하나를 선택하세요.`,
+    );
+  }
+  if (metrics.recoveryNeeds > 0) {
+    lines.push(
+      project
+        ? `- recovery blockers=${metrics.recoveryNeeds}: /recover project:${project}로 복구 계획을 만들거나 stale 복구 요청은 /drop recovery project:${project}로 정리하세요.`
+        : `- recovery blockers=${metrics.recoveryNeeds}: /now에서 project별 복구 대상을 확인하고 /recover 또는 /drop recovery project:<project>를 사용하세요.`,
+    );
+  }
+  if (metrics.pendingRequests >= 3 || metrics.deferredRequests > 0) {
+    lines.push(
+      project
+        ? `- pending requests=${metrics.pendingRequests}: /plan ${project}로 하나를 계획하고, 오래된 중복은 /drop stale project:${project}로 줄이세요.`
+        : `- pending requests=${metrics.pendingRequests}: /now에서 project별 /plan 또는 /drop stale project:<project> 명령을 확인하세요.`,
+    );
+  }
+  if (metrics.activeActions > 0) {
+    lines.push(`- active actions=${metrics.activeActions}: 실행 중인 작업이 끝날 때까지 /now로 현재 안전 액션만 확인하세요.`);
+  }
+  if (metrics.activeTasks >= 5) {
+    lines.push(`- active tasks=${metrics.activeTasks}: 새 intake보다 기존 pending/in-progress task 정리가 우선입니다.`);
+  }
+  if (metrics.taskDrafts >= 5) {
+    lines.push(`- task drafts=${metrics.taskDrafts}: draft를 승인, 폐기, 또는 계획 재작성 중 하나로 줄이세요.`);
+  }
+  if (metrics.outboxBacklog >= 5) {
+    lines.push(`- outbox backlog=${metrics.outboxBacklog}: Telegram reply/poll 상태를 /problems에서 확인하세요.`);
+  }
+  if (metrics.runLifecycleGaps > 0) {
+    lines.push(`- run lifecycle gaps=${metrics.runLifecycleGaps}: 최신 통과 run은 /go로 merge/push/cleanup gate를 진행하세요.`);
+  }
+  if (metrics.budgetAuditGaps > 0) {
+    lines.push(`- budget audit gaps=${metrics.budgetAuditGaps}: 비용 기록을 보강하거나 budget decision을 처리하세요.`);
+  }
+  if (metrics.unsafeHostIssues > 0) {
+    lines.push(`- unsafe host=${metrics.unsafeHostIssues}: /problems의 Host/Daemon/Telegram issue를 먼저 복구하세요.`);
+  }
+  if (pressure.budget && pressure.budget.state !== "ok") {
+    lines.push(`- budget gate=${pressure.budget.state}: ${pressure.budget.reasons.map(oneLine).join("; ")}`);
+  }
+
+  return [
+    "Pressure 해결:",
+    ...(lines.length ? lines : ["- 현재 queue pressure로 막힌 항목은 없습니다. 다음 액션은 /now에서 확인하세요."]),
+  ];
+}
+
 export function formatQueueAdmissionDecision(result: QueueAdmissionDecisionResult): string {
   return [
     "# queue-admission",

@@ -55,6 +55,7 @@ import {
 import type { OpsSnapshot } from "../src/lib/ops-diagnostics";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "../src/lib/orchestrator-store";
 import type { ProposalRecord } from "../src/lib/proposal-store";
+import { buildQueuePressureSnapshot } from "../src/lib/queue-pressure";
 import { createRemoteDispatchAction } from "../src/lib/remote-action-store";
 import type { RunLifecycleRecord } from "../src/lib/run-lifecycle-store";
 import type { WorkerRunLog } from "../src/lib/run-log";
@@ -513,6 +514,19 @@ describe("operator reports", () => {
     expect(doctorReport(ops)).toContain("TELEGRAM_BOT_TOKEN: 있음");
     expect(doctorReport(ops)).toContain("최근 원격 명령: type=`status:show`");
     expect(doctorReport(ops)).toContain("최근 reply 실패: remote-b.md attempts=2 error=Telegram error");
+    const pressure = buildQueuePressureSnapshot({
+      requests: [
+        { ...orchestrationRequest, id: "request-pressure-1", ancestry: { mode: "assigned", projectId: "samantha", goalId: "goal-pressure", workItemId: "work-pressure" } },
+        { ...orchestrationRequest, id: "request-pressure-2", ancestry: { mode: "assigned", projectId: "samantha", goalId: "goal-pressure", workItemId: "work-pressure" } },
+        { ...orchestrationRequest, id: "request-pressure-3", ancestry: { mode: "assigned", projectId: "samantha", goalId: "goal-pressure", workItemId: "work-pressure" } },
+      ],
+      ops,
+    }, { projectId: "samantha" });
+    const pressureDoctor = doctorReport(ops, { pressure });
+    expect(pressureDoctor).toContain("Queue pressure:");
+    expect(pressureDoctor).toContain("Pressure 해결:");
+    expect(pressureDoctor).toContain("/plan samantha");
+    expect(pressureDoctor).toContain("/drop stale project:samantha");
     const secretReport = doctorReport({
       ...ops,
       ok: false,

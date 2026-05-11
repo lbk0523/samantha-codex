@@ -21,6 +21,7 @@ import type { GovernanceEventRecord } from "./governance-event-store";
 import { buildProjectQueueSnapshot, formatProjectQueueSnapshot } from "./project-queues";
 import { classifyRemoteRequest, projectRemoteScopeRisk, type ProjectProfile, type ProjectRemoteScope, type RemoteRequestClassification } from "./project-profile";
 import type { ProposalRecord } from "./proposal-store";
+import { formatQueuePressureGuidance, formatQueuePressureSnapshot, type QueuePressureSnapshot } from "./queue-pressure";
 import { remoteActionCommand, type RemoteActionRecord } from "./remote-action-store";
 import {
   agentRoleForId,
@@ -577,7 +578,8 @@ function orchestrationRequestNextLines(request: OrchestrationRequestRecord): str
       `- reason=${telegramSafeLine(request.admission.reason)}`,
       "",
       "다음 액션:",
-      `- 먼저 ${code("/check")} 또는 ${code("/problems")}로 pressure 원인을 해결하세요.`,
+      `- 먼저 ${code("/check")}의 "Pressure 해결" 섹션에서 막는 원인과 명령을 확인하세요.`,
+      `- host/Telegram 자체 이상이면 ${code("/problems")}도 확인하세요.`,
       `- pressure가 해소된 뒤 ${code("/plan")}으로 같은 저장 요청을 다시 계획할 수 있습니다.`,
     ];
   }
@@ -2563,7 +2565,7 @@ export function healthReport(health: DaemonHealthResult): string {
   return lines.filter((line) => line !== "").join("\n");
 }
 
-export function doctorReport(snapshot: OpsSnapshot): string {
+export function doctorReport(snapshot: OpsSnapshot, options: { pressure?: QueuePressureSnapshot } = {}): string {
   const serviceTemplates = snapshot.serviceTemplates ?? {
     provider: "systemd" as const,
     directory: snapshot.systemd.directory,
@@ -2610,6 +2612,13 @@ export function doctorReport(snapshot: OpsSnapshot): string {
             `- ${issue.severity} ${issue.area}: ${oneLine(redactDiagnosticValue(issue.message))} | next: ${oneLine(redactDiagnosticValue(issue.action))}`,
         )
       : ["- 없음"]),
+    "",
+    ...(options.pressure
+      ? [
+          ...formatQueuePressureSnapshot(options.pressure),
+          ...formatQueuePressureGuidance(options.pressure),
+        ]
+      : []),
     "",
     "큐:",
     `- pending inbox: ${snapshot.queues.pendingInboxCount}`,

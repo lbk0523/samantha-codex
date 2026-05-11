@@ -1656,6 +1656,37 @@ async function queueAdmissionFor(input: {
   return admission;
 }
 
+async function queuePressureForReport(args: ParsedArgs, ops: Awaited<ReturnType<typeof collectOps>>, projectId?: string) {
+  const [requests, plans, decisions, taskDrafts, tasks, actions, runs, lifecycles, budgetObservations, budgetPolicies, governanceEvents] = await Promise.all([
+    new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
+    new OrchestratorPlanStore(orchestratorPlansPath(args)).list(),
+    new DecisionStore(decisionsPath(args)).list(),
+    new TaskDraftStore(taskDraftsPath(args)).list(),
+    new TaskStore(tasksPath(args)).list(),
+    new RemoteActionStore(remoteActionsPath(args)).list(),
+    new RunIndex(runsPath(args)).list(),
+    new RunLifecycleStore(runLifecyclePath(args)).list(),
+    new CostBudgetAuditStore(costBudgetAuditPath(args)).list(),
+    new BudgetPolicyStore(budgetPoliciesPath(args)).list(),
+    new GovernanceEventStore(governanceEventsPath(args)).list(),
+  ]);
+  return buildQueuePressureSnapshot({
+    requests,
+    plans,
+    decisions,
+    taskDrafts,
+    tasks,
+    actions,
+    runs,
+    lifecycles,
+    budgetObservations,
+    budgetPolicies,
+    governanceEvents,
+    orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(args, plans),
+    ops,
+  }, { projectId });
+}
+
 function csvFlag(value: string): string[] | undefined {
   const items = value.split(",").map((item) => item.trim()).filter(Boolean);
   return items.length ? items : undefined;
@@ -2546,7 +2577,8 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     return nowReportForInbox(args);
   }
   if (command.type === "ops:doctor") {
-    return doctorReport(withoutActiveInboxCommand(await collectOps(args)));
+    const ops = withoutActiveInboxCommand(await collectOps(args));
+    return doctorReport(ops, { pressure: await queuePressureForReport(args, ops) });
   }
   if (command.type === "health:check") {
     return healthReport(
@@ -4250,7 +4282,7 @@ async function main(): Promise<void> {
     if (args.flags.get("json") === true) {
       printJson(snapshot);
     } else {
-      console.log(doctorReport(snapshot));
+      console.log(doctorReport(snapshot, { pressure: await queuePressureForReport(args, snapshot) }));
     }
     if (!snapshot.ok) process.exitCode = 1;
     return;

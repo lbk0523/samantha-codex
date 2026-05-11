@@ -8,7 +8,7 @@ import type { RunSummary } from "./ledger";
 import type { OrchestratorPlanBlocker } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "./orchestrator-store";
 import type { OpsSnapshot } from "./ops-diagnostics";
-import { buildQueuePressureSnapshot, formatQueuePressureSnapshot, type QueuePressureSnapshot } from "./queue-pressure";
+import { buildQueuePressureSnapshot, formatQueuePressureGuidance, formatQueuePressureSnapshot, type QueuePressureSnapshot } from "./queue-pressure";
 import type { RemoteActionRecord } from "./remote-action-store";
 import type { RunLifecycleRecord } from "./run-lifecycle-store";
 import type { TaskDraftRecord } from "./task-draft-store";
@@ -456,5 +456,6 @@ export function formatProjectQueueSnapshot(snapshot: ProjectQueueSnapshot): stri
     `- legacy ${formatProjectQueueSection(snapshot.legacy)}`,
     `- global blockers: ${snapshot.globalBlockers.length}`,
     ...formatQueuePressureSnapshot(snapshot.pressure),
+    ...formatQueuePressureGuidance(snapshot.pressure),
   ];
 }

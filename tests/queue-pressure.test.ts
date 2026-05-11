@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createBudgetPolicyRecord, createCostBudgetAuditRecord } from "../src/lib/cost-budget-audit";
 import { createDecisionItem } from "../src/lib/decision-store";
 import { createGovernanceEvent } from "../src/lib/governance-event-store";
-import { buildQueuePressureSnapshot, decideQueueAdmission } from "../src/lib/queue-pressure";
+import { buildQueuePressureSnapshot, decideQueueAdmission, formatQueuePressureGuidance } from "../src/lib/queue-pressure";
 
 const ancestry = {
   mode: "assigned" as const,
@@ -162,6 +162,40 @@ describe("queue pressure budget enforcement", () => {
     expect(pressure.budget?.state).toBe("needs_bk");
     expect(admission.decision).toBe("ask_bk");
     expect(admission.reason).toContain("pending BK decisions=1");
+    expect(formatQueuePressureGuidance(pressure).join("\n")).toContain("/approve project:samantha");
+  });
+
+  test("pressure guidance turns pending request pressure into concrete Telegram actions", () => {
+    const pressure = buildQueuePressureSnapshot({
+      requests: [
+        { schemaVersion: 1, id: "request-1", source: "remote", status: "pending_plan", text: "one", createdAt: "2026-05-10T01:00:00.000Z", ancestry },
+        { schemaVersion: 1, id: "request-2", source: "remote", status: "pending_plan", text: "two", createdAt: "2026-05-10T01:01:00.000Z", ancestry },
+        { schemaVersion: 1, id: "request-3", source: "remote", status: "pending_plan", text: "three", createdAt: "2026-05-10T01:02:00.000Z", ancestry },
+      ],
+    }, { projectId: "samantha" });
+    const guidance = formatQueuePressureGuidance(pressure).join("\n");
+
+    expect(pressure.pressureClass).toBe("defer");
+    expect(guidance).toContain("Pressure 해결:");
+    expect(guidance).toContain("pending requests=3");
+    expect(guidance).toContain("/plan samantha");
+    expect(guidance).toContain("/drop stale project:samantha");
+  });
+
+  test("pressure guidance sends global ambiguous queues to now for project-specific commands", () => {
+    const pressure = buildQueuePressureSnapshot({
+      requests: [
+        { schemaVersion: 1, id: "request-1", source: "remote", status: "pending_plan", text: "one", createdAt: "2026-05-10T01:00:00.000Z", ancestry },
+        { schemaVersion: 1, id: "request-2", source: "remote", status: "pending_plan", text: "two", createdAt: "2026-05-10T01:01:00.000Z", ancestry },
+        { schemaVersion: 1, id: "request-3", source: "remote", status: "pending_plan", text: "three", createdAt: "2026-05-10T01:02:00.000Z", ancestry },
+      ],
+    });
+    const guidance = formatQueuePressureGuidance(pressure).join("\n");
+
+    expect(guidance).toContain("/now에서 project별 /plan");
+    expect(guidance).toContain("/drop stale project:<project>");
+    expect(guidance).not.toContain("/now으로");
+    expect(guidance).not.toContain("/now로 줄이세요");
   });
 
   test("action-scoped budget policies enforce through action admission context", () => {
