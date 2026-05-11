@@ -1089,7 +1089,8 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "- `/problems`: 이상 징후 진단",
     "",
     "일반 실행:",
-    "`/work <요청>` -> `/plan` -> `/go` -> `/now`",
+    "`/work <읽기 전용 계획/보고 요청>` -> `# autopilot-result`",
+    "구현/write 작업은 계획 또는 승인 단계에서 멈춥니다.",
     "",
     "자동 분류가 틀렸을 때만 `/plan <project_id> <scope_id>`로 보정하세요.",
     "run, task, action, proposal, draft ID를 직접 입력하는 명령은 Telegram에서 제거했습니다.",
@@ -1183,6 +1184,23 @@ export function remoteDuplicatePendingRequestReport(input: { projectId: string }
     "",
     "다음 액션:",
     `- 텔레그램: ${code(`/plan ${input.projectId}`)}`,
+  ].join("\n");
+}
+
+export function remoteReportOnlyAutopilotAdmissionBlockedReport(input: {
+  decision: string;
+  pressureClass: string;
+  reason: string;
+}): string {
+  return [
+    "# autopilot-blocked",
+    "",
+    "현재 상태: report-only autopilot이 원격 요청을 받았지만 로컬 큐 입장 조건에서 멈췄습니다.",
+    `정책 판단: 지금은 새 planning/action을 진행하지 않습니다. (${code(input.decision)}/${code(input.pressureClass)})`,
+    "Samantha action: 새 요청, worker dispatch, merge, push는 만들지 않았습니다.",
+    "다음 상태: 로컬 blocker가 정리되면 같은 /work를 다시 보내면 됩니다.",
+    "",
+    `막힌 이유: ${telegramSafeLine(input.reason)}`,
   ].join("\n");
 }
 

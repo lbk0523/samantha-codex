@@ -23,23 +23,23 @@ remote input -> allowlist -> command mapping -> inbox/*.json -> inbox:watch
 
 ## Practical Telegram Flow
 
-Use this as the existing Telegram adapter path:
+Use this as the normal Telegram adapter path for read-only progress:
 
 ```text
-/work <request> -> /plan -> /go -> /now
-wrong plan -> /revise <feedback> -> /plan -> /go
-blocker clarification -> /answer <answer> -> /now or /go
-failed plan result -> /recover -> /now -> /plan -> /go
-stale planning block -> /unblock project:<project> -> /now
-duplicate normal pending requests -> /drop stale project:<project>
-unneeded recovery pending requests -> /drop recovery project:<project>
+/work <read-only planning/report request> -> # autopilot-result
+autopilot needs one BK judgment -> /answer <answer> or /approve
+autopilot reaches a local-only blocker -> /now or /check
+stale planning block -> /unblock project:<project>
 ```
 
-- `/now` shows the next Telegram command, local command, or read-only inspection command for the current state.
 - `/work <request>` captures new work as an orchestration request. When the
   request is report-only and authority policy allows autopilot, Samantha may
   continue through read-only planning, report-only materialization, report-only
   execution, result reporting, and evidence recording from that one input.
+- `/plan`, `/go`, `/recover`, `/drop`, and `/plan_current` remain supported
+  legacy/debug commands, but they should not be the primary next action for a
+  report-only autopilot-eligible `/work`.
+- `/now` shows the next Telegram command, local command, or read-only inspection command for the current state.
 - `/plan` runs the local Codex CLI `codex-orchestrator` profile in read-only mode and returns the generated plan.
 - `/plan_current` shows the current unapproved plan again without rerunning the orchestrator.
 - `/approve` approves exactly one current plan approval decision.
@@ -108,9 +108,9 @@ navigation.
 - Commands that would need long review, arbitrary paths, shell input, or raw
   ids belong in the local CLI or dashboard, not Telegram.
 
-Supported Telegram commands are operational reports plus orchestration request intake/planning/approval/answer/revision/materialization/recovery and narrow pending-request cleanup. `/work` writes an orchestration request to `state/orchestration-requests.jsonl` and marks remote intake for report-only autopilot; `/plan` writes an orchestrator plan to `state/orchestrator-plans.jsonl`; `/plan_current` reads the latest `planned` or `questions` plan without creating a new plan; `/approve` resolves exactly one current plan approval decision; `/answer <answer>` resolves exactly one current pending `blocker_clarification` as `answered`, stores the answer note, preserves the plan, and creates no tasks or actions; `/revise <feedback>` marks the current unapproved plan `superseded` and writes a new pending orchestration request containing the previous plan plus feedback; `/unblock` marks one safe stale planning block as canceled or superseded without creating tasks/actions; `/drop stale project:<project>`, `/drop recovery project:<project>`, and `/drop all project:<project>` discard only matching pending request records; `/go` validates that plan, writes tasks to `state/tasks.jsonl`, approves dispatch actions in `state/remote-actions.jsonl`, or advances the latest passed committed run through merge, push, and cleanup gates using stored run metadata; `/recover` writes a new recovery-oriented orchestration request from the latest failed materialized plan result when one does not already exist. Direct write-worker dispatch, arbitrary shell execution, arbitrary repo paths, arbitrary merge/push/cleanup paths, run/task/action/proposal/draft id entry, and write-worker execution inside inbox processing are intentionally not exposed remotely. Report-only autopilot evidence is recorded in `state/autopilot-evidence.jsonl`; authority grants are policy records in `state/authority-grants.jsonl` plus the baseline report-only autopilot grant.
+Supported Telegram commands are operational reports plus orchestration request intake/planning/approval/answer/revision/materialization/recovery and narrow pending-request cleanup. `/work` writes an orchestration request to `state/orchestration-requests.jsonl` and marks remote intake for report-only autopilot. For report-only requests that authority policy permits, `/work` should return `# autopilot-result` after progressing as far as policy and local state allow; duplicate pending requests and queue-admission blockers are reported through the same autopilot result shape instead of sending BK to `/plan`. `/plan` writes an orchestrator plan to `state/orchestrator-plans.jsonl`; `/plan_current` reads the latest `planned` or `questions` plan without creating a new plan; `/approve` resolves exactly one current plan approval decision; `/answer <answer>` resolves exactly one current pending `blocker_clarification` as `answered`, stores the answer note, preserves the plan, and creates no tasks or actions; `/revise <feedback>` marks the current unapproved plan `superseded` and writes a new pending orchestration request containing the previous plan plus feedback; `/unblock` marks one safe stale planning block as canceled or superseded without creating tasks/actions; `/drop stale project:<project>`, `/drop recovery project:<project>`, and `/drop all project:<project>` discard only matching pending request records; `/go` validates that plan, writes tasks to `state/tasks.jsonl`, approves dispatch actions in `state/remote-actions.jsonl`, or advances the latest passed committed run through merge, push, and cleanup gates using stored run metadata; `/recover` writes a new recovery-oriented orchestration request from the latest failed materialized plan result when one does not already exist. Direct write-worker dispatch, arbitrary shell execution, arbitrary repo paths, arbitrary merge/push/cleanup paths, run/task/action/proposal/draft id entry, and write-worker execution inside inbox processing are intentionally not exposed remotely. Report-only autopilot evidence is recorded in `state/autopilot-evidence.jsonl`; authority grants are policy records in `state/authority-grants.jsonl` plus the baseline report-only autopilot grant.
 
-`/now` is the default operating command. It chooses one next remote command from current action state, orchestrator plans, orchestration requests, failed plan recovery state, diagnostics, pending decisions, pending tasks, and latest run state. After `/work <request>`, `/now` should show the pending orchestration request and `/plan` instead of reporting no immediate action. When multiple pending requests exist, `/now` keeps the CEO ranking header and shows project-specific `/plan <project>`, `/drop stale project:<project>`, and `/drop recovery project:<project>` actions instead of requiring internal ids. When a plan is waiting for approval, reports show `/plan_current`, `/go`, and `/revise <feedback>` so BK can reread, approve, or redirect without starting over. When a blocker clarification is pending, reports show `/answer <answer>`, `/revise <feedback>`, and `/cancel` before plan/action progress guidance. After a failed materialized plan result is reported and no newer active item exists, `/now` should show `/recover`; after a recovery pending request already exists, reports should show `/now` plus `/drop recovery project:<project>` rather than suggesting another `/recover`. If a failed planning attempt itself is blocking queue admission, `/now` should show `/unblock project:<project>` so BK can dismiss the stale planning block from Telegram. It must not present inspect-only commands or id-based commands as the next action.
+`/now` is the default operating command. It chooses one next remote command from current action state, orchestrator plans, orchestration requests, failed plan recovery state, diagnostics, pending decisions, pending tasks, and latest run state. After a report-only autopilot-eligible `/work`, `/now` should not be needed for normal progress; the `/work` response should already be an `# autopilot-result`. For legacy/manual pending requests, `/now` may show the pending orchestration request and `/plan` instead of reporting no immediate action. When multiple pending requests exist, `/now` keeps the CEO ranking header and shows project-specific `/plan <project>`, `/drop stale project:<project>`, and `/drop recovery project:<project>` actions instead of requiring internal ids. When a plan is waiting for approval, reports show `/plan_current`, `/go`, and `/revise <feedback>` so BK can reread, approve, or redirect without starting over. When a blocker clarification is pending, reports show `/answer <answer>`, `/revise <feedback>`, and `/cancel` before plan/action progress guidance. After a failed materialized plan result is reported and no newer active item exists, `/now` should show `/recover`; after a recovery pending request already exists, reports should show `/now` plus `/drop recovery project:<project>` rather than suggesting another `/recover`. If a failed planning attempt itself is blocking queue admission, `/now` should show `/unblock project:<project>` so BK can dismiss the stale planning block from Telegram. It must not present inspect-only commands or id-based commands as the next action.
 
 `/check` is the quick operational view for humans. It should show the current
 recommended action, the short reason work is blocked or safe, compact pressure
@@ -232,7 +232,13 @@ bun run samantha tasks:archive <task-id> --reason=<text>
 
 Archived tasks remain in `state/tasks.jsonl`, but `/tasks` and `tasks:list` exclude them by default. Use `tasks:list --include-archived` for audit/debugging.
 
-`/now` is the only routine next-action Telegram command. It should recommend the safest remote-safe next step, such as `/plan`, `/plan_current`, `/go`, `/recover`, or `/problems`, rather than local retry commands or id-based inspection commands.
+`/now` is the fallback next-action Telegram command when autopilot has stopped or
+the current item is legacy/manual. It should recommend the safest remote-safe
+next step, such as `/plan_current`, `/answer`, `/approve`, `/go`, `/recover`,
+`/unblock`, or `/problems`, rather than local retry commands or id-based
+inspection commands. For report-only autopilot-eligible `/work`, routine
+progress should finish in `# autopilot-result` without BK choosing `/plan` or
+`/go`.
 
 After a successful merge and push, clean the worker worktree locally:
 

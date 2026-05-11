@@ -500,6 +500,71 @@ describe("remote project selection guards", () => {
     expect(await new OrchestrationRequestStore(join(ctx.state, "orchestration-requests.jsonl")).list()).toHaveLength(1);
   });
 
+  test("report-only autopilot duplicate pending work returns an autopilot result instead of plan guidance", async () => {
+    const ctx = await setupRoot();
+    await writeFile(
+      join(ctx.state, "orchestration-requests.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "request-existing",
+        ancestry: ancestry("samantha", "request-existing"),
+        source: "remote",
+        text: "samantha 다음 작업 계획 보고",
+        status: "pending_plan",
+        createdAt: "2026-05-10T01:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(ctx.state, "remote-actions.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "action-failed-blocker",
+        ancestry: ancestry("samantha", "request-old"),
+        kind: "dispatch_task",
+        status: "failed",
+        createdAt: "2026-05-10T00:00:00.000Z",
+        source: "remote",
+        taskId: "task-failed-blocker",
+        taskTitle: "Failed blocker",
+        targetAgent: "codex-worker",
+        repoRoot: "/repo/samantha",
+        allocate: true,
+        execute: true,
+        liveLog: true,
+        completedAt: "2026-05-10T00:01:00.000Z",
+        result: { pass: false, failure: "fixture failed" },
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(ctx.inbox, "001-work.json"),
+      JSON.stringify({
+        type: "orchestrator:add-request",
+        args: {
+          requestId: "request-new",
+          projectId: "samantha",
+          text: "samantha 다음 작업 계획 보고",
+          senderId: "bk",
+          source: "remote",
+          autopilot: "remote_report_only",
+          receivedAt: "2026-05-10T01:01:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    await runInbox(ctx);
+
+    const report = await readFile(join(ctx.outbox, "001-work.md"), "utf8");
+    expect(report).toContain("# autopilot-result");
+    expect(report).toContain("상태: `blocked`");
+    expect(report).toContain("종료 조건: `local_only_blocker`");
+    expect(report).not.toContain("이미 같은 pending 요청이 있습니다. 새 요청은 만들지 않았습니다.");
+    expect(report).not.toContain("텔레그램: `/plan");
+    expect(await new OrchestrationRequestStore(join(ctx.state, "orchestration-requests.jsonl")).list()).toHaveLength(1);
+  });
+
   test("drop cleans stale and recovery project pending requests without touching planned requests", async () => {
     const ctx = await setupRoot();
     await writeFile(

@@ -81,6 +81,7 @@ import {
   remoteDropPendingRequestsReport,
   remoteDuplicateRecoveryPendingRequestReport,
   remoteDuplicatePendingRequestReport,
+  remoteReportOnlyAutopilotAdmissionBlockedReport,
   remoteGoNoActionablePlanReport,
   remoteUnblockReport,
   remoteApprovalRedirectReport,
@@ -1664,7 +1665,6 @@ async function tryRunRemoteReportOnlyAutopilot(input: {
   requestedProjectId?: string;
 }): Promise<string | undefined> {
   if (input.request.source !== "remote") return undefined;
-  if (input.request.admission?.decision && input.request.admission.decision !== "accept") return undefined;
 
   const startedAt = input.receivedAt;
   const transitions: AutopilotTransition[] = ["remote_intake", "classify_request"];
@@ -1686,6 +1686,40 @@ async function tryRunRemoteReportOnlyAutopilot(input: {
     },
   );
   if (!authority.allowed || !authority.grant) return undefined;
+
+  const requestAdmission = input.request.admission;
+  if (requestAdmission?.decision && requestAdmission.decision !== "accept") {
+    const admissionReason = requestAdmission.reason.replace(/^recovery blockers=(\d+)$/, "복구 확인 필요 ($1건)");
+    const failure = `request admission ${requestAdmission.decision}: ${admissionReason}`;
+    const evidence = await appendAutopilotEvidence({
+      args: input.args,
+      request: input.request,
+      authorityGrant: authority.grant,
+      projectId,
+      scopeId: scope?.id,
+      resultMode: "report",
+      startedAt,
+      transitions,
+      endpoint: "local_only_blocker",
+      status: "blocked",
+      failure,
+      summary: "Report-only autopilot stopped because request admission did not accept.",
+    });
+    return autopilotResultReport({
+      request: input.request,
+      authorityGrant: authority.grant,
+      evidence,
+      status: "blocked",
+      endpoint: "local_only_blocker",
+      summary: "Report-only autopilot stopped at local queue admission.",
+      planReport: remoteReportOnlyAutopilotAdmissionBlockedReport({
+        decision: requestAdmission.decision,
+        pressureClass: requestAdmission.pressureClass,
+        reason: admissionReason,
+      }),
+      failure,
+    });
+  }
 
   const planned = await createOrchestratorPlanForRequest({
     args: input.args,
@@ -3350,6 +3384,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       requestedProjectId,
     });
     const resolvedProjectId = selectedProjectIdFromAncestry(requestAncestry);
+    const isRemoteReportOnlyAutopilot = command.args?.autopilot === "remote_report_only";
     if (resolvedProjectId) {
       const duplicate = (await requestStore.list()).find(
         (request) =>
@@ -3358,7 +3393,28 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
           pendingProjectRequestMatches(request, resolvedProjectId) &&
           request.text.trim() === text.trim(),
       );
-      if (duplicate) return remoteDuplicatePendingRequestReport({ projectId: resolvedProjectId });
+      if (duplicate) {
+        if (isRemoteReportOnlyAutopilot) {
+          const admission = await queueAdmissionFor({
+            args,
+            subjectKind: "request",
+            projectId: resolvedProjectId,
+            budgetContext: budgetContextFromAncestry(duplicate.ancestry),
+            excludeRequestId: duplicate.id,
+          });
+          const autopilotReport = await tryRunRemoteReportOnlyAutopilot({
+            args,
+            request: {
+              ...duplicate,
+              admission: queueAdmissionRecord({ decidedAt: receivedAt, result: admission }),
+            },
+            receivedAt,
+            requestedProjectId: resolvedProjectId,
+          });
+          if (autopilotReport) return autopilotReport;
+        }
+        return remoteDuplicatePendingRequestReport({ projectId: resolvedProjectId });
+      }
     }
     const request: OrchestrationRequestRecord = {
       schemaVersion: 1,
@@ -3379,7 +3435,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     request.admission = queueAdmissionRecord({ decidedAt: receivedAt, result: admission });
     if (!request.id) throw new Error("orchestration request id is required");
     await requestStore.append(request);
-    if (command.args?.autopilot === "remote_report_only") {
+    if (isRemoteReportOnlyAutopilot) {
       const autopilotReport = await tryRunRemoteReportOnlyAutopilot({
         args,
         request,

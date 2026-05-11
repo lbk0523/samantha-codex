@@ -1032,6 +1032,143 @@ describe("inbox and remote commands", () => {
     ]);
   });
 
+  test("remote report-only autopilot returns a blocked result when request admission is blocked", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-autopilot-admission-blocked-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const agents = join(root, "agents");
+    const projects = join(root, "projects");
+    const repo = join(root, "repo");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await mkdir(repo, { recursive: true });
+    await writeActiveHostOwnership(state);
+    await writeFile(join(agents, "codex-orchestrator.json"), `${JSON.stringify(orchestrator, null, 2)}\n`, "utf8");
+    await writeFile(
+      join(projects, "samantha.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "samantha",
+          repoRoot: repo,
+          keywords: ["samantha"],
+          setupCommands: [],
+          verifyCommands: ["true"],
+          forbiddenChanges: ["state/**"],
+          defaultRemoteScopeId: "planning_report",
+          remoteScopes: [
+            {
+              id: "planning_report",
+              label: "Samantha report",
+              description: "Read-only Samantha planning reports.",
+              risk: "low",
+              resultMode: "report",
+              targetFiles: ["docs/**"],
+              keywords: ["계획", "보고"],
+              planSteps: ["Read context.", "Return report."],
+              successCriteria: ["Report is actionable."],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await new RemoteActionStore(join(state, "remote-actions.jsonl")).append({
+      ...createRemoteDispatchAction({
+        task: {
+          ...reportTask("codex-reviewer"),
+          id: "task-failed-blocker",
+          title: "Failed blocker",
+          ancestry: { mode: "assigned", projectId: "samantha", goalId: "goal-samantha", workItemId: "request-old" },
+        },
+        repoRoot: repo,
+        createdAt: "2026-05-11T00:30:00.000Z",
+        source: "remote",
+      }),
+      status: "failed",
+      completedAt: "2026-05-11T00:31:00.000Z",
+      result: { pass: false, failure: "fixture failed" },
+    });
+    await writeFile(
+      join(inbox, "001-work.json"),
+      JSON.stringify({
+        id: "remote-work",
+        type: "orchestrator:add-request",
+        args: {
+          requestId: "request-autopilot-blocked",
+          projectId: "samantha",
+          text: "samantha 다음 작업 계획 보고",
+          senderId: "bk",
+          source: "remote",
+          autopilot: "remote_report_only",
+          receivedAt: "2026-05-11T01:00:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "002-write-work.json"),
+      JSON.stringify({
+        id: "remote-write-work",
+        type: "orchestrator:add-request",
+        args: {
+          requestId: "request-write-blocked",
+          projectId: "samantha",
+          text: "samantha src/samantha.ts 수정 구현해줘",
+          senderId: "bk",
+          source: "remote",
+          autopilot: "remote_report_only",
+          receivedAt: "2026-05-11T01:01:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+        `--orchestrator-repo-root=${root}`,
+        `--log-dir=${join(root, "runs")}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const report = await readFile(join(outbox, "001-work.md"), "utf8");
+    expect(report).toContain("# autopilot-result");
+    expect(report).toContain("상태: `blocked`");
+    expect(report).toContain("종료 조건: `local_only_blocker`");
+    expect(report).not.toContain("텔레그램: `/plan");
+    const writeReport = await readFile(join(outbox, "002-write-work.md"), "utf8");
+    expect(writeReport).toContain("# work");
+    expect(writeReport).not.toContain("# autopilot-result");
+
+    const evidence = await readFile(join(state, "autopilot-evidence.jsonl"), "utf8");
+    expect(evidence).toContain("\"status\":\"blocked\"");
+    expect(evidence.trim().split("\n")).toHaveLength(1);
+  });
+
   test("remote go does not approve or create worker actions from stale task/action/draft state", async () => {
     async function runGoFixture(name: string, seed: (input: { state: string; agents: string }) => Promise<void>) {
       const root = await mkdtemp(join(tmpdir(), name));

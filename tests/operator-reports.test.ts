@@ -38,6 +38,7 @@ import {
   remoteHelpReport,
   remoteIntegrationReport,
   remoteGoReport,
+  remoteReportOnlyAutopilotAdmissionBlockedReport,
   remoteUnblockReport,
   runsListReport,
   runShowReport,
@@ -299,6 +300,17 @@ describe("operator reports", () => {
     expect(report).toContain("BK 요청 문제가 아니라 Samantha 계획 payload가 내부 계약을 위반했습니다.");
     expect(report).toContain("같은 요청 재시도는 block 정리 후 진행하세요.");
     expect(report).not.toContain("요청을 보강해 다시 제출");
+  });
+
+  test("labels autopilot admission blocks as policy decisions rather than BK decisions", () => {
+    const report = remoteReportOnlyAutopilotAdmissionBlockedReport({
+      decision: "defer",
+      pressureClass: "block",
+      reason: "복구 확인 필요 (1건)",
+    });
+
+    expect(report).toContain("정책 판단:");
+    expect(report).not.toContain("BK 결정:");
   });
 
   test("normalizes deprecated command names from free-text report payloads", () => {
