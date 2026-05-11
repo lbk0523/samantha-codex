@@ -210,6 +210,9 @@ Applied now:
 8. Make `/check` say `Telegram: 없음` when the current blocker cannot be safely
    resolved remotely, and give one local fallback instead of several competing
    remote commands.
+9. Keep `/check` runtime evidence in human terms: cost records are a 참고 item,
+   daemon/Telegram/action/run counts are 상태 신호, and deeper investigation is
+   labeled 자세히 볼 때.
 
 Future narrow code alignment, only if dogfood shows mismatch:
 

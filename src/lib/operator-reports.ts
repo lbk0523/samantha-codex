@@ -2468,6 +2468,53 @@ function compactPrimaryAction(input: {
   };
 }
 
+function compactPressureReason(reason: string): string {
+  const safe = telegramSafeLine(reason);
+  const pendingBk = safe.match(/^pending BK decisions=(\d+)/);
+  if (pendingBk) return `BK 결정 대기 ${pendingBk[1]}건`;
+  const recovery = safe.match(/^recovery blockers=(\d+)/);
+  if (recovery) return `복구 확인 필요 ${recovery[1]}건`;
+  const pendingRequests = safe.match(/^pending requests=(\d+)/);
+  if (pendingRequests) return `처리 대기 요청 ${pendingRequests[1]}건`;
+  const activeActions = safe.match(/^active actions=(\d+)/);
+  if (activeActions) return `실행 중이거나 대기 중인 worker action ${activeActions[1]}건`;
+  const budgetAudit = safe.match(/^budget audit gaps=(\d+)/);
+  if (budgetAudit) return `참고: 비용 기록 미확인 ${budgetAudit[1]}건`;
+  const unsafeHost = safe.match(/^unsafe host state=(\d+)/);
+  if (unsafeHost) return `active host 안전 문제 ${unsafeHost[1]}건`;
+  return safe;
+}
+
+function compactPressureGuidance(line: string): string | undefined {
+  const safe = telegramSafeLine(line).replace(/^-\s*/, "");
+  const pendingBk = safe.match(/^pending BK decisions=(\d+)/);
+  if (pendingBk) return `- BK 결정 ${pendingBk[1]}건: /now에서 결정 내용을 확인한 뒤 approve/revise/cancel 중 하나를 선택하세요.`;
+  const recovery = safe.match(/^recovery blockers=(\d+)/);
+  if (recovery) return `- 복구 확인 ${recovery[1]}건: 새 작업을 넣기 전에 CLI/dashboard에서 아직 필요한 복구인지 확인하세요.`;
+  const pendingRequests = safe.match(/^pending requests=(\d+)/);
+  if (pendingRequests) return `- 처리 대기 요청 ${pendingRequests[1]}건: project가 보이는 요청만 계획하고, 오래된 중복 요청은 정리하세요.`;
+  const activeActions = safe.match(/^active actions=(\d+)/);
+  if (activeActions) return `- worker action ${activeActions[1]}건: 실행이 끝날 때까지 기다리거나, 멈춘 것으로 보이면 /problems를 확인하세요.`;
+  if (safe.startsWith("budget audit gaps=")) return undefined;
+  return `- ${safe}`;
+}
+
+function compactBudgetAuditNote(count: number): string | undefined {
+  if (count <= 0) return undefined;
+  return `- 비용 기록 미확인 ${count}건: 최근 실행 비용이 unknown으로 남았다는 뜻입니다. 지금 Telegram에서 처리할 일은 아니고 CLI/dashboard에서 나중에 보강하세요.`;
+}
+
+function compactActionSummary(counts: { pending: number; waiting: number; approved: number; running: number; failed: number } | undefined): string {
+  if (!counts) return "- worker action: 상태 정보 없음";
+  return `- worker action: 대기 ${counts.pending + counts.waiting} / 승인 ${counts.approved} / 실행 ${counts.running} / 실패 ${counts.failed}`;
+}
+
+function compactLatestRunSummary(runs: RunSummary[], failureCount: number): string {
+  const latest = runs.at(-1);
+  const latestText = latest ? `; 최신 결과 ${latest.outcome === "pass" ? "통과" : latest.outcome}` : "";
+  return `- 실행 결과: 총 ${runs.length}건; 미통과 ${failureCount}건${latestText}`;
+}
+
 function compactStatusReport(input: {
   heartbeat?: DaemonHeartbeat;
   pendingInboxCount: number;
@@ -2494,17 +2541,16 @@ function compactStatusReport(input: {
     unassignedPendingRequests,
     assignedPendingRequests,
   });
-  const latest = input.runs.at(-1);
   const replyFailures = input.ops?.telegram.replyState?.failures?.length ?? 0;
   const pressureReasons = pressure.reasons.slice(0, 4);
   const pressureGuidance = formatQueuePressureGuidance(pressure)
     .slice(1)
     .filter(Boolean)
     .filter((line) => !(unassignedPendingRequests > 0 && line.includes("pending requests=")))
+    .map(compactPressureGuidance)
+    .filter((line): line is string => Boolean(line))
     .slice(0, 4);
-  const actionSummary = input.actionCounts
-    ? `pending=${input.actionCounts.pending} waiting=${input.actionCounts.waiting} approved=${input.actionCounts.approved} running=${input.actionCounts.running} failed=${input.actionCounts.failed}`
-    : "unknown";
+  const budgetAuditNote = compactBudgetAuditNote(pressure.metrics.budgetAuditGaps);
 
   return [
     "# status",
@@ -2519,8 +2565,8 @@ function compactStatusReport(input: {
     primaryAction.local ? `- Local: ${code(primaryAction.local)}` : "",
     "",
     "막힌 이유:",
-    `- pressure=${code(pressure.pressureClass)}`,
-    ...(pressureReasons.length ? pressureReasons.map((reason) => `- ${telegramSafeLine(reason)}`) : ["- 없음"]),
+    `- queue 상태=${code(pressure.pressureClass)}`,
+    ...(pressureReasons.length ? pressureReasons.map((reason) => `- ${compactPressureReason(reason)}`) : ["- 없음"]),
     unassignedPendingRequests
       ? `- project 없는 pending 요청=${unassignedPendingRequests}: Telegram에서 안전한 ${code("/plan <project>")} 명령을 만들 수 없습니다.`
       : "",
@@ -2534,17 +2580,20 @@ function compactStatusReport(input: {
       : []),
     ...(pressureGuidance.length ? pressureGuidance : ["- 현재 queue pressure로 막힌 항목은 없습니다."]),
     "",
-    "운영 신호:",
-    `- daemon=${input.heartbeat?.status ?? "missing"} pending_inbox=${input.pendingInboxCount}`,
+    budgetAuditNote ? "참고:" : "",
+    budgetAuditNote ?? "",
+    budgetAuditNote ? "" : "",
+    "상태 신호:",
+    `- 명령 처리기: ${input.heartbeat?.status === "running" ? "실행 중" : input.heartbeat?.status ?? "확인 필요"}; 기다리는 명령 ${input.pendingInboxCount}개`,
     input.ops
-      ? `- telegram_reply_failures=${replyFailures} unsent_outbox=${input.ops.queues.unsentRemoteOutboxCount} ops=${input.ops.ok ? "ok" : "needs_attention"}`
-      : "- telegram=unknown",
-    `- actions: ${actionSummary}`,
-    `- runs: total=${input.runs.length} non_passing=${input.failureCount}${latest ? ` latest=${latest.outcome}` : ""}`,
+      ? `- Telegram 전송: 실패 ${replyFailures}건; 보내지 못한 메시지 ${input.ops.queues.unsentRemoteOutboxCount}건; 운영 진단 ${input.ops.ok ? "정상" : "확인 필요"}`
+      : "- Telegram 전송: 상태 정보 없음",
+    compactActionSummary(input.actionCounts),
+    compactLatestRunSummary(input.runs, input.failureCount),
     "",
-    "긴 진단:",
-    `- Runtime/Telegram 문제: ${code("/problems")}`,
-    "- 상세 queue/run 검토: CLI 또는 dashboard",
+    "자세히 볼 때:",
+    `- runtime/Telegram 자체 문제 의심: ${code("/problems")}`,
+    "- queue/run 세부 기록 확인: CLI 또는 dashboard",
   ]
     .filter((line) => line !== "")
     .join("\n");

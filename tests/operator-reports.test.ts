@@ -547,7 +547,7 @@ describe("operator reports", () => {
     });
     expect(compactStatus).toContain("지금 할 일:");
     expect(compactStatus).toContain("막힌 이유:");
-    expect(compactStatus).toContain("운영 신호:");
+    expect(compactStatus).toContain("상태 신호:");
     expect(compactStatus).not.toContain("Budget audit:");
     expect(compactStatus).not.toContain("Project queues:");
     const ambiguousCompactStatus = statusReport({
@@ -575,6 +575,14 @@ describe("operator reports", () => {
           failure: "JSON Parse error: Unrecognized token '\\'",
         },
       ],
+      budgetObservations: [
+        createCostBudgetAuditRecord({
+          observedAt: "2026-05-03T09:05:00.000Z",
+          actor: "samantha",
+          subject: { type: "run", id: "run-unknown-cost" },
+          cost: { kind: "unknown", reason: "worker run did not report cost" },
+        }),
+      ],
     });
     expect(ambiguousCompactStatus).toContain(
       "Primary: CLI/dashboard에서 recovery blocker와 project 없는 pending 요청을 먼저 정리하세요.",
@@ -582,6 +590,13 @@ describe("operator reports", () => {
     expect(ambiguousCompactStatus).toContain("Telegram: 없음");
     expect(ambiguousCompactStatus).toContain("현재 블로커는 plan failed");
     expect(ambiguousCompactStatus).toContain("Local: `bun run samantha ceo:status`");
+    expect(ambiguousCompactStatus).toContain("비용 기록 미확인 1건");
+    expect(ambiguousCompactStatus).toContain("지금 Telegram에서 처리할 일은 아니고");
+    expect(ambiguousCompactStatus).toContain("명령 처리기:");
+    expect(ambiguousCompactStatus).toContain("자세히 볼 때:");
+    expect(ambiguousCompactStatus).not.toContain("budget audit gaps");
+    expect(ambiguousCompactStatus).not.toContain("daemon=running");
+    expect(ambiguousCompactStatus).not.toContain("telegram_reply_failures");
     expect(ambiguousCompactStatus).not.toContain("/now에서 project별 /plan");
     expect(
       statusReport({
