@@ -82,6 +82,7 @@ import {
   remoteDuplicateRecoveryPendingRequestReport,
   remoteDuplicatePendingRequestReport,
   remoteGoNoActionablePlanReport,
+  remoteUnblockReport,
   remoteApprovalRedirectReport,
   remoteProjectAmbiguityReport,
   remoteAnswerRecordedReport,
@@ -159,6 +160,7 @@ import { createRemoteDispatchAction, RemoteActionStore, type RemoteActionRecord 
 import { enqueueRemoteCommand } from "./lib/remote-command";
 import { recoveryResolvedPlanIds } from "./lib/recovery-continuity";
 import { buildRecoveryRequestText } from "./lib/recovery-context";
+import { currentOrchestratorPlanNeedsRecovery } from "./lib/orchestrator-recovery";
 import {
   RoutineTriggerObservationStore,
   RoutineTriggerStore,
@@ -1163,6 +1165,15 @@ interface RecoverableOrchestratorPlan {
   artifactPreviews: RemoteActionArtifactPreview[];
 }
 
+type RemoteUnblockCandidateKind = "failed_plan" | "blocked_plan";
+
+interface RemoteUnblockCandidate {
+  kind: RemoteUnblockCandidateKind;
+  plan: OrchestratorPlanRecord;
+  reason: string;
+  blocker?: OrchestratorPlanBlocker;
+}
+
 async function readRunLogsForActions(actions: RemoteActionRecord[]): Promise<WorkerRunLog[]> {
   const logs = await Promise.all(
     actions.map(async (action) => {
@@ -1246,6 +1257,107 @@ async function latestRecoverableOrchestratorPlan(
   requestedProjectId?: string,
 ): Promise<RecoverableOrchestratorPlan | undefined> {
   return (await recoverableOrchestratorPlanCandidates(args, requestedProjectId))[0];
+}
+
+function planActivityTime(plan: OrchestratorPlanRecord): number {
+  return Math.max(
+    timestamp(plan.synthesisAt),
+    timestamp(plan.resultReportedAt),
+    timestamp(plan.materializedAt),
+    timestamp(plan.approvedAt),
+    timestamp(plan.completedAt),
+    timestamp(plan.createdAt),
+  );
+}
+
+async function remoteUnblockCandidates(
+  args: ParsedArgs,
+  requestedProjectId?: string,
+): Promise<RemoteUnblockCandidate[]> {
+  const plans = await new OrchestratorPlanStore(orchestratorPlansPath(args)).list();
+  const blockers = new Map((await orchestratorPlanBlockersForReport(args, plans)).map((blocker) => [blocker.planId, blocker]));
+  return plans
+    .filter((plan) => planMatchesProject(plan, requestedProjectId))
+    .flatMap((plan): RemoteUnblockCandidate[] => {
+      const blocker = blockers.get(plan.id);
+      if (blocker) {
+        return [{
+          kind: "blocked_plan",
+          plan,
+          blocker,
+          reason: blocker.violations[0] ?? "plan materialization is blocked",
+        }];
+      }
+      if (plan.status === "failed" && currentOrchestratorPlanNeedsRecovery(plan, plans)) {
+        return [{
+          kind: "failed_plan",
+          plan,
+          reason: plan.failure ?? plan.synthesisFailure ?? plan.synthesis?.summary ?? "planning failed",
+        }];
+      }
+      return [];
+    })
+    .sort((left, right) => planActivityTime(right.plan) - planActivityTime(left.plan));
+}
+
+async function handleRemoteUnblock(input: {
+  args: ParsedArgs;
+  receivedAt: string;
+  requestedProjectId?: string;
+  reason?: string;
+  command: string;
+}): Promise<string> {
+  await validateRemoteProjectContext({ args: input.args, requestedProjectId: input.requestedProjectId });
+  const candidates = await remoteUnblockCandidates(input.args, input.requestedProjectId);
+  if (candidates.length > 1 && !input.requestedProjectId) {
+    return remoteProjectAmbiguityReport({
+      command: input.command,
+      reason: "두 개 이상의 stale planning block이 명령 대상이 될 수 있습니다. 잘못된 프로젝트 block을 제거하지 않도록 실행하지 않았습니다.",
+      example: "/unblock project:<project>",
+      examples: projectExamplesForRecords(candidates.map((candidate) => candidate.plan), "/unblock"),
+    });
+  }
+
+  const candidate = candidates[0];
+  if (!candidate) {
+    const ops = withoutActiveInboxCommand(await collectOps(input.args));
+    const pressure = await queuePressureForReport(input.args, ops, input.requestedProjectId);
+    return remoteUnblockReport({
+      changed: false,
+      projectId: input.requestedProjectId,
+      remainingSafeCandidates: 0,
+      pressureClass: pressure.pressureClass,
+      nextTelegram: pressure.metrics.recoveryNeeds > 0
+        ? `/recover${input.requestedProjectId ? ` project:${input.requestedProjectId}` : ""}`
+        : "/now",
+    });
+  }
+
+  const planStore = new OrchestratorPlanStore(orchestratorPlansPath(input.args));
+  if (candidate.kind === "blocked_plan") {
+    await planStore.markCanceled(candidate.plan.id, {
+      canceledAt: input.receivedAt,
+      cancelReason: input.reason ?? candidate.reason,
+    });
+  } else {
+    await planStore.markSuperseded(candidate.plan.id, {
+      supersededAt: input.receivedAt,
+      supersededByRequestId: buildOrchestrationRequestId(input.receivedAt, `unblock-${candidate.plan.id}`),
+    });
+  }
+
+  const remaining = await remoteUnblockCandidates(input.args, input.requestedProjectId);
+  const ops = withoutActiveInboxCommand(await collectOps(input.args));
+  const pressure = await queuePressureForReport(input.args, ops, input.requestedProjectId);
+  return remoteUnblockReport({
+    changed: true,
+    projectId: input.requestedProjectId ?? selectedProjectIdFromAncestry(candidate.plan.ancestry),
+    clearedKind: candidate.kind,
+    reason: input.reason ?? candidate.reason,
+    remainingSafeCandidates: remaining.length,
+    pressureClass: pressure.pressureClass,
+    nextTelegram: pressure.pressureClass === "normal" || pressure.pressureClass === "watch" ? "/now" : "/check",
+  });
 }
 
 function revisionRequestText(input: {
@@ -3370,6 +3482,15 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       request,
       sourcePlan: recoverable.plan,
       failedActions: recoverable.failedActions,
+    });
+  }
+  if (command.type === "orchestrator:unblock-current") {
+    return handleRemoteUnblock({
+      args,
+      receivedAt: String(command.args?.receivedAt ?? new Date().toISOString()),
+      requestedProjectId: typeof command.args?.projectId === "string" ? command.args.projectId : undefined,
+      reason: typeof command.args?.reason === "string" ? command.args.reason : undefined,
+      command: "/unblock",
     });
   }
   if (command.type === "decisions:approve-latest") {

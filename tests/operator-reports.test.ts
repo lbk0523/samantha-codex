@@ -38,6 +38,7 @@ import {
   remoteHelpReport,
   remoteIntegrationReport,
   remoteGoReport,
+  remoteUnblockReport,
   runsListReport,
   runShowReport,
   statusReport,
@@ -210,6 +211,7 @@ describe("operator reports", () => {
     expect(report).toContain("/plan");
     expect(report).toContain("/approve");
     expect(report).toContain("/go");
+    expect(report).toContain("/unblock");
     expect(report).toContain("/drop stale project:<project>");
     expect(report).not.toContain("/help_advanced");
     expect(report).not.toContain("/action_current");
@@ -232,6 +234,38 @@ describe("operator reports", () => {
     expect(remoteDecisionRejectedReport()).toContain("텔레그램: `/now`");
     expect(remoteDecisionRejectedReport()).not.toContain("decision-");
     expect(remoteApprovalRedirectReport({ reason: "Telegram approval needs CLI review for decision-abc123" })).toContain("해당 항목");
+  });
+
+  test("surfaces Telegram unblock for failed planning blocks", () => {
+    const report = nowReport({
+      runs: [],
+      tasks: [],
+      actions: [],
+      orchestratorPlans: [
+        {
+          ...orchestratorPlan,
+          status: "failed",
+          completedAt: "2026-05-05T10:02:00.000Z",
+          failure: "plans with prerequisites or blockers must not include task proposals",
+        },
+      ],
+    });
+
+    expect(report).toContain("최근 planning 실패가 새 작업 진행을 막고 있습니다.");
+    expect(report).toContain("stale block 정리: `/unblock`");
+    expect(report).not.toContain("/recover");
+
+    const unblock = remoteUnblockReport({
+      changed: true,
+      clearedKind: "failed_plan",
+      reason: "plans with prerequisites or blockers must not include task proposals",
+      remainingSafeCandidates: 0,
+      pressureClass: "normal",
+    });
+    expect(unblock).toContain("현재 Telegram-safe block 정리를 적용했습니다.");
+    expect(unblock).toContain("실패한 planning 결과를 현재 복구 후보에서 제외했습니다.");
+    expect(unblock).toContain("텔레그램: `/now`");
+    expect(unblock).not.toContain("plan-");
   });
 
   test("normalizes deprecated command names from free-text report payloads", () => {

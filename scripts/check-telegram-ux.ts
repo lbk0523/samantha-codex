@@ -28,6 +28,7 @@ const visibleTelegramCommands = [
   "/cancel",
   "/go",
   "/recover",
+  "/unblock",
   "/drop",
   "/check",
   "/problems",

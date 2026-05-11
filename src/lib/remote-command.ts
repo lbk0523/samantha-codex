@@ -178,6 +178,20 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
       args: { ...projectOnlyArgument(recoverArgs), source: "remote", senderId: input.senderId, receivedAt },
     };
   }
+  const unblockArgs = commandArgument(text, "/unblock");
+  if (text === "/unblock" || unblockArgs !== undefined) {
+    const parsed = unblockArgs === undefined ? { text: "" } : projectPrefixedArgument(unblockArgs);
+    return {
+      id: `remote-${commandToken}-unblock`,
+      type: "orchestrator:unblock-current",
+      args: {
+        ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
+        ...(parsed.text ? { reason: parsed.text } : unblockArgs && !parsed.projectId ? { reason: unblockArgs } : {}),
+        source: "remote",
+        receivedAt,
+      },
+    };
+  }
   const cancelReason = commandArgument(text, "/cancel");
   if (text === "/cancel" || cancelReason !== undefined) {
     const parsed = cancelReason === undefined ? { text: "" } : projectPrefixedArgument(cancelReason);

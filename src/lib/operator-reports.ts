@@ -18,6 +18,7 @@ import { blockerForPlan, payloadBlockerForPlan, type OrchestratorPlanBlocker } f
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord, OrchestratorSynthesisPayload } from "./orchestrator-store";
 import type { CeoReportRecord } from "./ceo-report-store";
 import type { GovernanceEventRecord } from "./governance-event-store";
+import { currentOrchestratorPlanNeedsRecovery } from "./orchestrator-recovery";
 import { buildProjectQueueSnapshot, formatProjectQueueSnapshot } from "./project-queues";
 import { classifyRemoteRequest, projectRemoteScopeRisk, type ProjectProfile, type ProjectRemoteScope, type RemoteRequestClassification } from "./project-profile";
 import type { ProposalRecord } from "./proposal-store";
@@ -767,6 +768,19 @@ function latestRecoverablePlan(input: {
   return undefined;
 }
 
+function latestFailedPlanningPlan(plans: OrchestratorPlanRecord[] | undefined): OrchestratorPlanRecord | undefined {
+  const allPlans = plans ?? [];
+  return allPlans
+    .slice()
+    .reverse()
+    .find((plan) => plan.status === "failed" && currentOrchestratorPlanNeedsRecovery(plan, allPlans));
+}
+
+function unblockCommandForPlan(plan: OrchestratorPlanRecord): string {
+  const project = recordProjectId(plan);
+  return project ? `/unblock project:${project}` : "/unblock";
+}
+
 function clipText(text: string, maxLength = 3500): string {
   const trimmed = text.trim();
   if (trimmed.length <= maxLength) return trimmed;
@@ -1035,6 +1049,7 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "- `/revise <피드백>`: 현재 계획을 수정 요청",
     "- `/cancel`: 승인 전 계획/요청 취소",
     "- `/recover`: 실패한 계획 결과로 복구 계획 요청 생성",
+    "- `/unblock`: stale planning block 정리",
     "- `/drop stale project:<project>`: 같은 프로젝트의 오래된 pending 요청 정리",
     "- `/now`: 지금 보낼 다음 명령 확인",
     "- `/check`: 짧은 상태 확인",
@@ -1169,6 +1184,46 @@ export function remoteDropPendingRequestsReport(input: {
     "다음 액션:",
     `- 텔레그램: ${code("/now")}`,
   ].join("\n");
+}
+
+export function remoteUnblockReport(input: {
+  changed: boolean;
+  projectId?: string;
+  clearedKind?: "failed_plan" | "blocked_plan";
+  reason?: string;
+  remainingSafeCandidates: number;
+  pressureClass: string;
+  nextTelegram?: string;
+}): string {
+  const commandProject = input.projectId ? ` project:${input.projectId}` : "";
+  const clearedLabel =
+    input.clearedKind === "failed_plan"
+      ? "실패한 planning 결과를 현재 복구 후보에서 제외했습니다."
+      : input.clearedKind === "blocked_plan"
+        ? "승인 전 차단 계획을 취소했습니다."
+        : "";
+  return [
+    "# unblock",
+    "",
+    input.changed
+      ? "BK 판단에 따라 현재 Telegram-safe block 정리를 적용했습니다."
+      : "Telegram에서 안전하게 제거할 수 있는 stale planning block이 없습니다.",
+    clearedLabel,
+    input.reason ? `정리 이유: ${remoteNotificationText(input.reason)}` : "",
+    "",
+    "상태:",
+    `- queue pressure: ${code(input.pressureClass)}`,
+    input.remainingSafeCandidates ? `- 남은 stale planning block: ${input.remainingSafeCandidates}건` : "- 남은 stale planning block: 0건",
+    "",
+    "다음 액션:",
+    input.changed
+      ? `- 텔레그램: ${code(input.nextTelegram ?? "/now")}`
+      : `- 텔레그램: ${code(input.nextTelegram ?? `/recover${commandProject}`)}`,
+    input.changed && input.remainingSafeCandidates ? `- 계속 정리: ${code(`/unblock${commandProject}`)}` : "",
+    !input.changed ? `- 상태 확인: ${code("/now")}` : "",
+    "",
+    "worker 실행, merge, push, cleanup은 수행하지 않았습니다.",
+  ].filter(Boolean).join("\n");
 }
 
 export function remoteAnswerRecordedReport(): string {
@@ -1435,6 +1490,24 @@ export function nowReport(input: {
       latestPlan.payload?.summary ? `요약: ${telegramSafeLine(latestPlan.payload.summary)}` : "",
       ...(blocker ? orchestratorPlanBlockerLines(blocker) : []),
       ...orchestratorPlanNextLines(latestPlan, blocker),
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  const failedPlanningPlan = latestFailedPlanningPlan(input.orchestratorPlans);
+  if (failedPlanningPlan) {
+    return [
+      ...rankingLines,
+      "",
+      "# now",
+      "",
+      "최근 planning 실패가 새 작업 진행을 막고 있습니다.",
+      failedPlanningPlan.failure ? `실패 이유: ${remoteNotificationText(failedPlanningPlan.failure)}` : "",
+      "",
+      "다음 액션:",
+      `- stale block 정리: ${code(unblockCommandForPlan(failedPlanningPlan))}`,
+      `- 정리 후 다시 판단: ${code("/now")}`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -2502,7 +2575,7 @@ function compactPressureGuidance(line: string): string | undefined {
   const pendingBk = safe.match(/^pending BK decisions=(\d+)/);
   if (pendingBk) return `- BK 결정 ${pendingBk[1]}건: /now에서 결정 내용을 확인한 뒤 approve/revise/cancel 중 하나를 선택하세요.`;
   const recovery = safe.match(/^recovery blockers=(\d+)/);
-  if (recovery) return `- 복구 확인 ${recovery[1]}건: 새 작업을 넣기 전에 CLI/dashboard에서 아직 필요한 복구인지 확인하세요.`;
+  if (recovery) return `- 복구 확인 ${recovery[1]}건: 실패 실행은 /recover로 복구 요청을 만들고, stale planning block은 /unblock으로 정리하세요.`;
   const pendingRequests = safe.match(/^pending requests=(\d+)/);
   if (pendingRequests) return `- 처리 대기 요청 ${pendingRequests[1]}건: project가 보이는 요청만 계획하고, 오래된 중복 요청은 정리하세요.`;
   const activeActions = safe.match(/^active actions=(\d+)/);

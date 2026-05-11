@@ -83,6 +83,18 @@ describe("commandFromRemoteInput", () => {
     expect(() => commandFromRemoteInput({ senderId: "bk", text: "/drop stale request-abc123" }, "bk")).toThrow("unsupported remote command");
   });
 
+  test("maps Telegram unblock to current block cleanup without ids", () => {
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/unblock project:samantha stale dogfood block" }, "bk")).toMatchObject({
+      type: "orchestrator:unblock-current",
+      args: {
+        projectId: "samantha",
+        reason: "stale dogfood block",
+        source: "remote",
+      },
+    });
+    expect(JSON.stringify(commandFromRemoteInput({ senderId: "bk", text: "/unblock" }, "bk"))).not.toContain("plan-");
+  });
+
   test("marks remote work intake for report-only autopilot", () => {
     expect(commandFromRemoteInput({ senderId: "bk", text: "/work 다음 작업 계획 보고" }, "bk")).toMatchObject({
       type: "orchestrator:add-request",

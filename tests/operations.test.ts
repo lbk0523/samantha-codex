@@ -2789,6 +2789,85 @@ describe("inbox and remote commands", () => {
     expect(recoveryText).toContain("worker worktree path를 repoRoot로 복사하지 마세요.");
   });
 
+  test("clears a failed planning block through Telegram-safe unblock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-unblock-planning-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const projects = join(root, "projects");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await writeActiveHostOwnership(state);
+    await writeFile(
+      join(projects, "samantha.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "samantha",
+        repoRoot: "/repo/samantha",
+        setupCommands: [],
+        verifyCommands: ["bun typecheck"],
+        forbiddenChanges: ["state/**"],
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "plan-failed-planning",
+        ancestry: { mode: "assigned", projectId: "samantha", goalId: "goal-samantha", workItemId: "request-failed-planning" },
+        requestId: "request-failed-planning",
+        status: "failed",
+        createdAt: "2026-05-06T12:00:00.000Z",
+        completedAt: "2026-05-06T12:01:00.000Z",
+        failure: "plans with prerequisites or blockers must not include task proposals",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-unblock.json"),
+      JSON.stringify({
+        id: "remote-unblock",
+        type: "orchestrator:unblock-current",
+        args: { projectId: "samantha", receivedAt: "2026-05-06T12:02:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--project-profiles-dir=${projects}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect({
+      stdout: await new Response(proc.stdout).text(),
+      stderr: await new Response(proc.stderr).text(),
+      exitCode: await proc.exited,
+    }).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "001-unblock.md"), "utf8");
+    expect(report).toContain("# unblock");
+    expect(report).toContain("실패한 planning 결과를 현재 복구 후보에서 제외했습니다.");
+    expect(report).toContain("queue pressure: `normal`");
+    expect(report).not.toContain("plan-failed-planning");
+    expect(await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).find("plan-failed-planning")).toMatchObject({
+      status: "superseded",
+      supersededAt: "2026-05-06T12:02:00.000Z",
+    });
+  });
+
   test("remote next action uses recoverable orchestrator plan context", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-remote-next-recover-"));
     tmpRoots.push(root);

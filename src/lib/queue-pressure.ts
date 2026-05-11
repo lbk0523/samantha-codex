@@ -376,8 +376,8 @@ export function formatQueuePressureGuidance(pressure: QueuePressureSnapshot): st
   if (metrics.recoveryNeeds > 0) {
     lines.push(
       project
-        ? `- recovery blockers=${metrics.recoveryNeeds}: /recover project:${project}로 복구 계획을 만들거나 stale 복구 요청은 /drop recovery project:${project}로 정리하세요.`
-        : `- recovery blockers=${metrics.recoveryNeeds}: /now에서 project별 복구 대상을 확인하고 /recover 또는 /drop recovery project:<project>를 사용하세요.`,
+        ? `- recovery blockers=${metrics.recoveryNeeds}: /recover project:${project}로 실패 실행 복구 요청을 만들거나 stale planning block은 /unblock project:${project}로 정리하세요.`
+        : `- recovery blockers=${metrics.recoveryNeeds}: /now에서 대상을 확인하고 /recover project:<project> 또는 /unblock project:<project>를 사용하세요.`,
     );
   }
   if (metrics.pendingRequests >= 3 || metrics.deferredRequests > 0) {
