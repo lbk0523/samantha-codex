@@ -1,6 +1,6 @@
 # CEO Office Roadmap
 
-Last updated: 2026-05-10
+Last updated: 2026-05-11
 
 ## Purpose
 
@@ -364,7 +364,7 @@ Detailed stages:
 
 ### 10. North Star Achieved
 
-Status: target.
+Status: achieved.
 
 Objective: Samantha functions as BK's personal development operations control
 plane across planning, execution, reporting, recovery, and audit.
@@ -384,3 +384,10 @@ Exit criteria:
   when it cannot proceed safely.
 
 Detailed criteria: [NORTH_STAR.md](NORTH_STAR.md).
+
+Phase 10 declaration complete: [NORTH_STAR.md](NORTH_STAR.md#phase-10-exit-review)
+maps every north-star criterion to implemented Phase 1-9 behavior, tests, and
+authority boundaries. This declaration does not add runtime authority: writer
+cap remains `1`, remote adapters remain compact and non-shell, routines remain
+intake-only, budget gates remain deterministic and local, and backup/restore/
+migration remain read-only validation plus documented handoff drills.

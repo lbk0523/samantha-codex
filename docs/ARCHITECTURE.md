@@ -42,6 +42,14 @@ The first useful system is not a general multi-agent platform and not a Telegram
 
 ## Current Status
 
+Samantha has reached the north-star baseline for the current Codex-only
+control-plane scope. The declaration is recorded in
+[NORTH_STAR.md](NORTH_STAR.md#phase-10-exit-review). The declaration is an
+audit conclusion, not an authority expansion: deterministic TypeScript remains
+the durable operating authority, `writerCap` remains `1`, and remote adapters,
+routines, budgets, memory, SOPs, skills, backup, restore, and migration remain
+behind the same explicit gates described below.
+
 The current implementation has a useful bounded Orchestrator Agent workflow on top of the deterministic CEO office. Telegram `/work` stores an orchestration request, `/plan` runs `codex-orchestrator` through the local Codex CLI in read-only mode, `/plan_current` rereads the current unapproved plan without rerunning Codex, `/approve` approves the single current plan approval decision, `/answer <text>` records an answer for exactly one current blocker clarification without changing the plan, `/revise <feedback>` supersedes the current unapproved plan and creates a revised planning request, `/cancel` discards the current pending request or unapproved plan, and `/go` validates the plan before creating task/action records.
 
 The Control Plane materializes approved plans into tasks and dispatch actions, promotes dependent actions only after prerequisites pass, runs approved actions through `actions:watch`, and reruns `codex-orchestrator` to write one `# plan-result` report once all actions for a materialized plan finish. If that plan result failed, `/recover` creates a new recovery orchestration request for the next `/plan` without retrying or dispatching by itself. Recovery requests carry failed-plan evidence, run-log context, failed verify details, and explicit instructions to use project profile canonical repo roots rather than old worker worktrees.
