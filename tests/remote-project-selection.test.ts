@@ -452,7 +452,7 @@ describe("remote project selection guards", () => {
         id: "request-existing",
         ancestry: ancestry("samantha", "request-existing"),
         source: "remote",
-        text: "Same work",
+        text: "samantha Same work",
         status: "pending_plan",
         createdAt: "2026-05-10T01:00:00.000Z",
       })}\n`,
@@ -465,7 +465,7 @@ describe("remote project selection guards", () => {
         args: {
           requestId: "request-new",
           projectId: "samantha",
-          text: "Same work",
+          text: "samantha Same work",
           senderId: "bk",
           source: "remote",
           receivedAt: "2026-05-10T01:01:00.000Z",
@@ -473,13 +473,30 @@ describe("remote project selection guards", () => {
       }),
       "utf8",
     );
+    await writeFile(
+      join(ctx.inbox, "002-work-inferred.json"),
+      JSON.stringify({
+        type: "orchestrator:add-request",
+        args: {
+          requestId: "request-new-inferred",
+          text: "samantha Same work",
+          senderId: "bk",
+          source: "remote",
+          receivedAt: "2026-05-10T01:02:00.000Z",
+        },
+      }),
+      "utf8",
+    );
 
     await runInbox(ctx);
 
-    const report = await readFile(join(ctx.outbox, "001-work.md"), "utf8");
-    expect(report).toContain("이미 같은 pending 요청이 있습니다. 새 요청은 만들지 않았습니다.");
-    expect(report).toContain("텔레그램: `/plan samantha`");
-    expect(report).not.toContain("request-existing");
+    const explicitReport = await readFile(join(ctx.outbox, "001-work.md"), "utf8");
+    const inferredReport = await readFile(join(ctx.outbox, "002-work-inferred.md"), "utf8");
+    for (const report of [explicitReport, inferredReport]) {
+      expect(report).toContain("이미 같은 pending 요청이 있습니다. 새 요청은 만들지 않았습니다.");
+      expect(report).toContain("텔레그램: `/plan samantha`");
+      expect(report).not.toContain("request-existing");
+    }
     expect(await new OrchestrationRequestStore(join(ctx.state, "orchestration-requests.jsonl")).list()).toHaveLength(1);
   });
 

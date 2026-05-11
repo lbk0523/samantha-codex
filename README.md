@@ -65,6 +65,7 @@ Common follow-up commands:
 - `/cancel [reason]` discards the pending request or unapproved plan.
 - `/go` approves a valid plan, then later advances passed work through merge, push, and cleanup gates.
 - `/recover` creates a recovery-oriented request after a failed materialized plan result.
+- `/drop stale project:<project>`, `/drop recovery project:<project>`, and `/drop all project:<project>` clean project-scoped pending requests without requiring internal ids.
 - `/now`, `/check`, and `/problems` report current operating status.
 
 Telegram input cannot provide shell commands, arbitrary repo paths, merge/push/cleanup paths, or internal task/action/run/decision ids.

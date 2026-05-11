@@ -2506,6 +2506,18 @@ describe("inbox and remote commands", () => {
       }),
       "utf8",
     );
+    await writeFile(
+      join(inbox, "002-recover-again.json"),
+      JSON.stringify({
+        id: "remote-recover-again",
+        type: "orchestrator:recover-latest",
+        args: {
+          senderId: "bk",
+          receivedAt: "2026-05-06T10:23:00.000Z",
+        },
+      }),
+      "utf8",
+    );
 
     const proc = Bun.spawn(
       [
@@ -2531,10 +2543,18 @@ describe("inbox and remote commands", () => {
     expect(report).toContain("# recover");
     expect(report).toContain("복구 계획 요청을 만들었습니다.");
     expect(report).toContain("복구 대상: 실패 복구 대상 계획");
-    expect(report).toContain("복구 재요청: `/recover project:samantha`");
+    expect(report).toContain("상태 확인: `/now`");
     expect(report).toContain("복구 요청 정리: `/drop recovery project:samantha`");
+    expect(report).not.toContain("/recover project:samantha");
+    const duplicateReport = await readFile(join(outbox, "002-recover-again.md"), "utf8");
+    expect(duplicateReport).toContain("이미 같은 복구 pending 요청이 있습니다. 새 요청은 만들지 않았습니다.");
+    expect(duplicateReport).toContain("텔레그램: `/now`");
+    expect(duplicateReport).toContain("복구 요청 정리: `/drop recovery project:samantha`");
+    expect(duplicateReport).not.toContain("/recover project:samantha");
     const requests = await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).list();
     const latestRequest = requests.at(-1);
+    const recoveryRequests = requests.filter((request) => request.recoveryOfPlanId === "plan-failed-result");
+    expect(recoveryRequests).toHaveLength(1);
     const recoveryText = String(latestRequest?.text ?? "");
     expect(latestRequest?.id).toMatch(/^request-20260506-102200-recover-plan-failed-result-[0-9a-f]{8}$/);
     expect(latestRequest?.ancestry).toEqual({

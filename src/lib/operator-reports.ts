@@ -111,7 +111,7 @@ function currentRequestAction(request: OrchestrationRequestRecord): string {
   const project = recordProjectId(request);
   const label = project ?? "unassigned";
   if (!project) return `${label}: 프로젝트 없는 pending 요청 - 로컬 CLI 또는 dashboard에서 출처 확인`;
-  if (isRecoveryRequest(request)) return `${label}: 복구 재요청 ${code(`/recover project:${project}`)} / 복구 요청 정리 ${code(`/drop recovery project:${project}`)}`;
+  if (isRecoveryRequest(request)) return `${label}: 복구 요청 대기 중 / 복구 요청 정리 ${code(`/drop recovery project:${project}`)}`;
   return `${label}: 계획 생성 ${code(`/plan ${project}`)} / 요청 취소 ${code(`/cancel project:${project}`)}`;
 }
 
@@ -122,7 +122,7 @@ function currentRequestProjectSummary(input: { projectId: string; requests: Orch
     `- ${input.projectId}: pending ${input.requests.length}개`,
     normal.length ? `  계획 생성: ${code(`/plan ${input.projectId}`)}` : "",
     normal.length > 1 ? `  오래된 중복 정리: ${code(`/drop stale project:${input.projectId}`)}` : "",
-    recovery.length ? `  복구 재요청: ${code(`/recover project:${input.projectId}`)}` : "",
+    recovery.length ? "  복구 요청 대기 중" : "",
     recovery.length ? `  복구 요청 정리: ${code(`/drop recovery project:${input.projectId}`)}` : "",
   ].filter(Boolean);
 }
@@ -586,8 +586,8 @@ function orchestrationRequestNextLines(request: OrchestrationRequestRecord): str
     return [
       "",
       "다음 액션:",
-      `- 복구 재요청: ${code(project ? `/recover project:${project}` : "/recover")}`,
-      project ? `- 복구 요청 정리: ${code(`/drop recovery project:${project}`)}` : `- 상태 확인: ${code("/now")}`,
+      `- 상태 확인: ${code("/now")}`,
+      project ? `- 복구 요청 정리: ${code(`/drop recovery project:${project}`)}` : "",
     ];
   }
   if (request.status === "pending_plan") {
@@ -1084,6 +1084,18 @@ export function remoteDuplicatePendingRequestReport(input: { projectId: string }
   ].join("\n");
 }
 
+export function remoteDuplicateRecoveryPendingRequestReport(input: { projectId: string }): string {
+  return [
+    "# recover",
+    "",
+    "이미 같은 복구 pending 요청이 있습니다. 새 요청은 만들지 않았습니다.",
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code("/now")}`,
+    `- 복구 요청 정리: ${code(`/drop recovery project:${input.projectId}`)}`,
+  ].join("\n");
+}
+
 export function remoteDropPendingRequestsReport(input: {
   mode: "stale" | "all" | "recovery";
   projectId: string;
@@ -1279,7 +1291,7 @@ export function nowReport(input: {
   const currentPlans = (input.orchestratorPlans ?? []).filter((plan) => plan.status === "planned" || plan.status === "questions");
   if (currentPlans.length > 1) return [...rankingLines, "", currentPlanAmbiguityReport({ plans: currentPlans })].join("\n");
   const currentRequests = (input.orchestrationRequests ?? []).filter((request) => request.status === "pending_plan");
-  if (currentRequests.length > 1) return currentRequestAmbiguityReport({ requests: currentRequests });
+  if (currentRequests.length > 1) return [...rankingLines, "", currentRequestAmbiguityReport({ requests: currentRequests })].join("\n");
 
   const blockerClarification = latestCurrentPendingBlockerClarification(
     input.decisions ?? [],

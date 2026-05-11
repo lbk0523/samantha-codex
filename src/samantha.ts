@@ -67,6 +67,7 @@ import {
   remoteHelpReport,
   remoteDeprecatedCommandReport,
   remoteDropPendingRequestsReport,
+  remoteDuplicateRecoveryPendingRequestReport,
   remoteDuplicatePendingRequestReport,
   remoteGoNoActionablePlanReport,
   remoteApprovalRedirectReport,
@@ -2660,25 +2661,27 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
     await validateRemoteProjectContext({ args, requestedProjectId });
     const requestStore = new OrchestrationRequestStore(orchestrationRequestsPath(args));
-    if (requestedProjectId) {
+    const requestAncestry = ancestryForRequestIntake({
+      requestId,
+      requestText: text,
+      projectProfiles,
+      requestedProjectId,
+    });
+    const resolvedProjectId = selectedProjectIdFromAncestry(requestAncestry);
+    if (resolvedProjectId) {
       const duplicate = (await requestStore.list()).find(
         (request) =>
           request.status === "pending_plan" &&
           !isRecoveryPendingRequest(request) &&
-          pendingProjectRequestMatches(request, requestedProjectId) &&
+          pendingProjectRequestMatches(request, resolvedProjectId) &&
           request.text.trim() === text.trim(),
       );
-      if (duplicate) return remoteDuplicatePendingRequestReport({ projectId: requestedProjectId });
+      if (duplicate) return remoteDuplicatePendingRequestReport({ projectId: resolvedProjectId });
     }
     const request: OrchestrationRequestRecord = {
       schemaVersion: 1,
       id: requestId,
-      ancestry: ancestryForRequestIntake({
-        requestId,
-        requestText: text,
-        projectProfiles,
-        requestedProjectId,
-      }),
+      ancestry: requestAncestry,
       source: command.args?.source === "local" ? "local" : "remote",
       senderId: typeof command.args?.senderId === "string" ? command.args.senderId : undefined,
       text,
@@ -2747,6 +2750,15 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const recoverable = recoverableCandidates[0];
     if (!recoverable) return nowReportForInbox(args);
     const recoveryProjectId = selectedProjectIdFromAncestry(recoverable.plan.ancestry);
+    if (recoveryProjectId) {
+      const existingRecovery = (await new OrchestrationRequestStore(orchestrationRequestsPath(args)).list()).find(
+        (request) =>
+          request.status === "pending_plan" &&
+          request.recoveryOfPlanId === recoverable.plan.id &&
+          pendingProjectRequestMatches(request, recoveryProjectId),
+      );
+      if (existingRecovery) return remoteDuplicateRecoveryPendingRequestReport({ projectId: recoveryProjectId });
+    }
     const recoveryProject = recoveryProjectId
       ? await loadProjectProfile(projectProfilesDir(args), recoveryProjectId)
       : undefined;

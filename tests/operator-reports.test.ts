@@ -969,6 +969,42 @@ describe("operator reports", () => {
     expect(nowReport({ runs: [], tasks: [], actions: [], orchestrationRequests: [orchestrationRequest] })).toContain(
       "요청 취소: `/cancel`",
     );
+    const recoveryPendingNow = nowReport({
+      runs: [],
+      tasks: [],
+      actions: [],
+      orchestrationRequests: [
+        {
+          ...orchestrationRequest,
+          id: "request-recovery",
+          recoveryOfPlanId: "plan-failed",
+          ancestry: { mode: "assigned", projectId: "samantha", goalId: "goal-samantha-operations", workItemId: "request-recovery" },
+        },
+      ],
+    });
+    expect(recoveryPendingNow).toContain("상태 확인: `/now`");
+    expect(recoveryPendingNow).toContain("복구 요청 정리: `/drop recovery project:samantha`");
+    expect(recoveryPendingNow).not.toContain("/recover project:samantha");
+    const multiPendingNow = nowReport({
+      runs: [],
+      tasks: [],
+      actions: [],
+      orchestrationRequests: [
+        {
+          ...orchestrationRequest,
+          ancestry: { mode: "assigned", projectId: "samantha", goalId: "goal-samantha-operations", workItemId: "request-1" },
+        },
+        {
+          ...orchestrationRequest,
+          id: "request-2",
+          text: "omht 작업 요청",
+          ancestry: { mode: "assigned", projectId: "omht", goalId: "goal-omht-operations", workItemId: "request-2" },
+        },
+      ],
+    });
+    expect(multiPendingNow).toContain("# ceo-ranking");
+    expect(multiPendingNow).toContain("여러 pending 작업 요청이 있어 원격 계획 생성을 보류합니다.");
+    expect(multiPendingNow).toContain("samantha: pending 1개");
     expect(nowReport({ runs: [], tasks: [], actions: [], orchestratorPlans: [orchestratorPlan] })).toContain(
       "오케스트레이터 계획이 생성되어 검토를 기다리고 있습니다.",
     );
@@ -1775,8 +1811,10 @@ describe("operator reports", () => {
     expect(recovery).toContain("복구 계획 요청을 만들었습니다.");
     expect(recovery).toContain("복구 대상: Telegram orchestration flow");
     expect(recovery).toContain("Pass task: verify failed");
-    expect(recovery).toContain("복구 재요청: `/recover");
+    expect(recovery).toContain("상태 확인: `/now`");
     expect(recovery).toContain("복구 요청 정리: `/drop recovery project:");
+    expect(recovery).not.toContain("복구 재요청");
+    expect(recovery).not.toContain("/recover project:");
     expect(recovery).not.toContain("plan-failed");
     expect(recovery).not.toContain("action-");
 

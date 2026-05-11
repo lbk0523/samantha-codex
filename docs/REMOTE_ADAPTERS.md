@@ -1,6 +1,6 @@
 # Samantha Remote Adapters
 
-Last updated: 2026-05-10
+Last updated: 2026-05-11
 
 ## Policy
 
@@ -22,7 +22,9 @@ Use this as the existing Telegram adapter path:
 /work <request> -> /plan -> /go -> /now
 wrong plan -> /revise <feedback> -> /plan -> /go
 blocker clarification -> /answer <answer> -> /now or /go
-failed plan result -> /recover -> /plan -> /go
+failed plan result -> /recover -> /now -> /plan -> /go
+duplicate normal pending requests -> /drop stale project:<project>
+unneeded recovery pending requests -> /drop recovery project:<project>
 ```
 
 - `/now` shows the next Telegram command, local command, or read-only inspection command for the current state.
@@ -35,6 +37,9 @@ failed plan result -> /recover -> /plan -> /go
 - `/revise <feedback>` supersedes the current unapproved plan and creates a new planning request with the feedback.
 - `/cancel` discards the current pending planning request or unapproved plan. It cannot stop workers or cancel actions.
 - `/recover` turns the latest failed materialized plan result into a new orchestration request. It does not retry or dispatch by itself.
+- `/drop stale project:<project>` discards older normal pending requests for that project while keeping the latest normal request.
+- `/drop recovery project:<project>` discards recovery pending requests for that project.
+- `/drop all project:<project>` discards every pending request for that project and should be reserved for abandoning that pending queue.
 - `/check` is the compact status view.
 - `/problems` is the diagnostic view.
 
@@ -68,6 +73,7 @@ The current Telegram adapter spellings are:
 - `/problems`
 - `/drop stale project:<project>`
 - `/drop recovery project:<project>`
+- `/drop all project:<project>`
 
 Unsupported commands are ignored or rejected.
 
@@ -80,16 +86,16 @@ navigation.
 - Compact remote reports should show one safe next action whenever possible.
 - Routine Telegram operation must not require task, action, run, decision,
   proposal, draft, or plan ids.
-- `/drop stale project:<project>` and `/drop recovery project:<project>` clean
-  only pending orchestration request records. They do not mutate plans, tasks,
-  actions, runs, approvals, merge state, push state, cleanup state, or recovery
-  state.
+- `/drop stale project:<project>`, `/drop recovery project:<project>`, and
+  `/drop all project:<project>` clean only pending orchestration request
+  records. They do not mutate plans, tasks, actions, runs, approvals, merge
+  state, push state, cleanup state, or recovery state.
 - Commands that would need long review, arbitrary paths, shell input, or raw
   ids belong in the local CLI or dashboard, not Telegram.
 
-Supported Telegram commands are operational reports plus orchestration request intake/planning/approval/answer/revision/materialization/recovery and narrow pending-request cleanup. `/work` writes an orchestration request to `state/orchestration-requests.jsonl`; `/plan` writes an orchestrator plan to `state/orchestrator-plans.jsonl`; `/plan_current` reads the latest `planned` or `questions` plan without creating a new plan; `/approve` resolves exactly one current plan approval decision; `/answer <answer>` resolves exactly one current pending `blocker_clarification` as `answered`, stores the answer note, preserves the current plan, and creates no tasks or actions; `/revise <feedback>` marks the current unapproved plan `superseded` and writes a new pending orchestration request containing the previous plan plus feedback; `/drop stale project:<project>` and `/drop recovery project:<project>` discard only matching pending request records; `/go` validates that plan, writes tasks to `state/tasks.jsonl`, approves dispatch actions in `state/remote-actions.jsonl`, or advances the latest passed committed run through merge, push, and cleanup gates using stored run metadata; `/recover` writes a new recovery-oriented orchestration request from the latest failed materialized plan result. Direct worker dispatch, arbitrary shell execution, arbitrary repo paths, arbitrary merge/push/cleanup paths, run/task/action/proposal/draft id entry, and worker execution inside inbox processing are intentionally not exposed remotely.
+Supported Telegram commands are operational reports plus orchestration request intake/planning/approval/answer/revision/materialization/recovery and narrow pending-request cleanup. `/work` writes an orchestration request to `state/orchestration-requests.jsonl`; `/plan` writes an orchestrator plan to `state/orchestrator-plans.jsonl`; `/plan_current` reads the latest `planned` or `questions` plan without creating a new plan; `/approve` resolves exactly one current plan approval decision; `/answer <answer>` resolves exactly one current pending `blocker_clarification` as `answered`, stores the answer note, preserves the current plan, and creates no tasks or actions; `/revise <feedback>` marks the current unapproved plan `superseded` and writes a new pending orchestration request containing the previous plan plus feedback; `/drop stale project:<project>`, `/drop recovery project:<project>`, and `/drop all project:<project>` discard only matching pending request records; `/go` validates that plan, writes tasks to `state/tasks.jsonl`, approves dispatch actions in `state/remote-actions.jsonl`, or advances the latest passed committed run through merge, push, and cleanup gates using stored run metadata; `/recover` writes a new recovery-oriented orchestration request from the latest failed materialized plan result when one does not already exist. Direct worker dispatch, arbitrary shell execution, arbitrary repo paths, arbitrary merge/push/cleanup paths, run/task/action/proposal/draft id entry, and worker execution inside inbox processing are intentionally not exposed remotely.
 
-`/now` is the default operating command. It chooses one next remote command from current action state, orchestrator plans, orchestration requests, failed plan recovery state, diagnostics, pending decisions, pending tasks, and latest run state. After `/work <request>`, `/now` should show the pending orchestration request and `/plan` instead of reporting no immediate action. When a plan is waiting for approval, reports show `/plan_current`, `/go`, and `/revise <feedback>` so BK can reread, approve, or redirect without starting over. When a blocker clarification is pending, reports show `/answer <answer>`, `/revise <feedback>`, and `/cancel` before plan/action progress guidance. After a failed materialized plan result is reported and no newer active item exists, `/now` should show `/recover`. It must not present inspect-only commands or id-based commands as the next action.
+`/now` is the default operating command. It chooses one next remote command from current action state, orchestrator plans, orchestration requests, failed plan recovery state, diagnostics, pending decisions, pending tasks, and latest run state. After `/work <request>`, `/now` should show the pending orchestration request and `/plan` instead of reporting no immediate action. When multiple pending requests exist, `/now` keeps the CEO ranking header and shows project-specific `/plan <project>`, `/drop stale project:<project>`, and `/drop recovery project:<project>` actions instead of requiring internal ids. When a plan is waiting for approval, reports show `/plan_current`, `/go`, and `/revise <feedback>` so BK can reread, approve, or redirect without starting over. When a blocker clarification is pending, reports show `/answer <answer>`, `/revise <feedback>`, and `/cancel` before plan/action progress guidance. After a failed materialized plan result is reported and no newer active item exists, `/now` should show `/recover`; after a recovery pending request already exists, reports should show `/now` plus `/drop recovery project:<project>` rather than suggesting another `/recover`. It must not present inspect-only commands or id-based commands as the next action.
 
 `/check` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
 
@@ -239,6 +245,8 @@ project id and scope id, and compact current-item commands may include
 /answer project:omht <answer>
 /go project:samantha
 /recover project:omht
+/drop stale project:samantha
+/drop recovery project:omht
 ```
 
 Unknown project ids, unknown scope ids, and scope-without-project inputs fail

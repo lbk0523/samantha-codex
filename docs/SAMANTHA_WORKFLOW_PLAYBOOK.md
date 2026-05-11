@@ -35,7 +35,7 @@ deterministic CEO office다.
 
 | Surface | 쓰는 경우 | 쓰지 않는 경우 |
 | --- | --- | --- |
-| Telegram | compact status, 새 work intake, plan approval, 짧은 feedback, recovery 시작 | shell command, 임의 repo path, 내부 id, 긴 debugging |
+| Telegram | compact status, 새 work intake, plan approval, 짧은 feedback, recovery 시작, pending request 정리 | shell command, 임의 repo path, 내부 id, 긴 debugging |
 | CLI | 정밀 inspection, diagnostics, local recovery, integration gate, backup/restore validation | 모바일 quick status |
 | Dashboard | queue, run, blocker, next action의 read-only long review | write action이나 approval |
 | State files | CLI/dashboard로 부족한 audit/debug evidence 확인 | 일상 운영 |
@@ -71,6 +71,9 @@ Telegram은 운영 보고, 새 work 접수, 계획 승인, 짧은 feedback, reco
 | `/revise [project:<id>] <피드백>` | 현재 미승인 plan을 supersede하고 feedback을 반영한 새 planning request를 만든다. |
 | `/cancel [project:<id>] [reason]` | 현재 pending request 또는 미승인 plan을 취소한다. 이미 실행 중인 worker를 멈추지는 않는다. |
 | `/recover [project:<id>]` | 최신 실패한 materialized plan result를 근거로 recovery request를 만든다. Retry나 dispatch는 하지 않는다. |
+| `/drop stale project:<id>` | 같은 프로젝트의 오래된 normal pending request만 discarded 처리한다. 최신 normal pending과 recovery pending은 유지한다. |
+| `/drop recovery project:<id>` | 같은 프로젝트의 recovery pending request를 discarded 처리한다. 실패 기록이나 plan/result state는 건드리지 않는다. |
+| `/drop all project:<id>` | 같은 프로젝트의 모든 pending request를 discarded 처리한다. 해당 프로젝트 pending queue를 포기할 때만 쓴다. |
 | `/check` | compact status view를 보여준다. |
 | `/problems` | host, daemon, queue, Telegram poll/reply 등 운영 이상 징후를 진단한다. |
 
@@ -145,6 +148,19 @@ request나 plan을 중단할 때:
 ```text
 /cancel [reason]
 ```
+
+pending request가 여러 개라 `/now`가 계획 대상을 고르지 못하면 `/now`가 보여주는
+프로젝트별 명령을 그대로 쓴다. 내부 id를 찾아 입력하지 않는다.
+
+```text
+/plan samantha
+/drop stale project:samantha
+/drop recovery project:samantha
+```
+
+`/drop stale`은 오래된 normal pending만 정리한다. recovery pending이 불필요하면
+`/drop recovery`를 쓴다. `/drop all`은 해당 프로젝트 pending request를 전부
+버리므로, 원격에서 그 프로젝트 pending queue를 비우겠다는 판단이 확실할 때만 쓴다.
 
 Samantha가 blocker clarification 하나를 물었고 plan은 유지해야 할 때:
 
@@ -335,12 +351,16 @@ materialized plan이 실패했다면 정상 recovery loop를 쓴다.
 
 ```text
 /recover
+/now
 /plan
 /go
 ```
 
 Recovery request는 failed-plan evidence와 canonical project profile root를
 사용한다. Old worker worktree는 evidence일 뿐 recovery root가 아니다.
+이미 recovery pending request가 있으면 `/recover`를 다시 보내지 않는다. `/now`로
+현재 상태를 보고, 복구가 필요 없어진 요청이면 `/drop recovery project:<id>`로
+pending recovery request만 정리한다.
 
 standalone local worker failure일 때:
 
