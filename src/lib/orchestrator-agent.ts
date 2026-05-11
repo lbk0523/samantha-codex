@@ -574,7 +574,7 @@ export function parseOrchestratorPlanPayload(output: string): OrchestratorPlanPa
     const json = extractMarkedJson(candidate, "ORCHESTRATOR_PLAN:");
     if (!json) continue;
     try {
-      return validatePlanPayload(JSON.parse(json));
+      return validatePlanPayload(parseMarkedJsonObject(json));
     } catch (err) {
       parseError = err;
     }
@@ -591,7 +591,7 @@ export function parseOrchestratorSynthesisPayload(output: string): OrchestratorS
     const json = extractMarkedJson(candidate, "ORCHESTRATOR_SYNTHESIS:");
     if (!json) continue;
     try {
-      return validateSynthesisPayload(JSON.parse(json));
+      return validateSynthesisPayload(parseMarkedJsonObject(json));
     } catch (err) {
       parseError = err;
     }
@@ -608,7 +608,7 @@ export function parseOrchestratorQuestionDraftPayload(output: string): Orchestra
     const json = extractMarkedJson(candidate, "ORCHESTRATOR_QUESTION_DRAFT:");
     if (!json) continue;
     try {
-      return validateQuestionDraftPayload(JSON.parse(json));
+      return validateQuestionDraftPayload(parseMarkedJsonObject(json));
     } catch (err) {
       parseError = err;
     }
@@ -628,7 +628,7 @@ export function parseOrchestratorMemorySynthesisPayload(
     const json = extractMarkedJson(candidate, "ORCHESTRATOR_MEMORY_SYNTHESIS:");
     if (!json) continue;
     try {
-      return validateMemorySynthesisPayload(JSON.parse(json), options);
+      return validateMemorySynthesisPayload(parseMarkedJsonObject(json), options);
     } catch (err) {
       parseError = err;
     }
@@ -796,9 +796,10 @@ function extractAgentMessages(output: string): string[] {
   const messages: string[] = [];
   for (const line of output.split("\n")) {
     const trimmed = line.trim();
-    if (!trimmed.startsWith("{")) continue;
+    const eventStart = trimmed.indexOf("{");
+    if (eventStart === -1) continue;
     try {
-      const event = JSON.parse(trimmed) as {
+      const event = JSON.parse(trimmed.slice(eventStart)) as {
         type?: string;
         text?: string;
         item?: { type?: string; text?: string };
@@ -813,6 +814,26 @@ function extractAgentMessages(output: string): string[] {
     }
   }
   return messages;
+}
+
+function parseMarkedJsonObject(json: string): unknown {
+  try {
+    return JSON.parse(json);
+  } catch (err) {
+    const decoded = decodeEscapedJsonFragment(json);
+    if (decoded === undefined) throw err;
+    return JSON.parse(decoded);
+  }
+}
+
+function decodeEscapedJsonFragment(json: string): string | undefined {
+  if (!json.includes('\\"') && !json.includes("\\n")) return undefined;
+  try {
+    const decoded = JSON.parse(`"${json}"`);
+    return typeof decoded === "string" ? decoded : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function extractMarkedJson(text: string, marker: string): string | undefined {
@@ -834,7 +855,7 @@ function extractMarkedJson(text: string, marker: string): string | undefined {
       escaping = inString;
       continue;
     }
-    if (char === '"') {
+    if (char === '"' && text[index - 1] !== "\\") {
       inString = !inString;
       continue;
     }

@@ -207,6 +207,21 @@ describe("orchestrator agent prompt", () => {
     };
     const parsed = parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify(payload)}`);
     expect(parsed.recommendationTrace).toEqual(payload.recommendationTrace);
+    const escapedEvent = `codex-json: ${JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: `계획\nORCHESTRATOR_PLAN:${JSON.stringify(payload, null, 2)}`,
+      },
+    })}`;
+    expect(parseOrchestratorPlanPayload(escapedEvent).summary).toBe("메모리 기반 계획");
+    const escapedRawPayload = JSON.stringify(payload, null, 2)
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, "\\n");
+    expect(parseOrchestratorPlanPayload(`non-json event ORCHESTRATOR_PLAN:${escapedRawPayload}`).summary).toBe(
+      "메모리 기반 계획",
+    );
     expect(() => parseOrchestratorPlanPayload(`ORCHESTRATOR_PLAN: ${JSON.stringify({
       ...payload,
       recommendationTrace: [{ recommendation: "bad", reason: "bad", citations: [] }],

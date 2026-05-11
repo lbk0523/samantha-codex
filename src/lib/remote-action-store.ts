@@ -33,7 +33,7 @@ export interface RemoteActionRecord {
   taskTitle: string;
   targetAgent: string;
   repoRoot: string;
-  allocate: true;
+  allocate: boolean;
   execute: true;
   liveLog: true;
   tmux?: true;
@@ -67,6 +67,7 @@ export function createRemoteDispatchAction(input: {
   createdAt: string;
   source: "remote" | "local";
   commandId?: string;
+  allocate?: boolean;
   status?: "pending" | "waiting";
   orchestratorPlanId?: string;
   orchestratorTaskId?: string;
@@ -93,7 +94,7 @@ export function createRemoteDispatchAction(input: {
     taskTitle: input.task.title,
     targetAgent: input.task.targetAgent,
     repoRoot: input.repoRoot,
-    allocate: true,
+    allocate: input.allocate ?? true,
     execute: true,
     liveLog: true,
     orchestratorPlanId: input.orchestratorPlanId,
@@ -104,7 +105,8 @@ export function createRemoteDispatchAction(input: {
 
 export function remoteActionCommand(action: RemoteActionRecord): string {
   if (action.kind !== "dispatch_task") return "";
-  return `bun run samantha tasks:dispatch ${action.taskId} --repo-root=${action.repoRoot} --allocate --execute --live-log`;
+  const allocate = action.allocate ? " --allocate" : "";
+  return `bun run samantha tasks:dispatch ${action.taskId} --repo-root=${action.repoRoot}${allocate} --execute --live-log`;
 }
 
 export class RemoteActionStore {

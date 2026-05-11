@@ -1281,7 +1281,7 @@ async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promis
         taskId: running.taskId,
         repoRoot: running.repoRoot,
         action: running,
-        allocate: true,
+        allocate: running.allocate,
         liveLog: true,
         startedAt,
       });
@@ -1394,6 +1394,7 @@ async function prepareDispatchActionForTask(input: {
     createdAt: receivedAt,
     source: "remote",
     commandId: input.commandId,
+    allocate: agent.worktreePolicy === "per-task",
     admission: queueAdmissionRecord({ decidedAt: receivedAt, result: admission }),
   });
   await new RemoteActionStore(remoteActionsPath(input.args)).append(action);

@@ -255,6 +255,12 @@ describe("materializeOrchestratorPlan role-aware specialist contract", () => {
       ["codex-evaluator", "pending"],
       ["codex-worker", "pending"],
     ]);
+    expect(result.actions.map((action) => [action.targetAgent, action.allocate])).toEqual([
+      ["codex-reviewer", false],
+      ["codex-researcher", false],
+      ["codex-evaluator", false],
+      ["codex-worker", true],
+    ]);
   });
 
   test("materializes only the selected task proposals and keeps alternatives advisory", () => {

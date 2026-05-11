@@ -18,6 +18,18 @@ const task: TaskSpec = {
   status: "pending",
 };
 
+const reportTask: TaskSpec = {
+  id: "remote-report-task",
+  title: "Remote report task",
+  targetAgent: "codex-researcher",
+  resultMode: "report",
+  targetFiles: [],
+  forbiddenChanges: ["state/**"],
+  verifyCommands: ["bun typecheck"],
+  instructions: "Inspect and report. Do not edit files.",
+  status: "pending",
+};
+
 afterEach(async () => {
   await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
   tmpRoots = [];
@@ -45,6 +57,28 @@ describe("RemoteActionStore", () => {
     });
     expect(remoteActionCommand(action)).toBe(
       "bun run samantha tasks:dispatch remote-action-task --repo-root=/repo --allocate --execute --live-log",
+    );
+  });
+
+  test("can create non-writer report actions without worktree allocation", () => {
+    const action = createRemoteDispatchAction({
+      task: reportTask,
+      repoRoot: "/repo",
+      createdAt: "2026-05-05T10:00:00.000Z",
+      source: "remote",
+      commandId: "remote-report-1",
+      allocate: false,
+    });
+
+    expect(action).toMatchObject({
+      taskId: "remote-report-task",
+      targetAgent: "codex-researcher",
+      allocate: false,
+      execute: true,
+      liveLog: true,
+    });
+    expect(remoteActionCommand(action)).toBe(
+      "bun run samantha tasks:dispatch remote-report-task --repo-root=/repo --execute --live-log",
     );
   });
 

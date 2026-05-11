@@ -65,6 +65,7 @@ export function materializeOrchestratorPlan(input: {
   const proposalTaskIds = new Map<string, string>();
   const proposalActionIds = new Map<string, string>();
   const proposalBatchIndex = new Map<string, number>();
+  const agentsById = new Map(input.agents.map((agent) => [agent.id, agent]));
 
   for (const [batchIndex, batch] of payload.batches.entries()) {
     const writerTaskIds = batch.filter((id) => {
@@ -96,6 +97,7 @@ export function materializeOrchestratorPlan(input: {
         createdAt: input.createdAt,
         source: "remote",
         commandId: `${input.commandId ?? input.plan.id}-${taskId}`,
+        allocate: shouldAllocateActionWorktree(proposal, agentsById),
         ancestry: input.plan.ancestry,
       }).id,
     );
@@ -124,6 +126,7 @@ export function materializeOrchestratorPlan(input: {
       createdAt: input.createdAt,
       source: "remote",
       commandId: `${input.commandId ?? input.plan.id}-${task.id}`,
+      allocate: shouldAllocateActionWorktree(proposal, agentsById),
       status: dependsOnActionIds.length ? "waiting" : "pending",
       orchestratorPlanId: input.plan.id,
       orchestratorTaskId: proposal.id,
@@ -144,6 +147,13 @@ export function materializeOrchestratorPlan(input: {
 function isWriteProducingProposal(proposal: OrchestratorTaskProposal, agents: AgentProfile[]): boolean {
   if (proposal.resultMode === "report") return false;
   return agents.find((agent) => agent.id === proposal.targetAgent)?.writerClass === "writer";
+}
+
+function shouldAllocateActionWorktree(
+  proposal: OrchestratorTaskProposal,
+  agentsById: Map<string, AgentProfile>,
+): boolean {
+  return agentsById.get(proposal.targetAgent)?.worktreePolicy === "per-task";
 }
 
 function normalizePath(path: string): string {
