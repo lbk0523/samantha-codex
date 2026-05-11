@@ -135,7 +135,9 @@ When future work starts drifting, use these checks:
 Do not let Telegram implementation details define Samantha's core architecture.
 Use the roadmap as the source of truth for current and future phases.
 
-For the user-facing workflow contract, see [USER_WORKFLOW.md](USER_WORKFLOW.md).
+The previous command-driven user workflow contract has been retired after
+remote dogfood. Rewrite the workflow playbook after the remote autopilot
+contract is stable.
 For the long-range roadmap, see [CEO_OFFICE_ROADMAP.md](CEO_OFFICE_ROADMAP.md).
 For the current system contract, see [ARCHITECTURE.md](ARCHITECTURE.md).
 For the remote adapter contract, see [REMOTE_ADAPTERS.md](REMOTE_ADAPTERS.md).

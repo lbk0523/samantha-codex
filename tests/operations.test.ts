@@ -107,6 +107,30 @@ async function writeFakeCodex(root: string, payload: OrchestratorPlanPayload): P
   return path;
 }
 
+async function writeAutopilotFakeCodex(root: string, payload: OrchestratorPlanPayload): Promise<string> {
+  const path = join(root, "fake-autopilot-codex");
+  await writeFile(
+    path,
+    [
+      "#!/usr/bin/env bun",
+      `const plan = ${JSON.stringify(payload)};`,
+      "const args = process.argv.join('\\n');",
+      "function item(text) { console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text } })); }",
+      "if (args.includes('ORCHESTRATOR_SYNTHESIS:')) {",
+      "  item('최종 종합 완료\\n\\nORCHESTRATOR_SYNTHESIS: ' + JSON.stringify({ outcome: 'pass', summary: '보고 작업이 완료되었습니다.', nextActions: ['/check'], risks: [], userMessage: '보고 작업이 완료되었습니다.' }));",
+      "} else if (args.includes('HARNESS_RESULT:')) {",
+      "  item('보고서\\n\\n요청한 계획 보고를 완료했습니다.\\n\\nHARNESS_RESULT: ' + JSON.stringify({ status: 'pass', note: 'report complete', commit: '' }));",
+      "} else {",
+      "  item('계획 생성 완료\\n\\nORCHESTRATOR_PLAN: ' + JSON.stringify(plan));",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await chmod(path, 0o755);
+  return path;
+}
+
 async function makeMergeCandidate(): Promise<{ repo: string; workerCommit: string; logPath: string; summary: RunSummary }> {
   const repo = await mkdtemp(join(tmpdir(), "samantha-codex-remote-merge-"));
   tmpRoots.push(repo);
@@ -814,6 +838,198 @@ describe("inbox and remote commands", () => {
       id: "request-work-now",
       status: "pending_plan",
     });
+  });
+
+  test("remote work autopilots report-only planning to a result with one BK input", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-autopilot-report-"));
+    tmpRoots.push(root);
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const state = join(root, "state");
+    const agents = join(root, "agents");
+    const projects = join(root, "projects");
+    const repo = join(root, "repo");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await mkdir(repo, { recursive: true });
+    await writeActiveHostOwnership(state);
+    await git(["init", "-b", "main"], repo);
+    await git(["config", "user.email", "samantha@example.local"], repo);
+    await git(["config", "user.name", "Samantha Test"], repo);
+    await writeFile(join(repo, "README.md"), "fixture\n", "utf8");
+    await git(["add", "README.md"], repo);
+    await git(["commit", "-m", "initial"], repo);
+
+    const fakeCodex = await writeAutopilotFakeCodex(root, {
+      summary: "Samantha 원격 플로우 계획 보고",
+      assumptions: ["보고 작업은 read-only입니다."],
+      questions: [],
+      scope: ["원격 플로우 문제를 정리합니다."],
+      nonScope: ["파일 수정은 하지 않습니다."],
+      risks: ["후속 구현은 별도 승인 필요"],
+      tasks: [
+        {
+          id: "remote-flow-report",
+          title: "Remote flow report",
+          targetAgent: "codex-spec",
+          projectId: "samantha",
+          repoRoot: repo,
+          resultMode: "report",
+          targetFiles: [],
+          forbiddenChanges: ["**/*"],
+          setupCommands: [],
+          verifyCommands: ["true"],
+          instructions: "원격 플로우 계획 보고를 작성합니다.",
+          dependencies: [],
+        },
+      ],
+      batches: [["remote-flow-report"]],
+      userMessage: "보고 계획을 만들었습니다.",
+    });
+    await writeFile(join(agents, "codex-orchestrator.json"), `${JSON.stringify(orchestrator, null, 2)}\n`, "utf8");
+    await writeFile(
+      join(agents, "codex-spec.json"),
+      `${JSON.stringify(
+        {
+          ...reviewer,
+          id: "codex-spec",
+          role: "spec",
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(projects, "samantha.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "samantha",
+          repoRoot: repo,
+          keywords: ["samantha", "원격"],
+          setupCommands: [],
+          verifyCommands: ["true"],
+          forbiddenChanges: ["state/**"],
+          defaultRemoteScopeId: "planning_report",
+          remoteScopes: [
+            {
+              id: "planning_report",
+              label: "Samantha report",
+              description: "Read-only Samantha planning reports.",
+              risk: "low",
+              resultMode: "report",
+              targetFiles: ["docs/**"],
+              keywords: ["계획", "보고", "원격"],
+              planSteps: ["Read context.", "Return report."],
+              successCriteria: ["Report is actionable."],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-work.json"),
+      JSON.stringify({
+        id: "remote-work",
+        type: "orchestrator:add-request",
+        args: {
+          requestId: "request-autopilot-readonly-plan",
+          text: "samantha 원격 플로우 계획 보고",
+          senderId: "bk",
+          source: "remote",
+          autopilot: "remote_report_only",
+          receivedAt: "2026-05-11T01:00:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+        `--codex-bin=${fakeCodex}`,
+        `--orchestrator-repo-root=${root}`,
+        `--log-dir=${join(root, "runs")}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const report = await readFile(join(outbox, "001-work.md"), "utf8");
+    expect(report).toContain("# autopilot-result");
+    expect(report).toContain("BK 입력: `1회`");
+    expect(report).toContain("권한: `authority-grant-remote-report-only-autopilot-baseline`");
+    expect(report).toContain("# plan-result");
+    expect(report).toContain("보고 작업이 완료되었습니다.");
+
+    expect(await new DecisionStore(join(state, "decisions.jsonl")).list()).toEqual([]);
+    expect((await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).find("request-autopilot-readonly-plan"))).toMatchObject({
+      status: "planned",
+    });
+    expect((await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).list())[0]).toMatchObject({
+      status: "materialized",
+      resultReportedAt: expect.any(String),
+      taskIds: ["task-remote-flow-report"],
+    });
+    expect((await new TaskStore(join(state, "tasks.jsonl")).list())[0]).toMatchObject({
+      id: "task-remote-flow-report",
+      status: "completed",
+      resultMode: "report",
+    });
+    expect((await new RemoteActionStore(join(state, "remote-actions.jsonl")).list())[0]).toMatchObject({
+      status: "completed",
+      targetAgent: "codex-spec",
+      result: { pass: true },
+    });
+    const evidence = (await readFile(join(state, "autopilot-evidence.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(evidence).toMatchObject([
+      {
+        requestId: "request-autopilot-readonly-plan",
+        authorityGrantId: "authority-grant-remote-report-only-autopilot-baseline",
+        endpoint: "result",
+        status: "completed",
+        transitions: [
+          "remote_intake",
+          "classify_request",
+          "run_readonly_plan",
+          "materialize_report_task",
+          "dispatch_report_task",
+          "record_autopilot_evidence",
+        ],
+      },
+    ]);
   });
 
   test("remote go does not approve or create worker actions from stale task/action/draft state", async () => {

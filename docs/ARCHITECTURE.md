@@ -8,6 +8,8 @@ BK
 Deterministic CEO Office
   - stores requests, plans, goals, tasks, actions, and audit logs
   - tracks status, blockers, risks, next actions, and BK decision needs
+  - owns safe progress until it reaches a result, one BK judgment, or a
+    local-only blocker
   - enforces safety policy before any dispatch
   - governs agent profiles, capabilities, skills, connectors, routines, and
     budgets before they can expand execution authority
@@ -34,7 +36,9 @@ The first useful system is not a general multi-agent platform and not a Telegram
 1. Samantha stores structured work state.
 2. Samantha tracks status, blockers, risks, next actions, and BK decision needs.
 3. Samantha generates clear periodic or on-demand reports.
-4. A bounded Orchestrator Agent call can turn a request into an explicit plan and ask BK for approval when needed.
+4. A bounded Orchestrator Agent call can turn a request into an explicit plan,
+   auto-complete safe read-only planning/report work when policy allows, and
+   ask BK for approval when judgment or authority is needed.
 5. The CEO office materializes an approved plan into one or more safe tasks.
 6. The CEO office may run non-writer agents in parallel.
 7. The CEO office runs at most one production writer until safety gates are proven.
@@ -50,18 +54,27 @@ the durable operating authority, `writerCap` remains `1`, and remote adapters,
 routines, budgets, memory, SOPs, skills, backup, restore, and migration remain
 behind the same explicit gates described below.
 
-The current implementation has a useful bounded Orchestrator Agent workflow on top of the deterministic CEO office. Telegram `/work` stores an orchestration request, `/plan` runs `codex-orchestrator` through the local Codex CLI in read-only mode, `/plan_current` rereads the current unapproved plan without rerunning Codex, `/approve` approves the single current plan approval decision, `/answer <text>` records an answer for exactly one current blocker clarification without changing the plan, `/revise <feedback>` supersedes the current unapproved plan and creates a revised planning request, `/cancel` discards the current pending request or unapproved plan, and `/go` validates the plan before creating task/action records.
+The current implementation has a useful bounded Orchestrator Agent workflow on top of the deterministic CEO office. Telegram `/work` stores an orchestration request and can now autopilot report-only requests through read-only planning, report-only execution, plan-result reporting, and evidence recording when authority policy allows it. `/plan` runs `codex-orchestrator` through the local Codex CLI in read-only mode, `/plan_current` rereads the current unapproved plan without rerunning Codex, `/approve` approves the single current plan approval decision, `/answer <text>` records an answer for exactly one current blocker clarification without changing the plan, `/revise <feedback>` supersedes the current unapproved plan and creates a revised planning request, `/cancel` discards the current pending request or unapproved plan, and `/go` validates the plan before creating task/action records.
 
-The Control Plane materializes approved plans into tasks and dispatch actions, promotes dependent actions only after prerequisites pass, runs approved actions through `actions:watch`, and reruns `codex-orchestrator` to write one `# plan-result` report once all actions for a materialized plan finish. If that plan result failed, `/recover` creates a new recovery orchestration request for the next `/plan` without retrying or dispatching by itself. Recovery requests carry failed-plan evidence, run-log context, failed verify details, and explicit instructions to use project profile canonical repo roots rather than old worker worktrees.
+Post-dogfood correction: this command-driven remote loop is safe but not good
+enough as the product experience. It makes BK choose too many state-transition
+commands for routine work. The next architecture direction is remote autopilot:
+remote input captures intent, then the CEO office advances every safe,
+deterministic transition it already has authority to perform until it returns a
+result, asks exactly one BK judgment question, or reports a local-only blocker.
+Adding more Telegram commands is not the fix.
+
+The Control Plane materializes approved plans into tasks and dispatch actions, promotes dependent actions only after prerequisites pass, runs approved write actions through `actions:watch`, and reruns `codex-orchestrator` to write one `# plan-result` report once all actions for a materialized plan finish. The report-only autopilot slice may run non-writer report actions directly from `/work` and records the authority grant plus evidence. If a plan result failed, `/recover` creates a new recovery orchestration request for the next `/plan` without retrying or dispatching by itself. Recovery requests carry failed-plan evidence, run-log context, failed verify details, and explicit instructions to use project profile canonical repo roots rather than old worker worktrees.
 
 When a recovery request produces a passing materialized plan, result reports say the original problem was fixed. If the recovery plan also fails, reports say the original problem remains unresolved and recovery is still needed. Linked successful recoveries also prevent stale failed source plans, actions, and tasks from continuing to drive CEO status or next-action reporting.
 
 Telegram is intentionally small and is an adapter for notification, approval, short feedback, and status checks. The routine surface is `/work`, `/plan`, `/plan_current`, `/approve`, `/answer`, `/revise`, `/cancel`, `/go`, `/recover`, `/now`, `/check`, and `/problems`. Older proposal/draft/task/action/run id commands are no longer normal Telegram operations; they return deprecated-command guidance and point back to the orchestrator flow. Local CLI, dashboard, and inbox commands remain available for deeper operation, debugging, and recovery.
 
-The user-facing workflow contract is documented in
-[USER_WORKFLOW.md](USER_WORKFLOW.md). Architecture changes should preserve that
-state -> BK decision -> Samantha action -> next state shape across Telegram,
-CLI, and dashboard surfaces.
+The previous command-driven user workflow contract has been retired after
+remote dogfood. The replacement workflow contract starts in
+[REMOTE_AUTOPILOT.md](REMOTE_AUTOPILOT.md) and should preserve the remote
+autopilot shape described below: Samantha owns safe progress, BK owns judgment,
+and policy owns authority.
 
 Telegram notifications are compact outbox reports. On the active automation host, `ceo:notify` runs periodically, writes a remote outbox CEO summary, and records generation in `state/ceo-reports.jsonl`; `telegram:reply` delivers it through the existing Telegram reply adapter and records delivery in `state/telegram-replies.json`. Telegram can approve only the single current plan-approval decision through `/approve`; ambiguous or multiple pending decisions redirect BK back to `/now`, CLI, or dashboard. Telegram never accepts shell commands, repo paths, or task/action/run/decision ids as workflow inputs.
 
@@ -122,6 +135,48 @@ Future expansion should stay governance-first:
   notification digests, deterministic budget enforcement, and read-only backup,
   restore, and migration validation. These gates use memory only as context and
   do not expand execution authority.
+
+## Remote Autopilot And Delegated Authority
+
+The remote workflow contract is:
+
+```text
+Samantha owns progress.
+BK owns judgment.
+Policy owns authority.
+```
+
+For remote autopilot, Samantha should continue safe progress without asking BK
+to pick operational commands. A remote request may advance automatically through
+intake, classification, read-only planning, report-only execution, status
+reporting, and evidence recording when the active deterministic policy allows
+those transitions.
+
+The first autopilot scope is deliberately narrow:
+
+- read-only planning, analysis, and report-only work may run without BK approval
+  when it has no write, dispatch, merge, push, cleanup, connector, secret,
+  routine, budget, or host-authority expansion.
+- write work may be planned automatically, but execution still requires BK
+  approval unless a future authority grant explicitly covers that scope.
+- merge, push, cleanup, recovery execution, connector access, secret access,
+  budget policy changes, routine authority changes, profile changes, and host
+  operations still require deterministic gates and explicit authority.
+
+Memory is not authority. Preference memory, operational memory, and judgment
+history may help Samantha recommend the next action or propose a future
+delegation, but they must not directly grant runtime permission. The required
+authority path is:
+
+```text
+BK decisions -> decision memory -> pattern synthesis -> proposed authority grant
+-> BK approval -> deterministic policy
+```
+
+An authority grant is a policy record, not an LLM memory. It needs explicit
+scope, allowed actions, denied actions, project/profile boundaries, budget or
+rate limits when relevant, expiry or review conditions when relevant, evidence,
+revocation path, and audit history.
 
 ## Bounded LLM Call Contract
 

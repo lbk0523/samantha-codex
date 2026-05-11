@@ -8,10 +8,12 @@ Remote adapters are input adapters first. They may create inbox command files fo
 
 Telegram is not Samantha's core product surface. It is a notification, approval, short-feedback, and compact status adapter for the deterministic CEO office. Long review, dashboard inspection, and operational debugging should stay in CLI or dashboard surfaces.
 
-For the user-facing state contract behind these adapter commands, see
-[USER_WORKFLOW.md](USER_WORKFLOW.md). Remote adapter changes should preserve the
-same state -> BK decision -> Samantha action -> next state flow instead of
-adding Telegram commands as a substitute for workflow clarity.
+The previous command-driven user workflow contract has been retired after
+remote dogfood. Remote adapter changes should follow the architecture direction
+that Samantha owns safe progress until it returns a result, asks one BK
+judgment question, or reports a local-only blocker. Adding Telegram commands is
+not a substitute for workflow clarity. The active remote workflow contract is
+[REMOTE_AUTOPILOT.md](REMOTE_AUTOPILOT.md).
 
 All remote input must pass through:
 
@@ -33,12 +35,15 @@ unneeded recovery pending requests -> /drop recovery project:<project>
 ```
 
 - `/now` shows the next Telegram command, local command, or read-only inspection command for the current state.
-- `/work <request>` captures new work as an orchestration request; it does not create a task or dispatch a worker.
+- `/work <request>` captures new work as an orchestration request. When the
+  request is report-only and authority policy allows autopilot, Samantha may
+  continue through read-only planning, report-only materialization, report-only
+  execution, result reporting, and evidence recording from that one input.
 - `/plan` runs the local Codex CLI `codex-orchestrator` profile in read-only mode and returns the generated plan.
 - `/plan_current` shows the current unapproved plan again without rerunning the orchestrator.
 - `/approve` approves exactly one current plan approval decision.
 - `/answer <answer>` resolves exactly one current pending blocker clarification and preserves the plan.
-- `/go` validates the selected task set in the orchestrator plan, creates task records, and approves dispatch actions. It does not execute workers inside `inbox:watch`.
+- `/go` validates the selected task set in the orchestrator plan, creates task records, and approves dispatch actions. It does not execute write workers inside `inbox:watch`.
 - `/revise <feedback>` supersedes the current unapproved plan and creates a new planning request with the feedback.
 - `/cancel` discards the current pending planning request or unapproved plan. It cannot stop workers or cancel actions.
 - `/recover` turns the latest failed materialized plan result into a new orchestration request. It does not retry or dispatch by itself.
@@ -98,7 +103,7 @@ navigation.
 - Commands that would need long review, arbitrary paths, shell input, or raw
   ids belong in the local CLI or dashboard, not Telegram.
 
-Supported Telegram commands are operational reports plus orchestration request intake/planning/approval/answer/revision/materialization/recovery and narrow pending-request cleanup. `/work` writes an orchestration request to `state/orchestration-requests.jsonl`; `/plan` writes an orchestrator plan to `state/orchestrator-plans.jsonl`; `/plan_current` reads the latest `planned` or `questions` plan without creating a new plan; `/approve` resolves exactly one current plan approval decision; `/answer <answer>` resolves exactly one current pending `blocker_clarification` as `answered`, stores the answer note, preserves the current plan, and creates no tasks or actions; `/revise <feedback>` marks the current unapproved plan `superseded` and writes a new pending orchestration request containing the previous plan plus feedback; `/drop stale project:<project>`, `/drop recovery project:<project>`, and `/drop all project:<project>` discard only matching pending request records; `/go` validates that plan, writes tasks to `state/tasks.jsonl`, approves dispatch actions in `state/remote-actions.jsonl`, or advances the latest passed committed run through merge, push, and cleanup gates using stored run metadata; `/recover` writes a new recovery-oriented orchestration request from the latest failed materialized plan result when one does not already exist. Direct worker dispatch, arbitrary shell execution, arbitrary repo paths, arbitrary merge/push/cleanup paths, run/task/action/proposal/draft id entry, and worker execution inside inbox processing are intentionally not exposed remotely.
+Supported Telegram commands are operational reports plus orchestration request intake/planning/approval/answer/revision/materialization/recovery and narrow pending-request cleanup. `/work` writes an orchestration request to `state/orchestration-requests.jsonl` and marks remote intake for report-only autopilot; `/plan` writes an orchestrator plan to `state/orchestrator-plans.jsonl`; `/plan_current` reads the latest `planned` or `questions` plan without creating a new plan; `/approve` resolves exactly one current plan approval decision; `/answer <answer>` resolves exactly one current pending `blocker_clarification` as `answered`, stores the answer note, preserves the plan, and creates no tasks or actions; `/revise <feedback>` marks the current unapproved plan `superseded` and writes a new pending orchestration request containing the previous plan plus feedback; `/drop stale project:<project>`, `/drop recovery project:<project>`, and `/drop all project:<project>` discard only matching pending request records; `/go` validates that plan, writes tasks to `state/tasks.jsonl`, approves dispatch actions in `state/remote-actions.jsonl`, or advances the latest passed committed run through merge, push, and cleanup gates using stored run metadata; `/recover` writes a new recovery-oriented orchestration request from the latest failed materialized plan result when one does not already exist. Direct write-worker dispatch, arbitrary shell execution, arbitrary repo paths, arbitrary merge/push/cleanup paths, run/task/action/proposal/draft id entry, and write-worker execution inside inbox processing are intentionally not exposed remotely. Report-only autopilot evidence is recorded in `state/autopilot-evidence.jsonl`; authority grants are policy records in `state/authority-grants.jsonl` plus the baseline report-only autopilot grant.
 
 `/now` is the default operating command. It chooses one next remote command from current action state, orchestrator plans, orchestration requests, failed plan recovery state, diagnostics, pending decisions, pending tasks, and latest run state. After `/work <request>`, `/now` should show the pending orchestration request and `/plan` instead of reporting no immediate action. When multiple pending requests exist, `/now` keeps the CEO ranking header and shows project-specific `/plan <project>`, `/drop stale project:<project>`, and `/drop recovery project:<project>` actions instead of requiring internal ids. When a plan is waiting for approval, reports show `/plan_current`, `/go`, and `/revise <feedback>` so BK can reread, approve, or redirect without starting over. When a blocker clarification is pending, reports show `/answer <answer>`, `/revise <feedback>`, and `/cancel` before plan/action progress guidance. After a failed materialized plan result is reported and no newer active item exists, `/now` should show `/recover`; after a recovery pending request already exists, reports should show `/now` plus `/drop recovery project:<project>` rather than suggesting another `/recover`. It must not present inspect-only commands or id-based commands as the next action.
 
@@ -163,7 +168,7 @@ Remote dispatch uses an action gate plus a separate runner instead of direct com
 actions:watch -> tasks:dispatch <task-id> --allocate --execute --live-log
 ```
 
-`/go` first checks for an active orchestrator plan. If the plan is ready, it validates the selected proposed tasks, writes task records, writes dispatch actions, marks dependency-free actions approved, leaves dependent actions waiting, and marks the plan materialized. If the plan has questions, prerequisites, blockers, or unsafe fields, it returns a block report and does not create tasks or actions. If a request is still waiting for a plan, `/go` returns the same next-step guidance as `/now`. If no orchestration state exists, `/go` may advance Samantha's fixed integration gates for the latest passed run; otherwise it reports that there is no actionable plan instead of approving stale task/action/draft state. No worker is started inside `inbox:watch`.
+`/go` first checks for an active orchestrator plan. If the plan is ready, it validates the selected proposed tasks, writes task records, writes dispatch actions, marks dependency-free actions approved, leaves dependent actions waiting, and marks the plan materialized. If the plan has questions, prerequisites, blockers, or unsafe fields, it returns a block report and does not create tasks or actions. If a request is still waiting for a plan, `/go` returns the same next-step guidance as `/now`. If no orchestration state exists, `/go` may advance Samantha's fixed integration gates for the latest passed run; otherwise it reports that there is no actionable plan instead of approving stale task/action/draft state. Write workers are not started inside `inbox:watch`; the report-only autopilot slice may execute non-writer report actions when deterministic authority policy allows it.
 
 Role-aware plans may include report-only `codex-spec`, `codex-reviewer`,
 `codex-evaluator`, `codex-researcher`, `codex-content`, or `codex-operations`
@@ -172,7 +177,7 @@ read-only and production writers remain capped at one.
 
 Dependent plan actions use `waiting` status with explicit `dependsOnActionIds`. `actions:watch` promotes a waiting action only after every dependency action completed successfully. If a dependency fails or disappears, the dependent action is marked failed without running a worker.
 
-When all actions belonging to one materialized orchestrator plan finish, `actions:watch` reruns `codex-orchestrator` in synthesis mode and writes one additional `# plan-result` Telegram outbox report. The plan-level report is compact: outcome first, then worker notes, changed files or report artifacts, remaining risk, and one next safe Telegram command. Local merge-check candidates remain local fallback detail rather than the routine Telegram path. If synthesis fails, Samantha still writes a deterministic fallback report and records the synthesis failure on the plan.
+When all actions belonging to one materialized orchestrator plan finish, `actions:watch` or report-only autopilot reruns `codex-orchestrator` in synthesis mode and writes or returns one `# plan-result` report. The plan-level report is compact: outcome first, then worker notes, changed files or report artifacts, remaining risk, and one next safe Telegram command. Local merge-check candidates remain local fallback detail rather than the routine Telegram path. If synthesis fails, Samantha still writes a deterministic fallback report and records the synthesis failure on the plan.
 
 Lower-level action preparation and explicit action approval remain available through local CLI/inbox commands for debugging, but they are no longer Telegram commands. Telegram should use `/go` to advance the current safe gate.
 

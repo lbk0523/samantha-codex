@@ -2,6 +2,18 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentProfile, TaskSpec } from "./lib/contracts";
+import {
+  AuthorityGrantStore,
+  checkAuthorityGrant,
+  REPORT_ONLY_AUTOPILOT_ACTIONS,
+  type AuthorityGrantRecord,
+} from "./lib/authority-grant";
+import {
+  AutopilotEvidenceStore,
+  createAutopilotEvidence,
+  type AutopilotEvidenceRecord,
+  type AutopilotTransition,
+} from "./lib/autopilot-evidence-store";
 import { buildCeoStatusSnapshot, formatCeoStatusReport, type CeoStatusSnapshot } from "./lib/ceo-status";
 import {
   buildCeoReportId,
@@ -124,6 +136,7 @@ import { decideQueueAdmission, findBudgetPolicyForGate, formatQueueAdmissionDeci
 import {
   applyProjectDefaults,
   applyProjectRemoteScopeDefaults,
+  classifyRemoteRequest,
   inferProjectProfile,
   loadProjectProfile,
   loadProjectProfiles,
@@ -266,6 +279,14 @@ function projectBriefsPath(args: ParsedArgs): string {
 
 function memoryPath(args: ParsedArgs): string {
   return join(stateDir(args), "memory.jsonl");
+}
+
+function authorityGrantsPath(args: ParsedArgs): string {
+  return join(stateDir(args), "authority-grants.jsonl");
+}
+
+function autopilotEvidencePath(args: ParsedArgs): string {
+  return join(stateDir(args), "autopilot-evidence.jsonl");
 }
 
 function decisionsPath(args: ParsedArgs): string {
@@ -1029,18 +1050,22 @@ async function tryWriteRemoteActionResultOutbox(args: ParsedArgs, action: Remote
   }
 }
 
-async function writeOrchestratorPlanResultOutbox(args: ParsedArgs, plan: OrchestratorPlanRecord): Promise<void> {
+async function buildAndRecordOrchestratorPlanResultReport(
+  args: ParsedArgs,
+  plan: OrchestratorPlanRecord,
+  reportedAt = new Date().toISOString(),
+): Promise<string | undefined> {
   const actionIds = plan.actionIds ?? [];
-  if (actionIds.length === 0 || plan.resultReportedAt) return;
+  if (actionIds.length === 0 || plan.resultReportedAt) return undefined;
 
   const actions = (await new RemoteActionStore(remoteActionsPath(args)).list()).filter((action) =>
     actionIds.includes(action.id),
   );
-  if (actions.length !== actionIds.length) return;
+  if (actions.length !== actionIds.length) return undefined;
   if (actions.some((action) =>
     action.status === "pending" || action.status === "waiting" || action.status === "approved" || action.status === "running"
   )) {
-    return;
+    return undefined;
   }
 
   const runLogs = await readRunLogsForActions(actions);
@@ -1064,7 +1089,28 @@ async function writeOrchestratorPlanResultOutbox(args: ParsedArgs, plan: Orchest
     }
   })();
   const artifactPreviews = (await Promise.all(runLogs.map((runLog) => collectReportArtifactPreviews(runLog)))).flat();
+  const report = orchestratorPlanResultReport({
+    plan,
+    actions,
+    runLogs,
+    synthesis: synthesis.payload,
+    synthesisFailure: synthesis.failure,
+    sourcePlan,
+    artifactPreviews,
+  });
+  await new OrchestratorPlanStore(orchestratorPlansPath(args)).markResultReported(plan.id, {
+    resultReportedAt: reportedAt,
+    synthesisAt: synthesis.payload || synthesis.failure ? reportedAt : undefined,
+    synthesis: synthesis.payload,
+    synthesisFailure: synthesis.failure,
+  });
+  return report;
+}
+
+async function writeOrchestratorPlanResultOutbox(args: ParsedArgs, plan: OrchestratorPlanRecord): Promise<void> {
   const reportedAt = new Date().toISOString();
+  const report = await buildAndRecordOrchestratorPlanResultReport(args, plan, reportedAt);
+  if (!report) return;
   const file = compactOutboxFileName({
     createdAt: reportedAt,
     kind: "plan-result",
@@ -1074,23 +1120,9 @@ async function writeOrchestratorPlanResultOutbox(args: ParsedArgs, plan: Orchest
   await mkdir(outboxDir(args), { recursive: true });
   await writeFile(
     join(outboxDir(args), file),
-    `${orchestratorPlanResultReport({
-      plan,
-      actions,
-      runLogs,
-      synthesis: synthesis.payload,
-      synthesisFailure: synthesis.failure,
-      sourcePlan,
-      artifactPreviews,
-    })}\n`,
+    `${report}\n`,
     "utf8",
   );
-  await new OrchestratorPlanStore(orchestratorPlansPath(args)).markResultReported(plan.id, {
-    resultReportedAt: reportedAt,
-    synthesisAt: synthesis.payload || synthesis.failure ? reportedAt : undefined,
-    synthesis: synthesis.payload,
-    synthesisFailure: synthesis.failure,
-  });
 }
 
 async function tryWriteOrchestratorPlanResultOutbox(args: ParsedArgs, action: RemoteActionRecord): Promise<void> {
@@ -1368,6 +1400,423 @@ async function markActionTaskFailed(args: ParsedArgs, action: RemoteActionRecord
   await taskStore.updateStatus(task.id, "failed");
 }
 
+async function runAutopilotReportActions(args: ParsedArgs, actionIds: string[]): Promise<RemoteActionRecord[]> {
+  const store = new RemoteActionStore(remoteActionsPath(args));
+  const targetIds = new Set(actionIds);
+  const finished: RemoteActionRecord[] = [];
+
+  while (finished.length < actionIds.length) {
+    await promoteReadyWaitingActions(args, store);
+    const actions = await store.list();
+    const targets = actions.filter((action) => targetIds.has(action.id));
+    const finalTargets = targets.filter((action) => action.status === "completed" || action.status === "failed");
+    if (finalTargets.length === actionIds.length) return finalTargets;
+
+    const action = targets.find((item) => item.status === "approved");
+    if (!action) {
+      const waiting = targets.find((item) => item.status === "pending" || item.status === "waiting" || item.status === "running");
+      throw new Error(`autopilot report action is not ready: ${waiting?.id ?? "missing action"}`);
+    }
+
+    const task = await new TaskStore(tasksPath(args)).find(action.taskId);
+    const agent = task ? await loadAgentProfile(args, task.targetAgent) : undefined;
+    if (!task || task.resultMode !== "report" || agent?.writerClass !== "non-writer") {
+      throw new Error(`autopilot may only execute non-writer report actions: ${action.id}`);
+    }
+
+    const startedAt = new Date().toISOString();
+    const admission = await queueAdmissionFor({
+      args,
+      subjectKind: "action",
+      projectId: selectedProjectIdFromAncestry(action.ancestry),
+      budgetContext: budgetContextForAction(action),
+      excludeActionId: action.id,
+      excludeActionIds: actionIds.filter((id) => id !== action.id),
+    });
+    if (admission.decision !== "accept") throw new Error(`autopilot action admission ${admission.decision}: ${admission.reason}`);
+
+    const runId = buildWorkerRunId({ startedAt, taskId: action.taskId });
+    const running = await store.markRunning(action.id, startedAt, {
+      runId,
+      liveLogPath: buildWorkerLiveLogPath(logDir(args), runId),
+    });
+
+    try {
+      const result = await executeTaskDispatch({
+        args,
+        taskId: running.taskId,
+        repoRoot: running.repoRoot,
+        action: running,
+        allocate: false,
+        liveLog: true,
+        startedAt,
+      });
+      const completed = await store.markFinished(running.id, {
+        status: result.runSummary.pass ? "completed" : "failed",
+        completedAt: new Date().toISOString(),
+        result: {
+          runId: result.runSummary.runId,
+          runLogPath: result.runLog.path,
+          liveLogPath: result.liveLog?.path,
+          pass: result.runSummary.pass,
+          outcome: result.runSummary.outcome,
+          failure: result.runSummary.failureReason,
+        },
+      });
+      if (!result.runSummary.pass) await markActionTaskFailed(args, completed);
+      finished.push(completed);
+    } catch (err) {
+      const failed = await store.markFinished(running.id, {
+        status: "failed",
+        completedAt: new Date().toISOString(),
+        result: { failure: errorMessage(err) },
+      });
+      await markActionTaskFailed(args, failed);
+      finished.push(failed);
+    }
+  }
+
+  return finished;
+}
+
+function autopilotResultReport(input: {
+  request: OrchestrationRequestRecord;
+  authorityGrant?: AuthorityGrantRecord;
+  evidence?: AutopilotEvidenceRecord;
+  status: "completed" | "blocked" | "failed";
+  endpoint: "result" | "bk_judgment" | "local_only_blocker";
+  summary: string;
+  planReport?: string;
+  resultReport?: string;
+  failure?: string;
+}): string {
+  const lines = [
+    "# autopilot-result",
+    "",
+    `상태: \`${input.status}\``,
+    "BK 입력: `1회`",
+    `요청: \`${input.request.id}\``,
+    input.authorityGrant ? `권한: \`${input.authorityGrant.id}\`` : "",
+    input.evidence ? `증거: \`${input.evidence.id}\`` : "",
+    `종료 조건: \`${input.endpoint}\``,
+    `요약: ${input.summary}`,
+    input.failure ? `막힌 이유: ${input.failure}` : "",
+    "",
+    input.resultReport ?? input.planReport ?? "",
+  ];
+  return lines.filter((line) => line !== "").join("\n");
+}
+
+async function appendAutopilotEvidence(input: {
+  args: ParsedArgs;
+  request: OrchestrationRequestRecord;
+  plan?: OrchestratorPlanRecord;
+  authorityGrant?: AuthorityGrantRecord;
+  projectId?: string;
+  scopeId?: string;
+  resultMode?: "report";
+  startedAt: string;
+  transitions: AutopilotTransition[];
+  endpoint: "result" | "bk_judgment" | "local_only_blocker";
+  status: "completed" | "blocked" | "failed";
+  actionIds?: string[];
+  runIds?: string[];
+  failure?: string;
+  summary: string;
+}): Promise<AutopilotEvidenceRecord> {
+  const record = createAutopilotEvidence({
+    requestId: input.request.id,
+    planId: input.plan?.id,
+    authorityGrantId: input.authorityGrant?.id,
+    projectId: input.projectId,
+    scopeId: input.scopeId,
+    resultMode: input.resultMode,
+    startedAt: input.startedAt,
+    completedAt: new Date().toISOString(),
+    transitions: [...input.transitions, "record_autopilot_evidence"],
+    endpoint: input.endpoint,
+    status: input.status,
+    actionIds: input.actionIds,
+    runIds: input.runIds,
+    failure: input.failure,
+    summary: input.summary,
+  });
+  await new AutopilotEvidenceStore(autopilotEvidencePath(input.args)).append(record);
+  return record;
+}
+
+async function tryRunRemoteReportOnlyAutopilot(input: {
+  args: ParsedArgs;
+  request: OrchestrationRequestRecord;
+  receivedAt: string;
+  requestedProjectId?: string;
+}): Promise<string | undefined> {
+  if (input.request.source !== "remote") return undefined;
+  if (input.request.admission?.decision && input.request.admission.decision !== "accept") return undefined;
+
+  const startedAt = input.receivedAt;
+  const transitions: AutopilotTransition[] = ["remote_intake", "classify_request"];
+  const classification = classifyRemoteRequest(input.request.text);
+  const projectId = input.requestedProjectId ?? selectedProjectIdFromAncestry(input.request.ancestry);
+  if (!projectId) return undefined;
+
+  const project = await loadProjectProfile(projectProfilesDir(input.args), projectId);
+  const scope = selectProjectRemoteScope(project, { requestText: input.request.text });
+  const authority = checkAuthorityGrant(
+    await new AuthorityGrantStore(authorityGrantsPath(input.args)).listWithBaseline(),
+    {
+      surface: "remote",
+      projectId,
+      scopeId: scope?.id,
+      classification,
+      requiredActions: REPORT_ONLY_AUTOPILOT_ACTIONS,
+      at: startedAt,
+    },
+  );
+  if (!authority.allowed || !authority.grant) return undefined;
+
+  const planned = await createOrchestratorPlanForRequest({
+    args: input.args,
+    request: input.request,
+    receivedAt: input.receivedAt,
+    requestedProjectId: projectId,
+    requestedScopeId: scope?.id,
+    ensureDecision: false,
+  });
+  transitions.push("run_readonly_plan");
+  if (planned.report) {
+    const evidence = await appendAutopilotEvidence({
+      args: input.args,
+      request: input.request,
+      authorityGrant: authority.grant,
+      projectId,
+      scopeId: scope?.id,
+      resultMode: "report",
+      startedAt,
+      transitions,
+      endpoint: "local_only_blocker",
+      status: "blocked",
+      failure: "queue admission blocked planning",
+      summary: "Autopilot stopped before planning because admission did not accept the request.",
+    });
+    return autopilotResultReport({
+      request: input.request,
+      authorityGrant: authority.grant,
+      evidence,
+      status: "blocked",
+      endpoint: "local_only_blocker",
+      summary: "Autopilot stopped before planning.",
+      planReport: planned.report,
+      failure: "queue admission blocked planning",
+    });
+  }
+  if (!planned.plan || !planned.request) return undefined;
+
+  const planReport = orchestratorPlanReport({ request: planned.request, plan: planned.plan, blocker: planned.blocker });
+  if (planned.plan.status === "failed" || planned.blocker || planned.plan.status === "questions") {
+    if (!planned.blocker) {
+      await ensureDecisionForOrchestratorPlan({
+        args: input.args,
+        plan: planned.plan,
+        request: planned.request,
+        createdAt: planned.plan.completedAt ?? input.receivedAt,
+      });
+    }
+    const endpoint = planned.plan.status === "questions" ? "bk_judgment" : "local_only_blocker";
+    const evidence = await appendAutopilotEvidence({
+      args: input.args,
+      request: planned.request,
+      plan: planned.plan,
+      authorityGrant: authority.grant,
+      projectId,
+      scopeId: scope?.id,
+      resultMode: "report",
+      startedAt,
+      transitions,
+      endpoint,
+      status: planned.plan.status === "failed" ? "failed" : "blocked",
+      failure: planned.plan.failure ?? planned.blocker?.violations.join("; "),
+      summary: "Autopilot stopped after planning.",
+    });
+    return autopilotResultReport({
+      request: planned.request,
+      authorityGrant: authority.grant,
+      evidence,
+      status: evidence.status,
+      endpoint,
+      summary: "Autopilot stopped after planning.",
+      planReport,
+      failure: evidence.failure,
+    });
+  }
+
+  const materialized = await previewOrchestratorPlanMaterialization({
+    args: input.args,
+    plan: planned.plan,
+    createdAt: input.receivedAt,
+    commandId: `autopilot-${planned.plan.id}`,
+  });
+  if (!materialized.ok) {
+    const evidence = await appendAutopilotEvidence({
+      args: input.args,
+      request: planned.request,
+      plan: planned.plan,
+      authorityGrant: authority.grant,
+      projectId,
+      scopeId: scope?.id,
+      resultMode: "report",
+      startedAt,
+      transitions,
+      endpoint: "local_only_blocker",
+      status: "blocked",
+      failure: materialized.violations.join("; "),
+      summary: "Autopilot stopped because report-only materialization failed.",
+    });
+    return autopilotResultReport({
+      request: planned.request,
+      authorityGrant: authority.grant,
+      evidence,
+      status: "blocked",
+      endpoint: "local_only_blocker",
+      summary: "Autopilot stopped before report execution.",
+      planReport: orchestratorGoBlockedReport({
+        plan: planned.plan,
+        violations: materialized.violations,
+        blocker: createOrchestratorPlanBlocker({ plan: planned.plan, violations: materialized.violations }),
+      }),
+      failure: evidence.failure,
+    });
+  }
+
+  const agents = await loadAgentProfilesById(input.args, materialized.tasks.map((task) => task.targetAgent));
+  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+  const unsafeTask = materialized.tasks.find((task) => task.resultMode !== "report" || agentsById.get(task.targetAgent)?.writerClass !== "non-writer");
+  if (unsafeTask) {
+    await ensureDecisionForOrchestratorPlan({
+      args: input.args,
+      plan: planned.plan,
+      request: planned.request,
+      createdAt: planned.plan.completedAt ?? input.receivedAt,
+    });
+    const evidence = await appendAutopilotEvidence({
+      args: input.args,
+      request: planned.request,
+      plan: planned.plan,
+      authorityGrant: authority.grant,
+      projectId,
+      scopeId: scope?.id,
+      resultMode: "report",
+      startedAt,
+      transitions,
+      endpoint: "bk_judgment",
+      status: "blocked",
+      failure: `plan proposed non-report or writer task: ${unsafeTask.id}`,
+      summary: "Autopilot stopped for BK approval because the plan exceeded report-only authority.",
+    });
+    return autopilotResultReport({
+      request: planned.request,
+      authorityGrant: authority.grant,
+      evidence,
+      status: "blocked",
+      endpoint: "bk_judgment",
+      summary: "Plan needs BK approval before execution.",
+      planReport,
+      failure: evidence.failure,
+    });
+  }
+
+  const actionAdmission = await queueAdmissionFor({
+    args: input.args,
+    subjectKind: "action",
+    projectId,
+    budgetContext: { ...budgetContextFromAncestry(planned.plan.ancestry), projectId },
+  });
+  if (actionAdmission.decision !== "accept") {
+    const evidence = await appendAutopilotEvidence({
+      args: input.args,
+      request: planned.request,
+      plan: planned.plan,
+      authorityGrant: authority.grant,
+      projectId,
+      scopeId: scope?.id,
+      resultMode: "report",
+      startedAt,
+      transitions,
+      endpoint: "local_only_blocker",
+      status: "blocked",
+      failure: `action admission ${actionAdmission.decision}: ${actionAdmission.reason}`,
+      summary: "Autopilot stopped before report execution because action admission did not accept.",
+    });
+    return autopilotResultReport({
+      request: planned.request,
+      authorityGrant: authority.grant,
+      evidence,
+      status: "blocked",
+      endpoint: "local_only_blocker",
+      summary: "Autopilot stopped before report execution.",
+      planReport: formatQueueAdmissionDecision(actionAdmission),
+      failure: evidence.failure,
+    });
+  }
+
+  const taskStore = new TaskStore(tasksPath(input.args));
+  const actionStore = new RemoteActionStore(remoteActionsPath(input.args));
+  for (const task of materialized.tasks) await taskStore.append(task);
+  const materializedActions: RemoteActionRecord[] = [];
+  for (const action of materialized.actions) {
+    const admittedAction = {
+      ...action,
+      admission: queueAdmissionRecord({ decidedAt: input.receivedAt, result: actionAdmission }),
+    };
+    await actionStore.append(admittedAction);
+    materializedActions.push(
+      admittedAction.status === "pending" ? await actionStore.markApproved(admittedAction.id, input.receivedAt) : admittedAction,
+    );
+  }
+  transitions.push("materialize_report_task");
+  const materializedPlan = await new OrchestratorPlanStore(orchestratorPlansPath(input.args)).markMaterialized(planned.plan.id, {
+    approvedAt: input.receivedAt,
+    materializedAt: new Date().toISOString(),
+    taskIds: materialized.tasks.map((task) => task.id),
+    actionIds: materializedActions.map((action) => action.id),
+  });
+
+  const finalActions = await runAutopilotReportActions(input.args, materializedActions.map((action) => action.id));
+  transitions.push("dispatch_report_task");
+  const latestPlan = await new OrchestratorPlanStore(orchestratorPlansPath(input.args)).find(materializedPlan.id);
+  const resultReport = latestPlan ? await buildAndRecordOrchestratorPlanResultReport(input.args, latestPlan) : undefined;
+  const runIds = finalActions.map((action) => action.result?.runId).filter((runId): runId is string => Boolean(runId));
+  const failedAction = finalActions.find((action) => action.status === "failed" || action.result?.pass === false);
+  const evidence = await appendAutopilotEvidence({
+    args: input.args,
+    request: planned.request,
+    plan: latestPlan ?? materializedPlan,
+    authorityGrant: authority.grant,
+    projectId,
+    scopeId: scope?.id,
+    resultMode: "report",
+    startedAt,
+    transitions,
+    endpoint: failedAction ? "local_only_blocker" : "result",
+    status: failedAction ? "failed" : "completed",
+    actionIds: finalActions.map((action) => action.id),
+    runIds,
+    failure: failedAction?.result?.failure,
+    summary: failedAction ? "Report-only autopilot ran and failed." : "Report-only autopilot completed from one remote input.",
+  });
+
+  return autopilotResultReport({
+    request: planned.request,
+    authorityGrant: authority.grant,
+    evidence,
+    status: evidence.status,
+    endpoint: evidence.endpoint,
+    summary: evidence.summary,
+    resultReport: resultReport ?? planReport,
+    failure: evidence.failure,
+  });
+}
+
 async function prepareDispatchActionForTask(input: {
   args: ParsedArgs;
   taskId: string;
@@ -1432,6 +1881,94 @@ async function projectProfileForRemotePlan(input: {
   if (profiles.length === 1 && profiles[0]) return { profile: profiles[0], inferred: true };
   if (profiles.length === 0) throw new Error("project profile is required, but no project profiles are configured");
   throw new Error("project id is required: send /plan <project_id>");
+}
+
+async function createOrchestratorPlanForRequest(input: {
+  args: ParsedArgs;
+  request: OrchestrationRequestRecord;
+  receivedAt: string;
+  requestedProjectId?: string;
+  requestedScopeId?: string;
+  ensureDecision: boolean;
+}): Promise<{
+  plan?: OrchestratorPlanRecord;
+  request?: OrchestrationRequestRecord;
+  blocker?: OrchestratorPlanBlocker;
+  report?: string;
+}> {
+  const requestAdmission = await queueAdmissionFor({
+    args: input.args,
+    subjectKind: input.request.recoveryOfPlanId ? "recovery_request" : "request",
+    projectId: input.requestedProjectId ?? selectedProjectIdFromAncestry(input.request.ancestry),
+    budgetContext: {
+      ...budgetContextFromAncestry(input.request.ancestry),
+      projectId: input.requestedProjectId ?? selectedProjectIdFromAncestry(input.request.ancestry),
+    },
+    excludeRequestId: input.request.id,
+  });
+  if (requestAdmission.decision !== "accept") return { report: formatQueueAdmissionDecision(requestAdmission) };
+
+  const projectProfiles = await loadProjectProfiles(projectProfilesDir(input.args));
+  const planAncestry = ancestryForPlan({
+    request: input.request,
+    projectProfiles,
+    requestedProjectId: input.requestedProjectId,
+  });
+  const planRequest: OrchestrationRequestRecord = {
+    ...input.request,
+    ancestry: planAncestry,
+  };
+  const planningMemory = await planningMemoryForRequest({
+    args: input.args,
+    request: planRequest,
+    projectProfiles,
+    generatedAt: input.receivedAt,
+  });
+  const result = await runOrchestratorPlan({
+    request: planRequest,
+    agent: await loadAgentProfile(input.args, "codex-orchestrator"),
+    repoRoot: orchestratorRepoRoot(input.args),
+    projectProfiles,
+    requestedProjectId: input.requestedProjectId,
+    requestedScopeId: input.requestedScopeId,
+    planningMemory,
+    codexBin: codexBin(input.args),
+  });
+  const plan: OrchestratorPlanRecord = {
+    schemaVersion: 1,
+    id: buildOrchestratorPlanId({ requestId: input.request.id, createdAt: input.receivedAt }),
+    ancestry: planAncestry,
+    routineTriggerId: input.request.routineTriggerId,
+    routineFingerprint: input.request.routineFingerprint,
+    requestId: input.request.id,
+    status: result.status,
+    createdAt: input.receivedAt,
+    completedAt: new Date().toISOString(),
+    command: result.command,
+    rawOutput: result.rawOutput,
+    payload: result.payload,
+    classification: result.classification,
+    failure: result.failure,
+  };
+  await new OrchestratorPlanStore(orchestratorPlansPath(input.args)).append(plan);
+  const requestStore = new OrchestrationRequestStore(orchestrationRequestsPath(input.args));
+  const reportedRequest =
+    plan.status === "failed" ? input.request : await requestStore.markPlanned(input.request.id, plan.completedAt ?? input.receivedAt, { ancestry: planAncestry });
+  const blocker = await blockerForOrchestratorPlan({
+    args: input.args,
+    plan,
+    createdAt: plan.completedAt ?? input.receivedAt,
+    commandId: `plan-preflight-${plan.id}`,
+  });
+  if (input.ensureDecision && !blocker) {
+    await ensureDecisionForOrchestratorPlan({
+      args: input.args,
+      plan,
+      request: reportedRequest,
+      createdAt: plan.completedAt ?? input.receivedAt,
+    });
+  }
+  return { plan, request: reportedRequest, blocker };
 }
 
 async function previewOrchestratorPlanMaterialization(input: {
@@ -2730,6 +3267,15 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     request.admission = queueAdmissionRecord({ decidedAt: receivedAt, result: admission });
     if (!request.id) throw new Error("orchestration request id is required");
     await requestStore.append(request);
+    if (command.args?.autopilot === "remote_report_only") {
+      const autopilotReport = await tryRunRemoteReportOnlyAutopilot({
+        args,
+        request,
+        receivedAt,
+        requestedProjectId,
+      });
+      if (autopilotReport) return autopilotReport;
+    }
     return orchestrationRequestAddedReport(request);
   }
   if (command.type === "orchestrator:drop-pending") {
@@ -2916,85 +3462,23 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
   }
   if (command.type === "orchestrator:plan-latest") {
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
-    const requestStore = new OrchestrationRequestStore(orchestrationRequestsPath(args));
     const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
     const requestedScopeId = typeof command.args?.scopeId === "string" ? command.args.scopeId : undefined;
     const selectedRequest = await selectPendingRequestForPlan({ args, requestedProjectId, requestedScopeId });
     if (selectedRequest.report) return selectedRequest.report;
     const request = selectedRequest.request;
     if (!request) return nowReportForInbox(args);
-    const requestAdmission = await queueAdmissionFor({
+    const planned = await createOrchestratorPlanForRequest({
       args,
-      subjectKind: request.recoveryOfPlanId ? "recovery_request" : "request",
-      projectId: requestedProjectId ?? selectedProjectIdFromAncestry(request.ancestry),
-      budgetContext: {
-        ...budgetContextFromAncestry(request.ancestry),
-        projectId: requestedProjectId ?? selectedProjectIdFromAncestry(request.ancestry),
-      },
-      excludeRequestId: request.id,
-    });
-    if (requestAdmission.decision !== "accept") return formatQueueAdmissionDecision(requestAdmission);
-
-    const projectProfiles = await loadProjectProfiles(projectProfilesDir(args));
-    const planAncestry = ancestryForPlan({
       request,
-      projectProfiles,
-      requestedProjectId,
-    });
-    const planRequest: OrchestrationRequestRecord = {
-      ...request,
-      ancestry: planAncestry,
-    };
-    const planningMemory = await planningMemoryForRequest({
-      args,
-      request: planRequest,
-      projectProfiles,
-      generatedAt: receivedAt,
-    });
-    const result = await runOrchestratorPlan({
-      request: planRequest,
-      agent: await loadAgentProfile(args, "codex-orchestrator"),
-      repoRoot: orchestratorRepoRoot(args),
-      projectProfiles,
+      receivedAt,
       requestedProjectId,
       requestedScopeId,
-      planningMemory,
-      codexBin: codexBin(args),
+      ensureDecision: true,
     });
-    const plan: OrchestratorPlanRecord = {
-      schemaVersion: 1,
-      id: buildOrchestratorPlanId({ requestId: request.id, createdAt: receivedAt }),
-      ancestry: planAncestry,
-      routineTriggerId: request.routineTriggerId,
-      routineFingerprint: request.routineFingerprint,
-      requestId: request.id,
-      status: result.status,
-      createdAt: receivedAt,
-      completedAt: new Date().toISOString(),
-      command: result.command,
-      rawOutput: result.rawOutput,
-      payload: result.payload,
-      classification: result.classification,
-      failure: result.failure,
-    };
-    await new OrchestratorPlanStore(orchestratorPlansPath(args)).append(plan);
-    const reportedRequest =
-      plan.status === "failed" ? request : await requestStore.markPlanned(request.id, plan.completedAt ?? receivedAt, { ancestry: planAncestry });
-    const blocker = await blockerForOrchestratorPlan({
-      args,
-      plan,
-      createdAt: plan.completedAt ?? receivedAt,
-      commandId: `plan-preflight-${plan.id}`,
-    });
-    if (!blocker) {
-      await ensureDecisionForOrchestratorPlan({
-        args,
-        plan,
-        request: reportedRequest,
-        createdAt: plan.completedAt ?? receivedAt,
-      });
-    }
-    const report = orchestratorPlanReport({ request: reportedRequest, plan, blocker });
+    if (planned.report) return planned.report;
+    if (!planned.plan || !planned.request) return nowReportForInbox(args);
+    const report = orchestratorPlanReport({ request: planned.request, plan: planned.plan, blocker: planned.blocker });
     return selectedRequest.staleDuplicateCount
       ? `${report}\n\n보류 중인 이전 요청 ${selectedRequest.staleDuplicateCount}개는 실행하지 않았습니다. 정리: \`/drop stale project:${requestedProjectId}\``
       : report;

@@ -82,4 +82,15 @@ describe("commandFromRemoteInput", () => {
     });
     expect(() => commandFromRemoteInput({ senderId: "bk", text: "/drop stale request-abc123" }, "bk")).toThrow("unsupported remote command");
   });
+
+  test("marks remote work intake for report-only autopilot", () => {
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/work 다음 작업 계획 보고" }, "bk")).toMatchObject({
+      type: "orchestrator:add-request",
+      args: {
+        source: "remote",
+        text: "다음 작업 계획 보고",
+        autopilot: "remote_report_only",
+      },
+    });
+  });
 });

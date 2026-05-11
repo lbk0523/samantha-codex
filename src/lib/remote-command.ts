@@ -237,6 +237,7 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
         senderId: input.senderId,
         source: "remote",
         receivedAt,
+        autopilot: "remote_report_only",
       },
     };
   }
