@@ -61,7 +61,7 @@ const action: RemoteActionRecord = {
   repoRoot: "/repo",
   allocate: true,
   execute: true,
-  tmux: true,
+  liveLog: true,
   result: { pass: false, outcome: "verify_failed", failure: "typecheck failed" },
 };
 

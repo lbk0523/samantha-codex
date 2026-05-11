@@ -1249,26 +1249,29 @@ async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promis
 
   while (results.length < limit) {
     await promoteReadyWaitingActions(args, store);
-    const action = (await store.list()).find((item) => item.status === "approved");
+    const actions = await store.list();
+    const action = actions.find((item) => item.status === "approved");
     if (!action) break;
     const startedAt = new Date().toISOString();
+    const dependentWaitingActionIds = actions
+      .filter((item) => item.status === "waiting" && (item.dependsOnActionIds ?? []).includes(action.id))
+      .map((item) => item.id);
     const admission = await queueAdmissionFor({
       args,
       subjectKind: "action",
       projectId: selectedProjectIdFromAncestry(action.ancestry),
       budgetContext: budgetContextForAction(action),
       excludeActionId: action.id,
+      excludeActionIds: dependentWaitingActionIds,
     });
     if (admission.decision !== "accept") {
       results.push({ actionId: action.id, status: `admission_${admission.decision}` });
       break;
     }
     const runId = buildWorkerRunId({ startedAt, taskId: action.taskId });
-    const tmuxSession = flag(args, "tmux-session", "samantha");
     const running = await store.markRunning(action.id, startedAt, {
       runId,
       liveLogPath: buildWorkerLiveLogPath(logDir(args), runId),
-      tmuxSession,
     });
     if (running.kind !== "dispatch_task") throw new Error(`unsupported remote action kind: ${running.kind}`);
 
@@ -1279,8 +1282,7 @@ async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promis
         repoRoot: running.repoRoot,
         action: running,
         allocate: true,
-        tmux: true,
-        tmuxSession,
+        liveLog: true,
         startedAt,
       });
       const finished = await store.markFinished(running.id, {
@@ -1290,7 +1292,6 @@ async function runApprovedRemoteActions(args: ParsedArgs, limit: number): Promis
           runId: result.runSummary.runId,
           runLogPath: result.runLog.path,
           liveLogPath: result.liveLog?.path,
-          tmuxSession: result.tmux?.sessionName,
           pass: result.runSummary.pass,
           outcome: result.runSummary.outcome,
           failure: result.runSummary.failureReason,
@@ -1572,7 +1573,9 @@ async function queueAdmissionFor(input: {
   projectId?: string;
   budgetContext?: BudgetEvaluationContext;
   excludeActionId?: string;
+  excludeActionIds?: string[];
   excludeRequestId?: string;
+  excludePlanId?: string;
 }): Promise<QueueAdmissionDecisionResult> {
   const [
     requests,
@@ -1601,19 +1604,24 @@ async function queueAdmissionFor(input: {
     new GovernanceEventStore(governanceEventsPath(input.args)).list(),
     collectOps(input.args),
   ]);
+  const excludedActionIds = new Set([
+    ...(input.excludeActionId ? [input.excludeActionId] : []),
+    ...(input.excludeActionIds ?? []),
+  ]);
+  const pressurePlans = input.excludePlanId ? plans.filter((plan) => plan.id !== input.excludePlanId) : plans;
   const pressure = buildQueuePressureSnapshot({
     requests: input.excludeRequestId ? requests.filter((request) => request.id !== input.excludeRequestId) : requests,
-    plans,
+    plans: pressurePlans,
     decisions,
     taskDrafts,
     tasks,
-    actions: input.excludeActionId ? actions.filter((action) => action.id !== input.excludeActionId) : actions,
+    actions: excludedActionIds.size > 0 ? actions.filter((action) => !excludedActionIds.has(action.id)) : actions,
     runs,
     lifecycles,
     budgetObservations,
     budgetPolicies,
     governanceEvents,
-    orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(input.args, plans),
+    orchestratorPlanBlockers: await orchestratorPlanBlockersForReport(input.args, pressurePlans),
     ops: withoutActiveInboxCommand(ops),
   }, { projectId: input.projectId, budgetContext: input.budgetContext });
   const admission = decideQueueAdmission({ pressure, subjectKind: input.subjectKind });
@@ -2702,6 +2710,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       subjectKind: "request",
       projectId: selectedProjectIdFromAncestry(request.ancestry),
       budgetContext: budgetContextFromAncestry(request.ancestry),
+      excludePlanId: plan.id,
     });
     request.admission = queueAdmissionRecord({ decidedAt: receivedAt, result: admission });
     await requestStore.append(request);
@@ -4319,7 +4328,7 @@ async function main(): Promise<void> {
       "  tasks:list [--include-archived]",
       "  tasks:show <task-id>",
       "  tasks:archive <task-id> --reason=<text>",
-      "  tasks:dispatch <task-id> --repo-root=<repo> [--execute] [--tmux] [--live-log]",
+      "  tasks:dispatch <task-id> --repo-root=<repo> [--execute] [--live-log] [--tmux]",
       "  tasks:finalize-worktree <task-id> --repo-root=<repo> [--worktree=<path>] [--note=<text>]",
       "  tasks:retry <task-id>",
       "  actions:list",

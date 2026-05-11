@@ -173,6 +173,7 @@ Writer agents do not commit or push. Production code writers use per-task worktr
 For deeper context, see:
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/SAMANTHA_WORKFLOW_PLAYBOOK.md](docs/SAMANTHA_WORKFLOW_PLAYBOOK.md)
 - [docs/DETERMINISTIC_CEO_OFFICE.md](docs/DETERMINISTIC_CEO_OFFICE.md)
 - [docs/CEO_OFFICE_ROADMAP.md](docs/CEO_OFFICE_ROADMAP.md)
 - [docs/MVP_IMPLEMENTATION.md](docs/MVP_IMPLEMENTATION.md)

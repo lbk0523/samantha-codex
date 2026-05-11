@@ -210,7 +210,7 @@ describe("backup, restore, and host migration drills", () => {
         repoRoot: "$HOME/projects/samantha-codex",
         allocate: true,
         execute: true,
-        tmux: true,
+        liveLog: true,
         result: { runId: "run-missing", pass: true },
       },
     ]);

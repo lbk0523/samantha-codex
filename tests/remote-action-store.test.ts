@@ -41,10 +41,10 @@ describe("RemoteActionStore", () => {
       repoRoot: "/repo",
       allocate: true,
       execute: true,
-      tmux: true,
+      liveLog: true,
     });
     expect(remoteActionCommand(action)).toBe(
-      "bun run samantha tasks:dispatch remote-action-task --repo-root=/repo --allocate --execute --tmux",
+      "bun run samantha tasks:dispatch remote-action-task --repo-root=/repo --allocate --execute --live-log",
     );
   });
 
@@ -66,7 +66,6 @@ describe("RemoteActionStore", () => {
     const running = await store.markRunning(action.id, "2026-05-05T10:01:30.000Z", {
       runId: "run-1",
       liveLogPath: "/runs/live/run-1.jsonl",
-      tmuxSession: "samantha",
     });
     const completed = await store.markFinished(action.id, {
       status: "completed",
@@ -79,14 +78,13 @@ describe("RemoteActionStore", () => {
     expect(running.result).toMatchObject({
       runId: "run-1",
       liveLogPath: "/runs/live/run-1.jsonl",
-      tmuxSession: "samantha",
     });
     expect(completed).toMatchObject({
       id: action.id,
       taskId: action.taskId,
       repoRoot: action.repoRoot,
       status: "completed",
-      result: { runId: "run-1", pass: true, liveLogPath: "/runs/live/run-1.jsonl", tmuxSession: "samantha" },
+      result: { runId: "run-1", pass: true, liveLogPath: "/runs/live/run-1.jsonl" },
     });
     await expect(store.markApproved(action.id, "2026-05-05T10:03:00.000Z")).rejects.toThrow(
       "remote action must be pending",

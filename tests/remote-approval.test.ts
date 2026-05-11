@@ -148,7 +148,7 @@ describe("remote approval inbox flow", () => {
         repoRoot: root,
         allocate: true,
         execute: true,
-        tmux: true,
+        liveLog: true,
         approvedAt: "2026-05-07T11:01:00.000Z",
       })}\n`,
       "utf8",

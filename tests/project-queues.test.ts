@@ -79,7 +79,7 @@ const action: RemoteActionRecord = {
   repoRoot: "/repo/samantha",
   allocate: true,
   execute: true,
-  tmux: true,
+  liveLog: true,
 };
 
 const run: RunSummary = {

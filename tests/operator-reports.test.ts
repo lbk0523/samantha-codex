@@ -794,7 +794,6 @@ describe("operator reports", () => {
         runId: "run-pass",
         runLogPath: "/runs/run-pass.json",
         liveLogPath: "/runs/live/run-pass.jsonl",
-        tmuxSession: "samantha",
         pass: true,
         outcome: "pass",
       },
@@ -811,15 +810,15 @@ describe("operator reports", () => {
       ...action,
       status: "running" as const,
       startedAt: "2026-05-03T10:08:30.000Z",
-      result: { runId: "run-live", liveLogPath: "/runs/live/run-live.jsonl", tmuxSession: "samantha" },
+      result: { runId: "run-live", liveLogPath: "/runs/live/run-live.jsonl" },
     };
     expect(remoteActionShowReport(runningAction.id, runningAction)).toContain("Live log: `/runs/live/run-live.jsonl`");
-    expect(remoteActionShowReport(runningAction.id, runningAction)).toContain("Tmux: `samantha`");
+    expect(remoteActionShowReport(runningAction.id, runningAction)).not.toContain("Tmux:");
     expect(remoteGoReport({ action: { ...action, status: "approved" } })).toContain("텔레그램: `/now`");
     expect(remoteActionApprovedReport({ ...action, status: "approved" })).toContain("actions:watch");
     expect(remoteActionApprovedReport({ ...action, status: "approved" })).toContain("텔레그램: `/now`");
     expect(remoteActionApprovedReport(completed)).toContain("통과: yes");
-    expect(remoteActionApprovedReport(completed)).toContain("Tmux: `samantha`");
+    expect(remoteActionApprovedReport(completed)).not.toContain("Tmux:");
     expect(remoteActionApprovedReport(completed)).toContain("텔레그램: `/now`");
 
     const runLog: WorkerRunLog = {

@@ -70,7 +70,7 @@ const passedRecoveryAction: RemoteActionRecord = {
   repoRoot: "/repo/samantha-codex",
   allocate: true,
   execute: true,
-  tmux: true,
+  liveLog: true,
   result: { pass: true, outcome: "pass" },
 };
 

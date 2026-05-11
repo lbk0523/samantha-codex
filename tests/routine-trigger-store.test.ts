@@ -163,7 +163,7 @@ describe("routine trigger contract", () => {
       repoRoot: ".",
       allocate: true,
       execute: true,
-      tmux: true,
+      liveLog: true,
       routineTriggerId: trigger.triggerId,
       routineFingerprint: trigger.fingerprint,
     };
@@ -259,7 +259,7 @@ describe("routine trigger contract", () => {
       repoRoot: ".",
       allocate: true,
       execute: true,
-      tmux: true,
+      liveLog: true,
       routineTriggerId: trigger.triggerId,
       routineFingerprint: trigger.fingerprint,
       result: { pass: true },

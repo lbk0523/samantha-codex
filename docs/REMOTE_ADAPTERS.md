@@ -117,7 +117,7 @@ Direct worker dispatch is local-only:
 ```bash
 bun run samantha tasks:dispatch <task-id> --repo-root=<repo>
 bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute
-bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute --tmux
+bun run samantha tasks:dispatch <task-id> --repo-root=<repo> --execute --live-log
 ```
 
 Without `--execute`, `tasks:dispatch` only prepares and prints the Codex command. With `--execute`, it writes a run log under `runs/`, appends `state/runs.jsonl`, and updates the task to `completed` or `failed`.
@@ -126,7 +126,7 @@ Remote dispatch uses an action gate plus a separate runner instead of direct com
 
 ```text
 /go -> state/tasks.jsonl pending tasks + state/remote-actions.jsonl approved actions
-actions:watch -> tasks:dispatch <task-id> --allocate --execute --tmux
+actions:watch -> tasks:dispatch <task-id> --allocate --execute --live-log
 ```
 
 `/go` first checks for an active orchestrator plan. If the plan is ready, it validates the selected proposed tasks, writes task records, writes dispatch actions, marks dependency-free actions approved, leaves dependent actions waiting, and marks the plan materialized. If the plan has questions, prerequisites, blockers, or unsafe fields, it returns a block report and does not create tasks or actions. If a request is still waiting for a plan, `/go` returns the same next-step guidance as `/now`. If no orchestration state exists, `/go` may advance Samantha's fixed integration gates for the latest passed run; otherwise it reports that there is no actionable plan instead of approving stale task/action/draft state. No worker is started inside `inbox:watch`.
@@ -144,13 +144,10 @@ Lower-level action preparation and explicit action approval remain available thr
 
 `actions:watch` or one-shot `actions:run-pending` executes only existing approved action ids. Telegram cannot supply shell commands, extra flags, arbitrary repo paths, or arbitrary integration instructions. After a passed run, `/go` may advance Samantha's fixed merge, push, and cleanup gates for the latest recorded run only. Drafts prepared with a project profile carry that profile's `repoRoot` into the promoted task and dispatch action; otherwise the repo root must be configured locally through `SAMANTHA_REPO_ROOT`. If the host service cannot find Codex, set `SAMANTHA_CODEX_BIN` in `.env`.
 
-Use `--tmux` for a read-only supervisor view while the worker runs. Samantha still owns the worker process, safety gates, merge, and push; tmux only tails `runs/live/<run-id>.jsonl` through a formatter. Attach with:
-
-```bash
-tmux attach -t samantha
-```
-
-If tmux is unavailable, dispatch continues and the JSON result includes a warning. Use `--live-log` without `--tmux` to write the live JSONL stream without opening a tmux observer. When `--tmux` is used, Samantha opens an observer window while the worker is active and closes that observer window after the worker finishes; the live JSONL file remains available for the dashboard and later inspection.
+Use `--live-log` to write the live JSONL stream used by the dashboard and later
+inspection. Server-hosted action execution does not require tmux. `--tmux`
+remains a manual read-only observer option for local debugging, but remote
+actions and `actions:watch` should use live-log-only execution.
 
 Merge/push/cleanup lifecycle is recorded locally in `state/run-lifecycle.jsonl`. Use the run log when pushing so Samantha can verify the run commit is integrated and stop recommending already-completed work:
 

@@ -133,7 +133,7 @@ const action: RemoteActionRecord = {
   repoRoot: profiles[0].repoRoot,
   allocate: true,
   execute: true,
-  tmux: true,
+  liveLog: true,
   orchestratorPlanId: plan.id,
   orchestratorTaskId: "m1-baseline",
   completedAt: "2026-05-10T00:04:00.000Z",

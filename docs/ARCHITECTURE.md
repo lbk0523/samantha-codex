@@ -226,7 +226,10 @@ It currently:
 
 With `--execute`, it also runs task `setupCommands` inside the worktree, then runs the prepared `codex exec` command and evaluates the captured output. Setup failures block the worker before Codex starts. Any tracked file changes produced by setup still go through the normal scope gate.
 
-For supervisor visibility, `tasks:dispatch --execute --tmux` writes a live JSONL stream under `runs/live/<run-id>.jsonl` and opens a read-only tmux observer window that tails the stream through Samantha's formatter. This does not grant the supervisor or tmux pane control over the worker process; it is observability only. `--live-log` writes the same stream without opening tmux.
+For supervisor visibility, `tasks:dispatch --execute --live-log` writes a live
+JSONL stream under `runs/live/<run-id>.jsonl` for the dashboard and later
+inspection. `--tmux` remains a manual read-only observer option for local
+debugging, but server-hosted action execution does not require tmux.
 
 Executed worker runs are written to `runs/<timestamp>-<task-id>.json` by default. Each log includes the task, agent profile, dispatch input, setup results, Codex command result when it ran, and Samantha's evaluation. Use `--log-dir=<path>` to choose another directory or `--no-log` for one-off debugging runs that should not leave an audit file.
 

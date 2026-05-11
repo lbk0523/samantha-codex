@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
 import type { DaemonHeartbeat } from "../src/lib/daemon";
 import { renderDashboard, renderLaneViewDashboard, writeDashboard } from "../src/lib/dashboard";
@@ -15,6 +15,7 @@ import { materializeOrchestratorPlan } from "../src/lib/orchestrator-materialize
 import { createRemoteDispatchAction, RemoteActionStore } from "../src/lib/remote-action-store";
 import { commandFromRemoteInput, enqueueRemoteCommand } from "../src/lib/remote-command";
 import type { WorkerRunLog } from "../src/lib/run-log";
+import { TaskStore } from "../src/lib/task-store";
 
 let tmpRoots: string[] = [];
 
@@ -74,6 +75,19 @@ function reportTask(targetAgent: string): TaskSpec {
     forbiddenChanges: ["**/*"],
     resultMode: "report",
   };
+}
+
+async function writeActiveHostOwnership(state: string): Promise<void> {
+  await writeFile(
+    join(state, "host-ownership.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      role: "active_automation_host",
+      hostId: hostname(),
+      updatedAt: "2026-05-03T10:00:00.000Z",
+    })}\n`,
+    "utf8",
+  );
 }
 
 async function writeFakeCodex(root: string, payload: OrchestratorPlanPayload): Promise<string> {
@@ -428,6 +442,7 @@ describe("inbox and remote commands", () => {
     const agents = join(root, "agents");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await mkdir(agents, { recursive: true });
     await writeFile(
       join(agents, "codex-worker.json"),
@@ -493,7 +508,7 @@ describe("inbox and remote commands", () => {
       repoRoot: "/repo",
       allocate: true,
       execute: true,
-      tmux: true,
+      liveLog: true,
     });
   });
 
@@ -507,6 +522,7 @@ describe("inbox and remote commands", () => {
     const agents = join(root, "agents");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await mkdir(agents, { recursive: true });
     await writeFile(
       join(agents, "codex-worker.json"),
@@ -578,6 +594,7 @@ describe("inbox and remote commands", () => {
     const state = join(root, "state");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     const store = new RemoteActionStore(join(state, "remote-actions.jsonl"));
     const action = createRemoteDispatchAction({
       task: { ...task, id: "task-pass" },
@@ -636,6 +653,7 @@ describe("inbox and remote commands", () => {
     const state = join(root, "state");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     const store = new RemoteActionStore(join(state, "remote-actions.jsonl"));
     const action = createRemoteDispatchAction({
       task: { ...task, id: "task-pass" },
@@ -688,6 +706,7 @@ describe("inbox and remote commands", () => {
     const state = join(root, "state");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await writeFile(
       join(state, "daemon.lock"),
       JSON.stringify({
@@ -804,6 +823,7 @@ describe("inbox and remote commands", () => {
       const agents = join(root, "agents");
       await mkdir(inbox, { recursive: true });
       await mkdir(state, { recursive: true });
+      await writeActiveHostOwnership(state);
       await mkdir(agents, { recursive: true });
       await writeFile(
         join(agents, "codex-worker.json"),
@@ -919,6 +939,7 @@ describe("inbox and remote commands", () => {
     const projects = join(root, "projects");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await mkdir(agents, { recursive: true });
     await mkdir(projects, { recursive: true });
     await writeFile(
@@ -1067,6 +1088,7 @@ describe("inbox and remote commands", () => {
     const projects = join(root, "projects");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await mkdir(agents, { recursive: true });
     await mkdir(projects, { recursive: true });
     const fakeCodex = await writeFakeCodex(root, {
@@ -1291,6 +1313,7 @@ describe("inbox and remote commands", () => {
     const projects = join(root, "projects");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await mkdir(agents, { recursive: true });
     await mkdir(projects, { recursive: true });
     await writeFile(
@@ -1522,6 +1545,16 @@ describe("inbox and remote commands", () => {
     expect(await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).find("plan-blocker-gated")).toMatchObject({
       status: "materialized",
     });
+    const actionStore = new RemoteActionStore(join(state, "remote-actions.jsonl"));
+    const [firstAction] = await actionStore.list();
+    if (!firstAction) throw new Error("expected materialized action");
+    await actionStore.markRunning(firstAction.id, "2026-05-06T10:06:30.000Z", { runId: "run-blocker-gated", pass: true });
+    await actionStore.markFinished(firstAction.id, {
+      status: "completed",
+      completedAt: "2026-05-06T10:06:45.000Z",
+      result: { pass: true, outcome: "pass" },
+    });
+    await new TaskStore(join(state, "tasks.jsonl")).updateStatus("task-blocker-gated", "completed");
 
     const planStore = new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl"));
     await planStore.append({
@@ -1606,6 +1639,7 @@ describe("inbox and remote commands", () => {
     const projects = join(root, "projects");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await mkdir(agents, { recursive: true });
     await mkdir(projects, { recursive: true });
     await writeFile(
@@ -2024,6 +2058,7 @@ describe("inbox and remote commands", () => {
     const state = join(root, "state");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
 
     const planPayload: OrchestratorPlanPayload = {
       summary: "너무 넓은 구현 계획",
@@ -2142,6 +2177,7 @@ describe("inbox and remote commands", () => {
     const state = join(root, "state");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
 
     const planPayload: OrchestratorPlanPayload = {
       summary: "현재 계획 재조회",
@@ -2237,6 +2273,7 @@ describe("inbox and remote commands", () => {
     const state = join(root, "state");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
 
     await writeFile(
       join(state, "orchestration-requests.jsonl"),
@@ -2343,6 +2380,7 @@ describe("inbox and remote commands", () => {
     const state = join(root, "state");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     const logs = join(root, "runs");
     const worktree = join(root, "failed-worktree");
     await mkdir(join(worktree, "docs"), { recursive: true });
@@ -2519,6 +2557,7 @@ describe("inbox and remote commands", () => {
     const state = join(root, "state");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
 
     const failedAction = {
       ...createRemoteDispatchAction({
@@ -2605,6 +2644,7 @@ describe("inbox and remote commands", () => {
     await mkdir(repo, { recursive: true });
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await mkdir(agents, { recursive: true });
     await mkdir(projects, { recursive: true });
 
@@ -2811,6 +2851,7 @@ describe("inbox and remote commands", () => {
     const state = join(root, "state");
     const outbox = join(root, "outbox");
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
 
     const firstTask: TaskSpec = {
       ...task,
@@ -2911,6 +2952,7 @@ describe("inbox and remote commands", () => {
     const state = join(root, "state");
     const outbox = join(root, "outbox");
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
 
     const waitingTask: TaskSpec = {
       ...task,
@@ -2981,6 +3023,7 @@ describe("inbox and remote commands", () => {
     const projects = join(root, "projects");
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await mkdir(agents, { recursive: true });
     await mkdir(projects, { recursive: true });
     await writeFile(
@@ -3132,6 +3175,7 @@ describe("inbox and remote commands", () => {
     const logs = join(root, "runs");
     await mkdir(repo, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await mkdir(agents, { recursive: true });
 
     await git(["init"], repo);
@@ -3295,6 +3339,7 @@ describe("inbox and remote commands", () => {
     const logs = join(root, "runs");
     await mkdir(repo, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await mkdir(agents, { recursive: true });
 
     await git(["init"], repo);
@@ -3419,6 +3464,7 @@ describe("inbox and remote commands", () => {
     const { repo, workerCommit, summary } = await makeMergeCandidate();
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await writeFile(
       join(state, "runs.jsonl"),
       `${JSON.stringify(summary)}\n${JSON.stringify({
@@ -3507,6 +3553,7 @@ describe("inbox and remote commands", () => {
     await git(["merge", "--ff-only", workerCommit], repo);
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await writeFile(join(state, "runs.jsonl"), `${JSON.stringify(summary)}\n`, "utf8");
     await writeFile(
       join(state, "run-lifecycle.jsonl"),
@@ -3653,6 +3700,7 @@ describe("inbox and remote commands", () => {
     };
     await mkdir(inbox, { recursive: true });
     await mkdir(state, { recursive: true });
+    await writeActiveHostOwnership(state);
     await writeFile(logPath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
     await writeFile(join(state, "runs.jsonl"), `${JSON.stringify(summary)}\n`, "utf8");
     await writeFile(

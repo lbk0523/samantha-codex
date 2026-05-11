@@ -49,7 +49,7 @@ const action: RemoteActionRecord = {
   repoRoot: "/repo",
   allocate: true,
   execute: true,
-  tmux: true,
+  liveLog: true,
 };
 
 const request: OrchestrationRequestRecord = {
