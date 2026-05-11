@@ -8,6 +8,11 @@ Remote adapters are input adapters first. They may create inbox command files fo
 
 Telegram is not Samantha's core product surface. It is a notification, approval, short-feedback, and compact status adapter for the deterministic CEO office. Long review, dashboard inspection, and operational debugging should stay in CLI or dashboard surfaces.
 
+For the user-facing state contract behind these adapter commands, see
+[USER_WORKFLOW.md](USER_WORKFLOW.md). Remote adapter changes should preserve the
+same state -> BK decision -> Samantha action -> next state flow instead of
+adding Telegram commands as a substitute for workflow clarity.
+
 All remote input must pass through:
 
 ```text
@@ -97,7 +102,12 @@ Supported Telegram commands are operational reports plus orchestration request i
 
 `/now` is the default operating command. It chooses one next remote command from current action state, orchestrator plans, orchestration requests, failed plan recovery state, diagnostics, pending decisions, pending tasks, and latest run state. After `/work <request>`, `/now` should show the pending orchestration request and `/plan` instead of reporting no immediate action. When multiple pending requests exist, `/now` keeps the CEO ranking header and shows project-specific `/plan <project>`, `/drop stale project:<project>`, and `/drop recovery project:<project>` actions instead of requiring internal ids. When a plan is waiting for approval, reports show `/plan_current`, `/go`, and `/revise <feedback>` so BK can reread, approve, or redirect without starting over. When a blocker clarification is pending, reports show `/answer <answer>`, `/revise <feedback>`, and `/cancel` before plan/action progress guidance. After a failed materialized plan result is reported and no newer active item exists, `/now` should show `/recover`; after a recovery pending request already exists, reports should show `/now` plus `/drop recovery project:<project>` rather than suggesting another `/recover`. It must not present inspect-only commands or id-based commands as the next action.
 
-`/check` is the quick operational view. It includes daemon heartbeat, queue counts, proposal counts, draft counts, latest run, latest run lifecycle, Telegram offset, reply state, latest remote command/report, and unsent remote outbox count.
+`/check` is the quick operational view for humans. It should show the current
+recommended action, the short reason work is blocked or safe, compact pressure
+guidance, and only the small runtime signals needed to decide whether `/now`,
+`/problems`, CLI, or dashboard is the next surface. Long daemon, queue, budget,
+run, and Telegram delivery detail belongs in `/problems`, CLI, or dashboard,
+not routine `/check`.
 
 `/problems` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, latest remote command/report context, reply failures, and expected host service template installation without printing secret values.
 

@@ -7,6 +7,7 @@ import type { GovernanceEventRecord } from "./governance-event-store";
 import type { RunSummary } from "./ledger";
 import type { OrchestratorPlanBlocker } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "./orchestrator-store";
+import { currentOrchestratorPlanNeedsRecovery } from "./orchestrator-recovery";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import { buildQueuePressureSnapshot, formatQueuePressureGuidance, formatQueuePressureSnapshot, type QueuePressureSnapshot } from "./queue-pressure";
 import type { RemoteActionRecord } from "./remote-action-store";
@@ -220,6 +221,15 @@ function decisionSubjectKey(decision: DecisionItem): string | undefined {
   return decision.subject ? `${decision.subject.type}:${decision.subject.id}` : undefined;
 }
 
+function decisionStillNeedsBk(decision: DecisionItem, plans: OrchestratorPlanRecord[]): boolean {
+  if (decision.status !== "pending") return false;
+  if (decision.subject?.type !== "orchestrator_plan") return true;
+
+  const plan = plans.find((candidate) => candidate.id === decision.subject?.id);
+  if (!plan) return true;
+  return plan.status === "planned" || plan.status === "questions";
+}
+
 function queueRecords(input: ProjectQueueInput): QueueRecord[] {
   const planById = new Map((input.plans ?? []).map((plan) => [plan.id, plan]));
   const blockedPlanIds = new Set((input.orchestratorPlanBlockers ?? []).map((blocker) => blocker.planId));
@@ -242,19 +252,20 @@ function queueRecords(input: ProjectQueueInput): QueueRecord[] {
         recoveryNeed: Boolean(request.recoveryOfPlanId) && request.status === "pending_plan",
       }),
     ),
-    ...(input.plans ?? []).map((plan) =>
-      baseRecord({
+    ...(input.plans ?? []).map((plan) => {
+      const recoveryNeed = currentOrchestratorPlanNeedsRecovery(plan, input.plans ?? []);
+      return baseRecord({
         kind: "plan",
         id: plan.id,
         bucket: projectQueueBucketForRecord(plan),
         status: plan.status,
         active: activePlanStatuses.has(plan.status) && !blockedPlanIds.has(plan.id),
-        blocked: plan.status === "failed" || blockedPlanIds.has(plan.id) || Boolean(plan.synthesisFailure) || Boolean(plan.synthesis && plan.synthesis.outcome !== "pass"),
+        blocked: recoveryNeed || blockedPlanIds.has(plan.id),
         completed: ["canceled", "superseded", "materialized"].includes(plan.status) && !blockedPlanIds.has(plan.id),
         pendingBkDecision: (plan.status === "planned" || plan.status === "questions") && !pendingDecisionSubjectKeys.has(`orchestrator_plan:${plan.id}`),
-        recoveryNeed: plan.status === "failed" || Boolean(plan.synthesisFailure) || Boolean(plan.synthesis && plan.synthesis.outcome !== "pass"),
-      }),
-    ),
+        recoveryNeed,
+      });
+    }),
     ...(input.orchestratorPlanBlockers ?? [])
       .filter((blocker) => !planById.has(blocker.planId))
       .map((blocker) =>
@@ -267,17 +278,18 @@ function queueRecords(input: ProjectQueueInput): QueueRecord[] {
           recoveryNeed: true,
         }),
       ),
-    ...(input.decisions ?? []).map((decision) =>
-      baseRecord({
+    ...(input.decisions ?? []).map((decision) => {
+      const needsBk = decisionStillNeedsBk(decision, input.plans ?? []);
+      return baseRecord({
         kind: "decision",
         id: decision.id,
         bucket: projectQueueBucketForRecord(decision),
         status: decision.status,
-        active: decision.status === "pending",
-        completed: decision.status !== "pending",
-        pendingBkDecision: decision.status === "pending",
-      }),
-    ),
+        active: needsBk,
+        completed: decision.status !== "pending" || !needsBk,
+        pendingBkDecision: needsBk,
+      });
+    }),
     ...(input.taskDrafts ?? []).map((draft) =>
       baseRecord({
         kind: "task_draft",

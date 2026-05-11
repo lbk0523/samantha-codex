@@ -348,6 +348,40 @@ describe("operator reports", () => {
     expect(report).not.toContain("bun run");
   });
 
+  test("renders recovery blocker details before detailed diagnostics in CEO notification", () => {
+    const report = ceoNotificationReport({
+      generatedAt: "2026-05-07T11:00:00.000Z",
+      overall: "needs_recovery",
+      completed: [],
+      active: [],
+      blocked: [
+        {
+          kind: "orchestrator_plan",
+          id: "plan-20260507-parse-failed",
+          title: "plan-20260507-parse-failed",
+          status: "failed",
+          detail: "JSON Parse error: Unrecognized token '\\'",
+        },
+      ],
+      historicalFailures: [],
+      needsDecision: [],
+      risks: ["Plan needs recovery plan-20260507-parse-failed: JSON Parse error: Unrecognized token '\\'"],
+      nextAction: {
+        kind: "recover",
+        label: "Review recovery need: plan-20260507-parse-failed",
+        command: "/problems",
+        targetId: "plan-20260507-parse-failed",
+        reason: "JSON Parse error: Unrecognized token '\\'",
+      },
+    });
+
+    expect(report).toContain("텔레그램: `/check`");
+    expect(report).toContain("상세 진단: `/problems`");
+    expect(report).toContain("현재 블로커: plan failed");
+    expect(report).toContain("블로커 이유: JSON Parse error");
+    expect(report).not.toContain("현재 블로커: 해당 항목");
+  });
+
   test("renders compact CEO notification with historical failures after next action", () => {
     const report = ceoNotificationReport({
       generatedAt: "2026-05-07T11:00:00.000Z",
@@ -492,6 +526,30 @@ describe("operator reports", () => {
     expect(status).toContain("- pending_review: 1 accepted: 0 rejected: 0");
     expect(status).toContain("- drafted: 1 approved: 0 discarded: 0");
     expect(status).toContain("- pending: 1 waiting: 0 approved: 0 running: 0 failed: 0");
+    const compactStatus = statusReport({
+      runs: [passRun, failRun],
+      heartbeat,
+      pendingInboxCount: 2,
+      ops,
+      mode: "compact",
+      proposals: [proposal],
+      drafts: [draft],
+      actions: [
+        createRemoteDispatchAction({
+          task,
+          repoRoot: "/repo",
+          createdAt: "2026-05-03T10:07:00.000Z",
+          source: "remote",
+          commandId: "remote-prepare",
+        }),
+      ],
+      lifecycles: [{ ...lifecycle, cleanedAt: "2026-05-03T10:03:00.000Z" }],
+    });
+    expect(compactStatus).toContain("지금 할 일:");
+    expect(compactStatus).toContain("막힌 이유:");
+    expect(compactStatus).toContain("운영 신호:");
+    expect(compactStatus).not.toContain("Budget audit:");
+    expect(compactStatus).not.toContain("Project queues:");
     expect(
       statusReport({
         runs: [passRun],
@@ -1019,6 +1077,26 @@ describe("operator reports", () => {
     expect(multiPendingNow).toContain("# ceo-ranking");
     expect(multiPendingNow).toContain("여러 pending 작업 요청이 있어 원격 계획 생성을 보류합니다.");
     expect(multiPendingNow).toContain("samantha: pending 1개");
+    const unassignedOnlyNow = nowReport({
+      runs: [],
+      tasks: [],
+      actions: [],
+      orchestrationRequests: [
+        {
+          ...orchestrationRequest,
+          ancestry: { mode: "unassigned", workItemId: "request-unassigned-1", reason: "BK has not selected a project yet" },
+        },
+        {
+          ...orchestrationRequest,
+          id: "request-unassigned-2",
+          ancestry: { mode: "unassigned", workItemId: "request-unassigned-2", reason: "BK has not selected a project yet" },
+        },
+      ],
+    });
+    expect(unassignedOnlyNow).toContain("원격에서 보낼 명령:");
+    expect(unassignedOnlyNow).toContain("- 없음");
+    expect(unassignedOnlyNow).toContain("로컬: `bun run samantha orchestrator:current`");
+    expect(unassignedOnlyNow).not.toContain("위 목록의 명령을 그대로 보내세요.");
     expect(nowReport({ runs: [], tasks: [], actions: [], orchestratorPlans: [orchestratorPlan] })).toContain(
       "오케스트레이터 계획이 생성되어 검토를 기다리고 있습니다.",
     );

@@ -58,6 +58,11 @@ When a recovery request produces a passing materialized plan, result reports say
 
 Telegram is intentionally small and is an adapter for notification, approval, short feedback, and status checks. The routine surface is `/work`, `/plan`, `/plan_current`, `/approve`, `/answer`, `/revise`, `/cancel`, `/go`, `/recover`, `/now`, `/check`, and `/problems`. Older proposal/draft/task/action/run id commands are no longer normal Telegram operations; they return deprecated-command guidance and point back to the orchestrator flow. Local CLI, dashboard, and inbox commands remain available for deeper operation, debugging, and recovery.
 
+The user-facing workflow contract is documented in
+[USER_WORKFLOW.md](USER_WORKFLOW.md). Architecture changes should preserve that
+state -> BK decision -> Samantha action -> next state shape across Telegram,
+CLI, and dashboard surfaces.
+
 Telegram notifications are compact outbox reports. On the active automation host, `ceo:notify` runs periodically, writes a remote outbox CEO summary, and records generation in `state/ceo-reports.jsonl`; `telegram:reply` delivers it through the existing Telegram reply adapter and records delivery in `state/telegram-replies.json`. Telegram can approve only the single current plan-approval decision through `/approve`; ambiguous or multiple pending decisions redirect BK back to `/now`, CLI, or dashboard. Telegram never accepts shell commands, repo paths, or task/action/run/decision ids as workflow inputs.
 
 The Phase 6 multi-project operations path is implemented. Samantha now treats

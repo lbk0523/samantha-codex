@@ -21,6 +21,7 @@ import type { RunLifecycleRecord } from "./run-lifecycle-store";
 import type { TaskDraftRecord } from "./task-draft-store";
 import { buildOperatingSurfaceView } from "./operating-surface";
 import { buildCeoRanking, type CeoRanking } from "./ceo-ranking";
+import { currentOrchestratorPlanNeedsRecovery } from "./orchestrator-recovery";
 import { agentRoleForId, roleOutcomeSummary } from "./role-reporting";
 import {
   buildProjectQueueSnapshot,
@@ -208,10 +209,6 @@ function planUpdatedAt(plan: OrchestratorPlanRecord): string {
     plan.completedAt ??
     plan.createdAt
   );
-}
-
-function planNeedsRecovery(plan: OrchestratorPlanRecord): boolean {
-  return plan.status === "failed" || Boolean(plan.synthesisFailure) || Boolean(plan.synthesis && plan.synthesis.outcome !== "pass");
 }
 
 function decisionUpdatedAt(decision: DecisionItem): string {
@@ -678,7 +675,9 @@ export function buildCeoStatusSnapshot(input: BuildCeoStatusSnapshotInput = {}):
   const failedRuns = runs.filter(
     (run) => !run.pass && !resolvedTaskIds.has(run.taskId) && !archivedTaskIds.has(run.taskId),
   );
-  const failedPlans = orchestratorPlans.filter((plan) => planNeedsRecovery(plan) && !resolvedPlanIds.has(plan.id));
+  const failedPlans = orchestratorPlans.filter(
+    (plan) => currentOrchestratorPlanNeedsRecovery(plan, orchestratorPlans) && !resolvedPlanIds.has(plan.id),
+  );
   const planById = new Map(orchestratorPlans.map((plan) => [plan.id, plan]));
   const blockedTasks = tasks.filter((task) => task.status === "blocked" || task.status === "failed");
 

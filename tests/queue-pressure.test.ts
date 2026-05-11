@@ -165,6 +165,69 @@ describe("queue pressure budget enforcement", () => {
     expect(formatQueuePressureGuidance(pressure).join("\n")).toContain("/approve project:samantha");
   });
 
+  test("superseded plan approval decisions do not keep queue pressure stuck", () => {
+    const staleDecision = createDecisionItem({
+      ancestry,
+      title: "Approve stale plan",
+      prompt: "Approve before materialization.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-stale" },
+      options: ["approve", "revise", "cancel"],
+      createdAt: "2026-05-10T01:05:00.000Z",
+    });
+    const pressure = buildQueuePressureSnapshot({
+      decisions: [staleDecision],
+      plans: [
+        {
+          schemaVersion: 1,
+          id: "plan-stale",
+          requestId: "request-stale",
+          status: "superseded",
+          createdAt: "2026-05-10T01:04:00.000Z",
+          supersededAt: "2026-05-10T01:06:00.000Z",
+        },
+      ],
+    }, { projectId: "samantha" });
+    const admission = decideQueueAdmission({ pressure, subjectKind: "request" });
+
+    expect(pressure.metrics.pendingBkDecisions).toBe(0);
+    expect(pressure.pressureClass).toBe("normal");
+    expect(admission.decision).toBe("accept");
+  });
+
+  test("later plan progress clears stale failed plan recovery pressure", () => {
+    const pressure = buildQueuePressureSnapshot({
+      plans: [
+        {
+          schemaVersion: 1,
+          id: "plan-failed-parse",
+          ancestry,
+          requestId: "request-retry",
+          status: "failed",
+          createdAt: "2026-05-10T01:01:00.000Z",
+          completedAt: "2026-05-10T01:02:00.000Z",
+          failure: "JSON Parse error: Unrecognized token '\\'",
+        },
+        {
+          schemaVersion: 1,
+          id: "plan-later-reviewable",
+          ancestry,
+          requestId: "request-retry",
+          status: "planned",
+          createdAt: "2026-05-10T01:03:00.000Z",
+          completedAt: "2026-05-10T01:04:00.000Z",
+        },
+      ],
+    }, { projectId: "samantha" });
+    const admission = decideQueueAdmission({ pressure, subjectKind: "request" });
+
+    expect(pressure.metrics.failedPlans).toBe(0);
+    expect(pressure.metrics.recoveryNeeds).toBe(0);
+    expect(pressure.pressureClass).toBe("normal");
+    expect(admission.decision).toBe("accept");
+  });
+
   test("pressure guidance turns pending request pressure into concrete Telegram actions", () => {
     const pressure = buildQueuePressureSnapshot({
       requests: [

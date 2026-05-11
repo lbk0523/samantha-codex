@@ -15,6 +15,10 @@ Status: living user guide.
 이 문서는 architecture나 phase 문서를 대체하지 않는다. 대신 "지금 Samantha로
 무엇을 해야 하지?"에 답하는 첫 진입점이다.
 
+사용자 관점의 canonical workflow contract는
+[USER_WORKFLOW.md](USER_WORKFLOW.md)에 둔다. 이 playbook은 그 contract를
+실제로 운영할 때 필요한 명령, safety gate, host 절차를 모은다.
+
 ## 핵심 모델
 
 Samantha는 상주 LLM 대화방도 아니고 Telegram-first bot도 아니다. Samantha는
@@ -51,6 +55,19 @@ bun run samantha ceo:status
 ```text
 /now
 ```
+
+## Canonical workflow
+
+정상 사용자 journey는 명령 목록이 아니라 이 흐름이다.
+
+```text
+상태 확인 -> 필요한 BK 결정 -> Samantha state transition -> 다음 상태 확인
+```
+
+새 작업, 계획 검토, 승인/수정/취소, 실행 대기, 실패/복구, queue pressure 해소의
+상태별 contract는 [USER_WORKFLOW.md](USER_WORKFLOW.md)를 기준으로 한다.
+Telegram은 compact next action을 전달하고, CLI/dashboard는 긴 검토와 복구를
+담당한다. 이 원칙을 어기면서 Telegram 명령을 늘리지 않는다.
 
 ## Telegram 명령어 빠른 참조
 
@@ -463,6 +480,7 @@ Authority가 확장된다면 dogfood 전에 governance, test, docs를 먼저 추
 
 이 playbook이 얕을 때 읽을 문서:
 
+- [USER_WORKFLOW.md](USER_WORKFLOW.md)
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [NORTH_STAR.md](NORTH_STAR.md)
 - [REMOTE_ADAPTERS.md](REMOTE_ADAPTERS.md)

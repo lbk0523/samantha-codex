@@ -14,6 +14,7 @@ import type { RunSummary } from "./ledger";
 import type { OpsSnapshot } from "./ops-diagnostics";
 import type { OrchestratorPlanBlocker } from "./orchestrator-blockers";
 import type { OrchestrationRequestRecord, OrchestratorPlanRecord } from "./orchestrator-store";
+import { currentOrchestratorPlanNeedsRecovery } from "./orchestrator-recovery";
 import type {
   QueueAdmissionDecision,
   QueueAdmissionRecord,
@@ -122,16 +123,21 @@ function activeAction(action: RemoteActionRecord): boolean {
   return action.status === "pending" || action.status === "waiting" || action.status === "approved" || action.status === "running";
 }
 
-function planNeedsRecovery(plan: OrchestratorPlanRecord): boolean {
-  return plan.status === "failed" || Boolean(plan.synthesisFailure) || Boolean(plan.synthesis && plan.synthesis.outcome !== "pass");
-}
-
 function requestDeferred(request: OrchestrationRequestRecord): boolean {
   return request.status === "pending_plan" && request.admission !== undefined && request.admission.decision !== "accept";
 }
 
 function actionNeedsRecovery(action: RemoteActionRecord): boolean {
   return action.status === "failed" || action.result?.pass === false;
+}
+
+function decisionStillNeedsBk(decision: DecisionItem, plans: OrchestratorPlanRecord[]): boolean {
+  if (decision.status !== "pending") return false;
+  if (decision.subject?.type !== "orchestrator_plan") return true;
+
+  const plan = plans.find((candidate) => candidate.id === decision.subject?.id);
+  if (!plan) return true;
+  return plan.status === "planned" || plan.status === "questions";
 }
 
 function lifecycleOpen(lifecycle: RunLifecycleRecord): boolean {
@@ -218,6 +224,7 @@ function mergeBudgetPressure(input: {
 }
 
 export function buildQueuePressureSnapshot(input: QueuePressureInput = {}, options: { projectId?: string; budgetContext?: BudgetEvaluationContext } = {}): QueuePressureSnapshot {
+  const allPlans = input.plans ?? [];
   const requests = filterProject(input.requests, options.projectId);
   const plans = filterProject(input.plans, options.projectId);
   const decisions = filterProject(input.decisions, options.projectId);
@@ -239,14 +246,15 @@ export function buildQueuePressureSnapshot(input: QueuePressureInput = {}, optio
   const projectPlanIds = new Set(plans.map((plan) => plan.id));
   const projectBlockers = options.projectId ? blockers.filter((blocker) => projectPlanIds.has(blocker.planId)) : blockers;
   const unsafeHostIssues = (input.ops?.issues ?? []).filter((issue) => issue.severity === "unsafe_to_continue").length;
-  const failedPlans = plans.filter(planNeedsRecovery).length;
+  const failedPlans = plans.filter((plan) => currentOrchestratorPlanNeedsRecovery(plan, allPlans)).length;
   const failedRuns = runs.filter((run) => !run.pass).length;
   const failedActions = actions.filter(actionNeedsRecovery).length;
+  const currentPendingDecisions = decisions.filter((decision) => decisionStillNeedsBk(decision, allPlans));
 
   const metrics: QueuePressureMetrics = {
     pendingRequests: requests.filter((request) => request.status === "pending_plan").length,
     deferredRequests: requests.filter(requestDeferred).length,
-    pendingBkDecisions: decisions.filter((decision) => decision.status === "pending").length,
+    pendingBkDecisions: currentPendingDecisions.length,
     taskDrafts: taskDrafts.filter((draft) => draft.status === "drafted").length,
     activeTasks: tasks.filter(activeTask).length,
     activeActions: actions.filter(activeAction).length,

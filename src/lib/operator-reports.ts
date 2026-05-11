@@ -74,6 +74,26 @@ function remoteNotificationText(value: string): string {
     .replace(/(?:\/[A-Za-z0-9._-]+){2,}/g, "<local path>");
 }
 
+function remoteStatusItemLabel(item: { kind: string; title: string; status: string }): string {
+  const title = remoteNotificationText(item.title);
+  if (title && title !== "해당 항목") return title;
+  const kindLabels: Record<string, string> = {
+    action: "worker action",
+    diagnostic: "diagnostic",
+    orchestration_request: "work request",
+    orchestrator_plan: "plan",
+    run: "worker run",
+    task: "task",
+  };
+  return `${kindLabels[item.kind] ?? item.kind} ${item.status}`;
+}
+
+function remoteActionLabelForNotification(label: string, blocker: { kind: string; title: string; status: string } | undefined): string {
+  const safe = remoteNotificationText(label);
+  if (!blocker || !safe.includes("해당 항목")) return safe;
+  return safe.replace("해당 항목", remoteStatusItemLabel(blocker));
+}
+
 function code(value: string): string {
   return `\`${oneLine(value).replace(/`/g, "'")}\``;
 }
@@ -157,6 +177,25 @@ function currentRequestAmbiguityReport(input: { requests: OrchestrationRequestRe
   const projectLines = [...byProject.entries()].flatMap(([projectId, requests]) =>
     currentRequestProjectSummary({ projectId, requests }),
   );
+  if (projectLines.length === 0) {
+    return [
+      "# now",
+      "",
+      "여러 pending 작업 요청이 있지만 모두 프로젝트가 없어 Telegram에서 안전한 계획 명령을 만들 수 없습니다.",
+      "",
+      "원격에서 보낼 명령:",
+      "- 없음",
+      "",
+      "이유:",
+      `- project 없는 pending 요청 ${unassigned.length}개는 ${code("/plan <project>")} 대상이 불명확합니다.`,
+      "- Samantha는 내부 request id를 Telegram workflow로 받지 않습니다.",
+      "",
+      "다음 액션:",
+      `- 로컬 CLI/dashboard에서 요청 출처를 확인하고 project가 있는 새 요청으로 다시 제출하거나 정리하세요.`,
+      `- 로컬: ${code("bun run samantha orchestrator:current")}`,
+      `- 운영 이상 진단: ${code("/problems")}`,
+    ].join("\n");
+  }
   return [
     "# now",
     "",
@@ -167,7 +206,8 @@ function currentRequestAmbiguityReport(input: { requests: OrchestrationRequestRe
     unassigned.length ? `- unassigned: pending ${unassigned.length}개 - 로컬 CLI 또는 dashboard에서 출처 확인` : "",
     "",
     "다음 액션:",
-    `- 위 목록의 명령을 그대로 보내세요.`,
+    `- 위 목록의 프로젝트별 명령을 그대로 보내세요.`,
+    unassigned.length ? `- unassigned 요청은 로컬 CLI/dashboard에서 출처를 확인하세요.` : "",
     `- 전체 상태 확인: ${code("/check")}`,
   ].filter(Boolean).join("\n");
 }
@@ -1538,6 +1578,10 @@ export function ceoNotificationReport(snapshot: CeoStatusSnapshot): string {
   const decision = snapshot.needsDecision[0];
   const top = snapshot.ranking?.top;
   const nextCommand = view.primaryAction.telegramCommand ?? "/check";
+  const blocker = snapshot.blocked[0];
+  const recoveryBlockerWithoutDecision = Boolean(blocker && !decision);
+  const primaryCommand = recoveryBlockerWithoutDecision ? "/check" : nextCommand;
+  const detailCommand = recoveryBlockerWithoutDecision && nextCommand !== "/check" ? nextCommand : undefined;
   const canApproveDecision = nextCommand === "/approve";
   const isBlockerClarification = decision?.decisionKind === "blocker_clarification";
   const risks = snapshot.risks.slice(0, 3).map(remoteNotificationText);
@@ -1547,18 +1591,21 @@ export function ceoNotificationReport(snapshot: CeoStatusSnapshot): string {
     `상태: ${snapshot.overall}`,
     `핵심: ${remoteNotificationText(view.headline)}`,
     `요약: ${view.summary}`,
-    top ? `추천: ${remoteNotificationText(view.primaryAction.label)}` : "",
+    top ? `추천: ${remoteActionLabelForNotification(view.primaryAction.label, blocker)}` : "",
     top ? `추천 근거: ${remoteNotificationText(view.primaryAction.reason)}` : "",
     top ? `Ranking: ${top.signal} score=${top.score}` : "",
     decision ? `결정 필요: ${remoteNotificationText(decision.title)}` : "",
     decision ? `이유: ${remoteNotificationText(decision.reason)}` : "",
     "",
     "다음 액션:",
-    `- 텔레그램: ${code(nextCommand)}`,
+    `- 텔레그램: ${code(primaryCommand)}`,
+    detailCommand ? `- 상세 진단: ${code(detailCommand)}` : "",
     decision && canApproveDecision ? `- 수정 필요 시: ${code("/revise <피드백>")}` : "",
     decision && isBlockerClarification ? `- 계획 변경 필요 시: ${code("/revise <피드백>")}` : "",
     decision ? `- 취소: ${code("/cancel")}` : "",
-    snapshot.blocked.length ? `- 현재 블로커: ${remoteNotificationText(snapshot.blocked[0]?.title ?? "확인 필요")}` : "",
+    blocker ? `- 현재 블로커: ${remoteStatusItemLabel(blocker)}` : "",
+    blocker?.detail ? `- 블로커 이유: ${remoteNotificationText(blocker.detail)}` : "",
+    snapshot.blocked.length > 1 ? `- 추가 블로커: ${snapshot.blocked.length - 1}건` : "",
     snapshot.historicalFailures.length ? `- 히스토리 실패: ${snapshot.historicalFailures.length}건은 CLI 또는 dashboard에서 확인` : "",
     "",
     "리스크:",
@@ -2390,12 +2437,87 @@ export function remoteActionResultReport(input: {
     .join("\n");
 }
 
+type StatusReportMode = "compact" | "full";
+
+function compactStatusReport(input: {
+  heartbeat?: DaemonHeartbeat;
+  pendingInboxCount: number;
+  ops?: OpsSnapshot;
+  projectId?: string;
+  runs: RunSummary[];
+  requests?: OrchestrationRequestRecord[];
+  actionCounts?: { pending: number; waiting: number; approved: number; running: number; failed: number };
+  failureCount: number;
+  projectQueues: ReturnType<typeof buildProjectQueueSnapshot>;
+  ceoRankingSnapshot: CeoStatusSnapshot;
+}): string {
+  const view = buildOperatingSurfaceView(input.ceoRankingSnapshot);
+  const pressure = input.projectQueues.pressure;
+  const unassignedPendingRequests = input.projectId
+    ? 0
+    : (input.requests ?? []).filter((request) => request.status === "pending_plan" && !recordProjectId(request)).length;
+  const latest = input.runs.at(-1);
+  const replyFailures = input.ops?.telegram.replyState?.failures?.length ?? 0;
+  const pressureReasons = pressure.reasons.slice(0, 4);
+  const pressureGuidance = formatQueuePressureGuidance(pressure)
+    .slice(1)
+    .filter(Boolean)
+    .slice(0, 4);
+  const actionSummary = input.actionCounts
+    ? `pending=${input.actionCounts.pending} waiting=${input.actionCounts.waiting} approved=${input.actionCounts.approved} running=${input.actionCounts.running} failed=${input.actionCounts.failed}`
+    : "unknown";
+
+  return [
+    "# status",
+    "",
+    input.projectId ? `Project filter: ${input.projectId}` : "",
+    `상태: ${input.ceoRankingSnapshot.overall}`,
+    "",
+    "지금 할 일:",
+    `- 추천: ${remoteNotificationText(view.primaryAction.label)}`,
+    `- 이유: ${remoteNotificationText(view.primaryAction.reason)}`,
+    view.primaryAction.telegramCommand ? `- Telegram: ${code(view.primaryAction.telegramCommand)}` : "",
+    view.primaryAction.localCommand ? `- Local: ${code(view.primaryAction.localCommand)}` : "",
+    "",
+    "막힌 이유:",
+    `- pressure=${code(pressure.pressureClass)}`,
+    ...(pressureReasons.length ? pressureReasons.map((reason) => `- ${telegramSafeLine(reason)}`) : ["- 없음"]),
+    unassignedPendingRequests
+      ? `- project 없는 pending 요청=${unassignedPendingRequests}: Telegram에서 안전한 ${code("/plan <project>")} 명령을 만들 수 없습니다.`
+      : "",
+    "",
+    "해결:",
+    ...(unassignedPendingRequests
+      ? [
+          "- project 없는 요청은 로컬 CLI/dashboard에서 출처를 확인하고, project가 있는 새 요청으로 다시 제출하거나 정리하세요.",
+          `- Local: ${code("bun run samantha orchestrator:current")}`,
+        ]
+      : []),
+    ...(pressureGuidance.length ? pressureGuidance : ["- 현재 queue pressure로 막힌 항목은 없습니다."]),
+    "",
+    "운영 신호:",
+    `- daemon=${input.heartbeat?.status ?? "missing"} pending_inbox=${input.pendingInboxCount}`,
+    input.ops
+      ? `- telegram_reply_failures=${replyFailures} unsent_outbox=${input.ops.queues.unsentRemoteOutboxCount} ops=${input.ops.ok ? "ok" : "needs_attention"}`
+      : "- telegram=unknown",
+    `- actions: ${actionSummary}`,
+    `- runs: total=${input.runs.length} non_passing=${input.failureCount}${latest ? ` latest=${latest.outcome}` : ""}`,
+    "",
+    "긴 진단:",
+    `- Runtime/Telegram 문제: ${code("/problems")}`,
+    "- 상세 queue/run 검토: CLI 또는 dashboard",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
 export function statusReport(input: {
   runs: RunSummary[];
   heartbeat?: DaemonHeartbeat;
   pendingInboxCount: number;
   ops?: OpsSnapshot;
   projectId?: string;
+  mode?: StatusReportMode;
   proposals?: ProposalRecord[];
   drafts?: TaskDraftRecord[];
   requests?: OrchestrationRequestRecord[];
@@ -2473,6 +2595,21 @@ export function statusReport(input: {
   const heartbeat = input.heartbeat
     ? `${input.heartbeat.status} pid=${input.heartbeat.pid} updated=${input.heartbeat.updatedAt} processed=${input.heartbeat.processedTotal}`
     : "missing";
+
+  if (input.mode === "compact") {
+    return compactStatusReport({
+      runs: input.runs,
+      heartbeat: input.heartbeat,
+      pendingInboxCount: input.pendingInboxCount,
+      ops: input.ops,
+      projectId: input.projectId,
+      requests: input.requests,
+      actionCounts,
+      failureCount,
+      projectQueues,
+      ceoRankingSnapshot,
+    });
+  }
 
   return [
     "# status",

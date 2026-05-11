@@ -190,6 +190,34 @@ describe("CEO status snapshot", () => {
     expect(snapshot.nextAction).toMatchObject({ kind: "plan", command: "/plan", targetId: "request-1" });
   });
 
+  test("later plan progress clears stale failed plan recovery blockers", () => {
+    const failedPlan: OrchestratorPlanRecord = {
+      ...plan,
+      id: "plan-failed-parse",
+      status: "failed",
+      createdAt: "2026-05-07T09:01:00.000Z",
+      completedAt: "2026-05-07T09:02:00.000Z",
+      payload: undefined,
+      failure: "JSON Parse error: Unrecognized token '\\'",
+    };
+    const laterPlan: OrchestratorPlanRecord = {
+      ...plan,
+      id: "plan-later-reviewable",
+      status: "planned",
+      createdAt: "2026-05-07T09:03:00.000Z",
+      completedAt: "2026-05-07T09:04:00.000Z",
+    };
+    const snapshot = buildCeoStatusSnapshot({
+      generatedAt: "2026-05-07T09:05:00.000Z",
+      orchestratorPlans: [failedPlan, laterPlan],
+    });
+
+    expect(snapshot.overall).toBe("needs_decision");
+    expect(snapshot.blocked).toEqual([]);
+    expect(snapshot.needsDecision).toContainEqual(expect.objectContaining({ id: "plan-later-reviewable" }));
+    expect(snapshot.risks.join("\n")).not.toContain("JSON Parse error");
+  });
+
   test("project filter keeps selected project status while preserving cross-project blockers and legacy labels", () => {
     const samanthaAncestry = {
       mode: "assigned" as const,

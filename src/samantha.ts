@@ -2557,6 +2557,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       heartbeat: ops.health.heartbeat,
       pendingInboxCount: ops.queues.pendingInboxCount,
       ops,
+      mode: "compact",
       proposals: await new ProposalStore(proposalsPath(args)).list(),
       drafts: await new TaskDraftStore(taskDraftsPath(args)).list(),
       requests: await new OrchestrationRequestStore(orchestrationRequestsPath(args)).list(),
