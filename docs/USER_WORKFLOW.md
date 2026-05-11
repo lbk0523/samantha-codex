@@ -207,6 +207,9 @@ Applied now:
    route current blocker review through `/check` before detailed `/problems`.
 7. Treat failed plan attempts superseded by later plan progress as historical
    audit records, not current recovery blockers.
+8. Make `/check` say `Telegram: 없음` when the current blocker cannot be safely
+   resolved remotely, and give one local fallback instead of several competing
+   remote commands.
 
 Future narrow code alignment, only if dogfood shows mismatch:
 

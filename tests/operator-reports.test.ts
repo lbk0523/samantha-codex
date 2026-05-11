@@ -550,6 +550,39 @@ describe("operator reports", () => {
     expect(compactStatus).toContain("운영 신호:");
     expect(compactStatus).not.toContain("Budget audit:");
     expect(compactStatus).not.toContain("Project queues:");
+    const ambiguousCompactStatus = statusReport({
+      runs: [],
+      pendingInboxCount: 0,
+      mode: "compact",
+      requests: [
+        {
+          ...orchestrationRequest,
+          ancestry: { mode: "unassigned", workItemId: "request-unassigned-1", reason: "BK has not selected a project yet" },
+        },
+        {
+          ...orchestrationRequest,
+          id: "request-unassigned-2",
+          ancestry: { mode: "unassigned", workItemId: "request-unassigned-2", reason: "BK has not selected a project yet" },
+        },
+      ],
+      plans: [
+        {
+          schemaVersion: 1,
+          id: "plan-parse-failed",
+          requestId: "request-old",
+          status: "failed",
+          createdAt: "2026-05-03T09:00:00.000Z",
+          failure: "JSON Parse error: Unrecognized token '\\'",
+        },
+      ],
+    });
+    expect(ambiguousCompactStatus).toContain(
+      "Primary: CLI/dashboard에서 recovery blocker와 project 없는 pending 요청을 먼저 정리하세요.",
+    );
+    expect(ambiguousCompactStatus).toContain("Telegram: 없음");
+    expect(ambiguousCompactStatus).toContain("현재 블로커는 plan failed");
+    expect(ambiguousCompactStatus).toContain("Local: `bun run samantha ceo:status`");
+    expect(ambiguousCompactStatus).not.toContain("/now에서 project별 /plan");
     expect(
       statusReport({
         runs: [passRun],

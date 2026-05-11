@@ -76,7 +76,6 @@ function remoteNotificationText(value: string): string {
 
 function remoteStatusItemLabel(item: { kind: string; title: string; status: string }): string {
   const title = remoteNotificationText(item.title);
-  if (title && title !== "해당 항목") return title;
   const kindLabels: Record<string, string> = {
     action: "worker action",
     diagnostic: "diagnostic",
@@ -85,6 +84,7 @@ function remoteStatusItemLabel(item: { kind: string; title: string; status: stri
     run: "worker run",
     task: "task",
   };
+  if (title && title !== "해당 항목" && !/^(?:request|plan|action|draft|proposal|run|task|decision)-/i.test(title)) return title;
   return `${kindLabels[item.kind] ?? item.kind} ${item.status}`;
 }
 
@@ -2439,6 +2439,35 @@ export function remoteActionResultReport(input: {
 
 type StatusReportMode = "compact" | "full";
 
+function compactPrimaryAction(input: {
+  view: ReturnType<typeof buildOperatingSurfaceView>;
+  snapshot: CeoStatusSnapshot;
+  unassignedPendingRequests: number;
+  assignedPendingRequests: number;
+}): { label: string; reason: string; telegram?: string; local?: string } {
+  const blocker = input.snapshot.blocked[0];
+  if (blocker && input.unassignedPendingRequests > 0) {
+    return {
+      label: "CLI/dashboard에서 recovery blocker와 project 없는 pending 요청을 먼저 정리하세요.",
+      reason: `현재 블로커는 ${remoteStatusItemLabel(blocker)}이고, project 없는 pending 요청 ${input.unassignedPendingRequests}개는 Telegram에서 안전하게 선택할 수 없습니다.`,
+      local: "bun run samantha ceo:status",
+    };
+  }
+  if (input.unassignedPendingRequests > 0 && input.assignedPendingRequests === 0) {
+    return {
+      label: "CLI/dashboard에서 project 없는 pending 요청을 정리하세요.",
+      reason: `pending 요청 ${input.unassignedPendingRequests}개 모두 project가 없어 Telegram에서 안전한 /plan 또는 /drop 대상을 만들 수 없습니다.`,
+      local: "bun run samantha orchestrator:current",
+    };
+  }
+  return {
+    label: remoteActionLabelForNotification(input.view.primaryAction.label, blocker),
+    reason: remoteNotificationText(input.view.primaryAction.reason),
+    telegram: input.view.primaryAction.telegramCommand,
+    local: input.view.primaryAction.localCommand,
+  };
+}
+
 function compactStatusReport(input: {
   heartbeat?: DaemonHeartbeat;
   pendingInboxCount: number;
@@ -2456,12 +2485,22 @@ function compactStatusReport(input: {
   const unassignedPendingRequests = input.projectId
     ? 0
     : (input.requests ?? []).filter((request) => request.status === "pending_plan" && !recordProjectId(request)).length;
+  const assignedPendingRequests = input.projectId
+    ? (input.requests ?? []).filter((request) => request.status === "pending_plan").length
+    : (input.requests ?? []).filter((request) => request.status === "pending_plan" && recordProjectId(request)).length;
+  const primaryAction = compactPrimaryAction({
+    view,
+    snapshot: input.ceoRankingSnapshot,
+    unassignedPendingRequests,
+    assignedPendingRequests,
+  });
   const latest = input.runs.at(-1);
   const replyFailures = input.ops?.telegram.replyState?.failures?.length ?? 0;
   const pressureReasons = pressure.reasons.slice(0, 4);
   const pressureGuidance = formatQueuePressureGuidance(pressure)
     .slice(1)
     .filter(Boolean)
+    .filter((line) => !(unassignedPendingRequests > 0 && line.includes("pending requests=")))
     .slice(0, 4);
   const actionSummary = input.actionCounts
     ? `pending=${input.actionCounts.pending} waiting=${input.actionCounts.waiting} approved=${input.actionCounts.approved} running=${input.actionCounts.running} failed=${input.actionCounts.failed}`
@@ -2474,10 +2513,10 @@ function compactStatusReport(input: {
     `상태: ${input.ceoRankingSnapshot.overall}`,
     "",
     "지금 할 일:",
-    `- 추천: ${remoteNotificationText(view.primaryAction.label)}`,
-    `- 이유: ${remoteNotificationText(view.primaryAction.reason)}`,
-    view.primaryAction.telegramCommand ? `- Telegram: ${code(view.primaryAction.telegramCommand)}` : "",
-    view.primaryAction.localCommand ? `- Local: ${code(view.primaryAction.localCommand)}` : "",
+    `- Primary: ${primaryAction.label}`,
+    `- 이유: ${primaryAction.reason}`,
+    primaryAction.telegram ? `- Telegram: ${code(primaryAction.telegram)}` : "- Telegram: 없음",
+    primaryAction.local ? `- Local: ${code(primaryAction.local)}` : "",
     "",
     "막힌 이유:",
     `- pressure=${code(pressure.pressureClass)}`,
