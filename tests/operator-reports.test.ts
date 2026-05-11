@@ -377,7 +377,7 @@ describe("operator reports", () => {
 
     expect(report).toContain("텔레그램: `/check`");
     expect(report).toContain("상세 진단: `/problems`");
-    expect(report).toContain("현재 블로커: plan failed");
+    expect(report).toContain("현재 블로커: 계획 실패");
     expect(report).toContain("블로커 이유: JSON Parse error");
     expect(report).not.toContain("현재 블로커: 해당 항목");
   });
@@ -585,10 +585,10 @@ describe("operator reports", () => {
       ],
     });
     expect(ambiguousCompactStatus).toContain(
-      "Primary: CLI/dashboard에서 recovery blocker와 project 없는 pending 요청을 먼저 정리하세요.",
+      "Primary: CLI/dashboard에서 복구 필요 항목과 프로젝트 없는 대기 요청을 먼저 정리하세요.",
     );
     expect(ambiguousCompactStatus).toContain("Telegram: 없음");
-    expect(ambiguousCompactStatus).toContain("현재 블로커는 plan failed");
+    expect(ambiguousCompactStatus).toContain("현재 블로커는 계획 실패");
     expect(ambiguousCompactStatus).toContain("Local: `bun run samantha ceo:status`");
     expect(ambiguousCompactStatus).toContain("비용 기록 미확인 1건");
     expect(ambiguousCompactStatus).toContain("지금 Telegram에서 처리할 일은 아니고");

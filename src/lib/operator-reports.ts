@@ -79,13 +79,25 @@ function remoteStatusItemLabel(item: { kind: string; title: string; status: stri
   const kindLabels: Record<string, string> = {
     action: "worker action",
     diagnostic: "diagnostic",
-    orchestration_request: "work request",
-    orchestrator_plan: "plan",
+    orchestration_request: "작업 요청",
+    orchestrator_plan: "계획",
     run: "worker run",
-    task: "task",
+    task: "작업",
+  };
+  const statusLabels: Record<string, string> = {
+    approved: "승인됨",
+    blocked: "막힘",
+    completed: "완료",
+    failed: "실패",
+    materialized: "실행 준비됨",
+    pending: "대기",
+    planned: "검토 대기",
+    questions: "질문 대기",
+    running: "실행 중",
+    waiting: "대기",
   };
   if (title && title !== "해당 항목" && !/^(?:request|plan|action|draft|proposal|run|task|decision)-/i.test(title)) return title;
-  return `${kindLabels[item.kind] ?? item.kind} ${item.status}`;
+  return `${kindLabels[item.kind] ?? item.kind} ${statusLabels[item.status] ?? item.status}`;
 }
 
 function remoteActionLabelForNotification(label: string, blocker: { kind: string; title: string; status: string } | undefined): string {
@@ -2448,15 +2460,15 @@ function compactPrimaryAction(input: {
   const blocker = input.snapshot.blocked[0];
   if (blocker && input.unassignedPendingRequests > 0) {
     return {
-      label: "CLI/dashboard에서 recovery blocker와 project 없는 pending 요청을 먼저 정리하세요.",
-      reason: `현재 블로커는 ${remoteStatusItemLabel(blocker)}이고, project 없는 pending 요청 ${input.unassignedPendingRequests}개는 Telegram에서 안전하게 선택할 수 없습니다.`,
+      label: "CLI/dashboard에서 복구 필요 항목과 프로젝트 없는 대기 요청을 먼저 정리하세요.",
+      reason: `현재 블로커는 ${remoteStatusItemLabel(blocker)}이고, 프로젝트 없는 대기 요청 ${input.unassignedPendingRequests}개는 Telegram에서 안전하게 선택할 수 없습니다.`,
       local: "bun run samantha ceo:status",
     };
   }
   if (input.unassignedPendingRequests > 0 && input.assignedPendingRequests === 0) {
     return {
-      label: "CLI/dashboard에서 project 없는 pending 요청을 정리하세요.",
-      reason: `pending 요청 ${input.unassignedPendingRequests}개 모두 project가 없어 Telegram에서 안전한 /plan 또는 /drop 대상을 만들 수 없습니다.`,
+      label: "CLI/dashboard에서 프로젝트 없는 대기 요청을 정리하세요.",
+      reason: `대기 요청 ${input.unassignedPendingRequests}개 모두 프로젝트가 없어 Telegram에서 안전한 /plan 또는 /drop 대상을 만들 수 없습니다.`,
       local: "bun run samantha orchestrator:current",
     };
   }
@@ -2568,13 +2580,13 @@ function compactStatusReport(input: {
     `- queue 상태=${code(pressure.pressureClass)}`,
     ...(pressureReasons.length ? pressureReasons.map((reason) => `- ${compactPressureReason(reason)}`) : ["- 없음"]),
     unassignedPendingRequests
-      ? `- project 없는 pending 요청=${unassignedPendingRequests}: Telegram에서 안전한 ${code("/plan <project>")} 명령을 만들 수 없습니다.`
+      ? `- 프로젝트 없는 대기 요청 ${unassignedPendingRequests}건: Telegram에서 안전한 ${code("/plan <project>")} 명령을 만들 수 없습니다.`
       : "",
     "",
     "해결:",
     ...(unassignedPendingRequests
       ? [
-          "- project 없는 요청은 로컬 CLI/dashboard에서 출처를 확인하고, project가 있는 새 요청으로 다시 제출하거나 정리하세요.",
+          "- 프로젝트 없는 요청은 로컬 CLI/dashboard에서 출처를 확인하고, 프로젝트가 있는 새 요청으로 다시 제출하거나 정리하세요.",
           `- Local: ${code("bun run samantha orchestrator:current")}`,
         ]
       : []),
