@@ -781,6 +781,39 @@ function unblockCommandForPlan(plan: OrchestratorPlanRecord): string {
   return project ? `/unblock project:${project}` : "/unblock";
 }
 
+function unblockCommandForFailedPlan(request: OrchestrationRequestRecord, plan: OrchestratorPlanRecord): string {
+  const project = recordProjectId(plan) ?? recordProjectId(request);
+  return project ? `/unblock project:${project}` : "/unblock";
+}
+
+function planPayloadContractFailure(failure: string | undefined): boolean {
+  if (!failure) return false;
+  return [
+    "plans with questions must not include task proposals",
+    "plans with prerequisites or blockers must not include task proposals",
+    "plans with prerequisites or blockers must not include batches",
+  ].some((message) => failure.includes(message));
+}
+
+function failedPlanNextLines(request: OrchestrationRequestRecord, plan: OrchestratorPlanRecord): string[] {
+  const unblockCommand = unblockCommandForFailedPlan(request, plan);
+  const contractFailure = planPayloadContractFailure(plan.failure);
+  return [
+    "",
+    "지금 할 일:",
+    `- stale planning block 정리: ${code(unblockCommand)}`,
+    "",
+    "막힌 이유:",
+    contractFailure
+      ? "- BK 요청 문제가 아니라 Samantha 계획 payload가 내부 계약을 위반했습니다."
+      : "- 계획 생성이 실패했고 이 실패가 새 작업 진행을 막을 수 있습니다.",
+    "- 같은 요청 재시도는 block 정리 후 진행하세요.",
+    "",
+    "자세히 볼 때:",
+    `- 상태 확인: ${code("/now")}`,
+  ];
+}
+
 function clipText(text: string, maxLength = 3500): string {
   const trimmed = text.trim();
   if (trimmed.length <= maxLength) return trimmed;
@@ -1864,10 +1897,7 @@ export function orchestratorPlanReport(input: {
       recoveryPlanVerdictLine(request, plan),
       plan.failure ? `실패 이유: ${oneLine(plan.failure)}` : "",
       plan.command ? `exit: ${code(String(plan.command.exitCode))}` : "",
-      "",
-      "다음 액션:",
-      `- 요청을 보강해 다시 제출: ${code("/work <요청>")}`,
-      `- 상태 확인: ${code("/now")}`,
+      ...failedPlanNextLines(request, plan),
     ]
       .filter(Boolean)
       .join("\n");

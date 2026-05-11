@@ -80,6 +80,10 @@ describe("orchestrator agent prompt", () => {
     expect(prompt).toContain("Use plain plan `questions` for ambiguity found while drafting the current plan");
     expect(prompt).toContain("`orchestrator:question-draft` is only for an existing ambiguous blocker");
     expect(prompt).toContain("put it in `prerequisites` or `blockers` and leave `tasks` empty");
+    expect(prompt).toContain("If either array is non-empty, `tasks` and `batches` MUST be empty.");
+    expect(prompt).toContain("For report-only dogfood, readiness, or planning requests");
+    expect(prompt).toContain("active-host or Telegram runtime readiness is advisory risk/verification context");
+    expect(prompt).toContain("Put advisory preflight checks in `risks`, `assumptions`, `scope`, or task `instructions`");
     expect(prompt).toContain("Do not turn missing context, missing profile/root/verify data, or host-only runtime work into speculative worker tasks.");
     expect(prompt).toContain("Prefer the simplest safe approach first");
     expect(prompt).toContain("Put rejected paths in `rejectedAlternatives` as advisory context only");

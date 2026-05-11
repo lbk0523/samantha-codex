@@ -268,6 +268,39 @@ describe("operator reports", () => {
     expect(unblock).not.toContain("plan-");
   });
 
+  test("routes failed plan payload contract errors to unblock instead of request rewording", () => {
+    const ancestry = {
+      mode: "assigned" as const,
+      projectId: "samantha",
+      goalId: "goal-samantha-dogfood",
+      workItemId: "request-dogfood",
+    };
+    const report = orchestratorPlanReport({
+      request: {
+        ...orchestrationRequest,
+        id: "request-dogfood",
+        ancestry,
+        text: "samantha project 다음 dogfood 계획 수립",
+      },
+      plan: {
+        ...orchestratorPlan,
+        id: "plan-dogfood",
+        requestId: "request-dogfood",
+        ancestry,
+        status: "failed",
+        payload: undefined,
+        completedAt: "2026-05-11T12:37:10.000Z",
+        failure: "plans with prerequisites or blockers must not include task proposals",
+      },
+    });
+
+    expect(report).toContain("지금 할 일:");
+    expect(report).toContain("stale planning block 정리: `/unblock project:samantha`");
+    expect(report).toContain("BK 요청 문제가 아니라 Samantha 계획 payload가 내부 계약을 위반했습니다.");
+    expect(report).toContain("같은 요청 재시도는 block 정리 후 진행하세요.");
+    expect(report).not.toContain("요청을 보강해 다시 제출");
+  });
+
   test("normalizes deprecated command names from free-text report payloads", () => {
     const planWithDeprecatedText = {
       ...orchestratorPlan,
