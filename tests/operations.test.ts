@@ -358,6 +358,10 @@ describe("inbox and remote commands", () => {
       type: "orchestrator:recover-latest",
       args: { senderId: "bk" },
     });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/drop stale project:samantha" }, "bk")).toMatchObject({
+      type: "orchestrator:drop-pending",
+      args: { dropMode: "stale", projectId: "samantha" },
+    });
     expect(commandFromRemoteInput({ senderId: "bk", text: "/revise 구현 범위를 줄여줘" }, "bk")).toMatchObject({
       type: "orchestrator:revise-latest",
       args: {
@@ -799,10 +803,10 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const workReport = await readFile(join(outbox, "001-work.md"), "utf8");
     expect(workReport).toContain("저장된 요청: `request-work-now`");
-    expect(workReport).toContain("텔레그램: `/plan`");
+    expect(workReport).toContain("텔레그램: `/plan <project>`");
     const report = await readFile(join(outbox, "002-now.md"), "utf8");
     expect(report).toContain("작업 요청이 오케스트레이터 계획 생성을 기다리고 있습니다.");
-    expect(report).toContain("텔레그램: `/plan`");
+    expect(report).toContain("텔레그램: `/plan <project>`");
     expect(report).not.toContain("지금 바로 필요한 원격 액션은 없습니다.");
     const goReport = await readFile(join(outbox, "003-go.md"), "utf8");
     expect(goReport).toContain("작업 요청이 오케스트레이터 계획 생성을 기다리고 있습니다.");
@@ -2154,7 +2158,7 @@ describe("inbox and remote commands", () => {
     const report = await readFile(join(outbox, "001-revise.md"), "utf8");
     expect(report).toContain("# revise");
     expect(report).toContain("현재 계획을 폐기하고 수정 요청을 만들었습니다.");
-    expect(report).toContain("텔레그램: `/plan`");
+    expect(report).toContain("텔레그램: `/plan <project>`");
 
     const requests = await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).list();
     expect(requests.at(-1)).toMatchObject({
@@ -2165,7 +2169,7 @@ describe("inbox and remote commands", () => {
       status: "superseded",
       supersededByRequestId: requests.at(-1)?.id,
     });
-    expect(await readFile(join(outbox, "002-now.md"), "utf8")).toContain("텔레그램: `/plan`");
+    expect(await readFile(join(outbox, "002-now.md"), "utf8")).toContain("텔레그램: `/plan <project>`");
   });
 
   test("shows the current orchestrator plan without rerunning the orchestrator", async () => {
@@ -2527,7 +2531,8 @@ describe("inbox and remote commands", () => {
     expect(report).toContain("# recover");
     expect(report).toContain("복구 계획 요청을 만들었습니다.");
     expect(report).toContain("복구 대상: 실패 복구 대상 계획");
-    expect(report).toContain("텔레그램: `/plan`");
+    expect(report).toContain("복구 재요청: `/recover project:samantha`");
+    expect(report).toContain("복구 요청 정리: `/drop recovery project:samantha`");
     const requests = await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).list();
     const latestRequest = requests.at(-1);
     const recoveryText = String(latestRequest?.text ?? "");

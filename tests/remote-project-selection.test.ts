@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { hostname, tmpdir } from "node:os";
 import type { AgentProfile } from "../src/lib/contracts";
 import { createDecisionItem, DecisionStore } from "../src/lib/decision-store";
-import { OrchestratorPlanStore, type OrchestratorPlanPayload } from "../src/lib/orchestrator-store";
+import { OrchestrationRequestStore, OrchestratorPlanStore, type OrchestratorPlanPayload } from "../src/lib/orchestrator-store";
 import { commandFromRemoteInput } from "../src/lib/remote-command";
 import { createRoutineTriggerRecord } from "../src/lib/routine-trigger-store";
 
@@ -25,6 +25,15 @@ const agent: AgentProfile = {
       "subagent-driven-development",
     ],
   },
+};
+
+const orchestratorAgent: AgentProfile = {
+  ...agent,
+  id: "codex-orchestrator",
+  role: "spec",
+  writerClass: "non-writer",
+  worktreePolicy: "none",
+  mergePolicy: "none",
 };
 
 function ancestry(projectId: string, workItemId: string) {
@@ -88,6 +97,7 @@ async function setupRoot() {
     "utf8",
   );
   await writeFile(join(agents, "codex-worker.json"), `${JSON.stringify(agent, null, 2)}\n`, "utf8");
+  await writeFile(join(agents, "codex-orchestrator.json"), `${JSON.stringify(orchestratorAgent, null, 2)}\n`, "utf8");
   for (const projectId of ["samantha", "omht"]) {
     await writeFile(
       join(projects, `${projectId}.json`),
@@ -120,6 +130,23 @@ async function setupRoot() {
     );
   }
   return { root, inbox, outbox, archive, state, agents, projects };
+}
+
+async function writeFakeCodex(root: string, planPayload: OrchestratorPlanPayload): Promise<string> {
+  const path = join(root, "fake-codex");
+  await writeFile(
+    path,
+    [
+      "#!/usr/bin/env bun",
+      `const payload = ${JSON.stringify(planPayload)};`,
+      'const text = "계획 생성 완료\\n\\nORCHESTRATOR_PLAN: " + JSON.stringify(payload);',
+      'console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text } }));',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await chmod(path, 0o755);
+  return path;
 }
 
 async function seedPlan(input: { state: string; projectId: string; planId: string; createdAt: string }) {
@@ -343,9 +370,176 @@ describe("remote project selection guards", () => {
     expect(plan).toContain("/plan samantha");
     expect(plan).toContain("/plan omht");
     const now = await readFile(join(ctx.outbox, "002-now.md"), "utf8");
-    expect(now).toContain("여러 프로젝트에 현재 작업 요청");
-    expect(now).toContain("samantha: 계획 생성 `/plan samantha`");
-    expect(now).toContain("omht: 계획 생성 `/plan omht`");
+    expect(now).toContain("여러 pending 작업 요청");
+    expect(now).toContain("계획 생성: `/plan samantha`");
+    expect(now).toContain("계획 생성: `/plan omht`");
+  });
+
+  test("project-scoped plan selects latest normal request and leaves stale, unassigned, and recovery pending", async () => {
+    const ctx = await setupRoot();
+    const fakeCodex = await writeFakeCodex(ctx.root, payload("samantha", "samantha-task"));
+    await writeFile(
+      join(ctx.state, "orchestration-requests.jsonl"),
+      [
+        {
+          schemaVersion: 1,
+          id: "request-samantha-old",
+          ancestry: ancestry("samantha", "request-samantha-old"),
+          source: "remote",
+          text: "Old Samantha work",
+          status: "pending_plan",
+          createdAt: "2026-05-10T01:00:00.000Z",
+        },
+        {
+          schemaVersion: 1,
+          id: "request-unassigned",
+          ancestry: { mode: "unassigned", workItemId: "request-unassigned", reason: "BK has not selected a project yet" },
+          source: "remote",
+          text: "Unassigned work",
+          status: "pending_plan",
+          createdAt: "2026-05-10T01:01:00.000Z",
+        },
+        {
+          schemaVersion: 1,
+          id: "request-samantha-recovery",
+          ancestry: ancestry("samantha", "request-samantha-recovery"),
+          source: "remote",
+          text: "Recovery work",
+          status: "pending_plan",
+          recoveryOfPlanId: "plan-failed",
+          createdAt: "2026-05-10T01:02:00.000Z",
+        },
+        {
+          schemaVersion: 1,
+          id: "request-samantha-latest",
+          ancestry: ancestry("samantha", "request-samantha-latest"),
+          source: "remote",
+          text: "Latest Samantha work",
+          status: "pending_plan",
+          createdAt: "2026-05-10T01:03:00.000Z",
+        },
+      ].map((record) => JSON.stringify(record)).join("\n") + "\n",
+      "utf8",
+    );
+    await writeFile(
+      join(ctx.inbox, "001-plan-samantha.json"),
+      JSON.stringify({
+        type: "orchestrator:plan-latest",
+        args: { projectId: "samantha", receivedAt: "2026-05-10T01:04:00.000Z" },
+      }),
+      "utf8",
+    );
+
+    await runSamantha(ctx, ["inbox:process", `--codex-bin=${fakeCodex}`]);
+
+    const report = await readFile(join(ctx.outbox, "001-plan-samantha.md"), "utf8");
+    expect(report).toContain("계획을 만들었습니다.");
+    expect(report).toContain("보류 중인 이전 요청 1개");
+
+    const requests = await new OrchestrationRequestStore(join(ctx.state, "orchestration-requests.jsonl")).list();
+    expect(requests.find((request) => request.id === "request-samantha-latest")).toMatchObject({ status: "planned" });
+    expect(requests.find((request) => request.id === "request-samantha-old")).toMatchObject({ status: "pending_plan" });
+    expect(requests.find((request) => request.id === "request-unassigned")).toMatchObject({ status: "pending_plan" });
+    expect(requests.find((request) => request.id === "request-samantha-recovery")).toMatchObject({ status: "pending_plan" });
+  });
+
+  test("work coalesces duplicate project pending requests without exposing ids", async () => {
+    const ctx = await setupRoot();
+    await writeFile(
+      join(ctx.state, "orchestration-requests.jsonl"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "request-existing",
+        ancestry: ancestry("samantha", "request-existing"),
+        source: "remote",
+        text: "Same work",
+        status: "pending_plan",
+        createdAt: "2026-05-10T01:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(ctx.inbox, "001-work.json"),
+      JSON.stringify({
+        type: "orchestrator:add-request",
+        args: {
+          requestId: "request-new",
+          projectId: "samantha",
+          text: "Same work",
+          senderId: "bk",
+          source: "remote",
+          receivedAt: "2026-05-10T01:01:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    await runInbox(ctx);
+
+    const report = await readFile(join(ctx.outbox, "001-work.md"), "utf8");
+    expect(report).toContain("이미 같은 pending 요청이 있습니다. 새 요청은 만들지 않았습니다.");
+    expect(report).toContain("텔레그램: `/plan samantha`");
+    expect(report).not.toContain("request-existing");
+    expect(await new OrchestrationRequestStore(join(ctx.state, "orchestration-requests.jsonl")).list()).toHaveLength(1);
+  });
+
+  test("drop cleans stale and recovery project pending requests without touching planned requests", async () => {
+    const ctx = await setupRoot();
+    await writeFile(
+      join(ctx.state, "orchestration-requests.jsonl"),
+      [
+        {
+          schemaVersion: 1,
+          id: "request-samantha-old",
+          ancestry: ancestry("samantha", "request-samantha-old"),
+          source: "remote",
+          text: "Old Samantha work",
+          status: "pending_plan",
+          createdAt: "2026-05-10T01:00:00.000Z",
+        },
+        {
+          schemaVersion: 1,
+          id: "request-samantha-latest",
+          ancestry: ancestry("samantha", "request-samantha-latest"),
+          source: "remote",
+          text: "Latest Samantha work",
+          status: "pending_plan",
+          createdAt: "2026-05-10T01:01:00.000Z",
+        },
+        {
+          schemaVersion: 1,
+          id: "request-samantha-recovery",
+          ancestry: ancestry("samantha", "request-samantha-recovery"),
+          source: "remote",
+          text: "Recovery work",
+          status: "pending_plan",
+          recoveryOfPlanId: "plan-failed",
+          createdAt: "2026-05-10T01:02:00.000Z",
+        },
+        {
+          schemaVersion: 1,
+          id: "request-planned",
+          ancestry: ancestry("samantha", "request-planned"),
+          source: "remote",
+          text: "Already planned",
+          status: "planned",
+          createdAt: "2026-05-10T01:03:00.000Z",
+        },
+      ].map((record) => JSON.stringify(record)).join("\n") + "\n",
+      "utf8",
+    );
+    await writeFile(join(ctx.inbox, "001-drop-stale.json"), JSON.stringify({ type: "orchestrator:drop-pending", args: { dropMode: "stale", projectId: "samantha", receivedAt: "2026-05-10T01:04:00.000Z" } }), "utf8");
+    await writeFile(join(ctx.inbox, "002-drop-recovery.json"), JSON.stringify({ type: "orchestrator:drop-pending", args: { dropMode: "recovery", projectId: "samantha", receivedAt: "2026-05-10T01:05:00.000Z" } }), "utf8");
+
+    await runInbox(ctx);
+
+    const requests = await new OrchestrationRequestStore(join(ctx.state, "orchestration-requests.jsonl")).list();
+    expect(requests.find((request) => request.id === "request-samantha-old")).toMatchObject({ status: "discarded" });
+    expect(requests.find((request) => request.id === "request-samantha-latest")).toMatchObject({ status: "pending_plan" });
+    expect(requests.find((request) => request.id === "request-samantha-recovery")).toMatchObject({ status: "discarded" });
+    expect(requests.find((request) => request.id === "request-planned")).toMatchObject({ status: "planned" });
+    expect(await readFile(join(ctx.outbox, "001-drop-stale.md"), "utf8")).toContain("discarded 처리: 1개");
+    expect(await readFile(join(ctx.outbox, "002-drop-recovery.md"), "utf8")).toContain("discarded 처리: 1개");
   });
 
   test("stale project context cannot approve or materialize another project's newer plan", async () => {

@@ -209,6 +209,7 @@ describe("operator reports", () => {
     expect(report).toContain("/plan");
     expect(report).toContain("/approve");
     expect(report).toContain("/go");
+    expect(report).toContain("/drop stale project:<project>");
     expect(report).not.toContain("/help_advanced");
     expect(report).not.toContain("/action_current");
     expect(report).not.toContain("/draft_prepare <project_id>");
@@ -1149,7 +1150,7 @@ describe("operator reports", () => {
 
   test("renders orchestrator planning and materialization reports", () => {
     expect(orchestrationRequestAddedReport(orchestrationRequest)).toContain("저장된 요청: `request-1`");
-    expect(orchestrationRequestAddedReport(orchestrationRequest)).toContain("텔레그램: `/plan`");
+    expect(orchestrationRequestAddedReport(orchestrationRequest)).toContain("텔레그램: `/plan <project>`");
 
     const planReport = orchestratorPlanReport({
       request: { ...orchestrationRequest, status: "planned", plannedAt: "2026-05-05T10:01:00.000Z" },
@@ -1749,7 +1750,13 @@ describe("operator reports", () => {
     expect(unresolvedRecoveryResult).toContain("복구 판단: 원 문제 미해결 - Original failed workflow 추가 복구 필요");
 
     const recovery = orchestratorRecoveryRequestReport({
-      request: { ...orchestrationRequest, id: "request-recover", status: "pending_plan" },
+      request: {
+        ...orchestrationRequest,
+        id: "request-recover",
+        status: "pending_plan",
+        recoveryOfPlanId: "plan-failed",
+        ancestry: { mode: "assigned", projectId: "samantha", goalId: "goal-samantha-operations", workItemId: "request-recover" },
+      },
       sourcePlan: { ...orchestratorPlan, id: "plan-failed", status: "materialized" },
       failedActions: [
         {
@@ -1768,7 +1775,8 @@ describe("operator reports", () => {
     expect(recovery).toContain("복구 계획 요청을 만들었습니다.");
     expect(recovery).toContain("복구 대상: Telegram orchestration flow");
     expect(recovery).toContain("Pass task: verify failed");
-    expect(recovery).toContain("텔레그램: `/plan`");
+    expect(recovery).toContain("복구 재요청: `/recover");
+    expect(recovery).toContain("복구 요청 정리: `/drop recovery project:");
     expect(recovery).not.toContain("plan-failed");
     expect(recovery).not.toContain("action-");
 
@@ -1777,7 +1785,7 @@ describe("operator reports", () => {
       supersededPlan: { ...orchestratorPlan, id: "plan-old", status: "superseded" },
     });
     expect(revision).toContain("현재 계획을 폐기하고 수정 요청을 만들었습니다.");
-    expect(revision).toContain("텔레그램: `/plan`");
+    expect(revision).toContain("텔레그램: `/plan <project>`");
 
     const canceled = orchestratorCancelReport({
       plan: {

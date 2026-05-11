@@ -66,4 +66,20 @@ describe("commandFromRemoteInput", () => {
       args: { replacement: "/approve" },
     });
   });
+
+  test("maps drop cleanup commands without ids", () => {
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/drop stale project:samantha" }, "bk")).toMatchObject({
+      type: "orchestrator:drop-pending",
+      args: { dropMode: "stale", projectId: "samantha" },
+    });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/drop all project:samantha" }, "bk")).toMatchObject({
+      type: "orchestrator:drop-pending",
+      args: { dropMode: "all", projectId: "samantha" },
+    });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "/drop recovery project:samantha" }, "bk")).toMatchObject({
+      type: "orchestrator:drop-pending",
+      args: { dropMode: "recovery", projectId: "samantha" },
+    });
+    expect(() => commandFromRemoteInput({ senderId: "bk", text: "/drop stale request-abc123" }, "bk")).toThrow("unsupported remote command");
+  });
 });

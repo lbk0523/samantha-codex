@@ -93,6 +93,10 @@ function recordProjectLabel(record: { ancestry?: { mode: string; projectId?: str
   return recordProjectId(record) ?? "unassigned";
 }
 
+function isRecoveryRequest(request: OrchestrationRequestRecord): boolean {
+  return Boolean(request.recoveryOfPlanId);
+}
+
 function currentProjectAction(plan: OrchestratorPlanRecord): string {
   const project = recordProjectId(plan);
   const label = project ?? "unassigned";
@@ -106,8 +110,21 @@ function currentProjectAction(plan: OrchestratorPlanRecord): string {
 function currentRequestAction(request: OrchestrationRequestRecord): string {
   const project = recordProjectId(request);
   const label = project ?? "unassigned";
-  if (!project) return `${label}: 프로젝트를 골라 ${code("/plan <project>")}로 계획 생성`;
+  if (!project) return `${label}: 프로젝트 없는 pending 요청 - 로컬 CLI 또는 dashboard에서 출처 확인`;
+  if (isRecoveryRequest(request)) return `${label}: 복구 재요청 ${code(`/recover project:${project}`)} / 복구 요청 정리 ${code(`/drop recovery project:${project}`)}`;
   return `${label}: 계획 생성 ${code(`/plan ${project}`)} / 요청 취소 ${code(`/cancel project:${project}`)}`;
+}
+
+function currentRequestProjectSummary(input: { projectId: string; requests: OrchestrationRequestRecord[] }): string[] {
+  const normal = input.requests.filter((request) => !isRecoveryRequest(request));
+  const recovery = input.requests.filter(isRecoveryRequest);
+  return [
+    `- ${input.projectId}: pending ${input.requests.length}개`,
+    normal.length ? `  계획 생성: ${code(`/plan ${input.projectId}`)}` : "",
+    normal.length > 1 ? `  오래된 중복 정리: ${code(`/drop stale project:${input.projectId}`)}` : "",
+    recovery.length ? `  복구 재요청: ${code(`/recover project:${input.projectId}`)}` : "",
+    recovery.length ? `  복구 요청 정리: ${code(`/drop recovery project:${input.projectId}`)}` : "",
+  ].filter(Boolean);
 }
 
 function currentPlanAmbiguityReport(input: { plans: OrchestratorPlanRecord[] }): string {
@@ -126,18 +143,32 @@ function currentPlanAmbiguityReport(input: { plans: OrchestratorPlanRecord[] }):
 }
 
 function currentRequestAmbiguityReport(input: { requests: OrchestrationRequestRecord[] }): string {
+  const byProject = new Map<string, OrchestrationRequestRecord[]>();
+  const unassigned: OrchestrationRequestRecord[] = [];
+  for (const request of input.requests) {
+    const project = recordProjectId(request);
+    if (!project) {
+      unassigned.push(request);
+      continue;
+    }
+    byProject.set(project, [...(byProject.get(project) ?? []), request]);
+  }
+  const projectLines = [...byProject.entries()].flatMap(([projectId, requests]) =>
+    currentRequestProjectSummary({ projectId, requests }),
+  );
   return [
     "# now",
     "",
-    "여러 프로젝트에 현재 작업 요청이 있어 원격 계획 생성을 보류합니다.",
+    "여러 pending 작업 요청이 있어 원격 계획 생성을 보류합니다.",
     "",
-    "프로젝트별 안전 액션:",
-    ...input.requests.map((request) => `- ${currentRequestAction(request)}`),
+    "프로젝트별 실행 가능한 액션:",
+    ...projectLines,
+    unassigned.length ? `- unassigned: pending ${unassigned.length}개 - 로컬 CLI 또는 dashboard에서 출처 확인` : "",
     "",
     "다음 액션:",
-    `- 위 목록에서 프로젝트 하나를 골라 해당 명령을 그대로 보내세요.`,
+    `- 위 목록의 명령을 그대로 보내세요.`,
     `- 전체 상태 확인: ${code("/check")}`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function latestPrimaryWorkflowTimestamp(input: {
@@ -550,7 +581,24 @@ function orchestrationRequestNextLines(request: OrchestrationRequestRecord): str
       `- pressure가 해소된 뒤 ${code("/plan")}으로 같은 저장 요청을 다시 계획할 수 있습니다.`,
     ];
   }
-  if (request.status === "pending_plan") return ["", "다음 액션:", `- 텔레그램: ${code("/plan")}`, `- 요청 취소: ${code("/cancel")}`];
+  if (request.status === "pending_plan" && request.recoveryOfPlanId) {
+    const project = recordProjectId(request);
+    return [
+      "",
+      "다음 액션:",
+      `- 복구 재요청: ${code(project ? `/recover project:${project}` : "/recover")}`,
+      project ? `- 복구 요청 정리: ${code(`/drop recovery project:${project}`)}` : `- 상태 확인: ${code("/now")}`,
+    ];
+  }
+  if (request.status === "pending_plan") {
+    const project = recordProjectId(request);
+    return [
+      "",
+      "다음 액션:",
+      `- 텔레그램: ${code(project ? `/plan ${project}` : "/plan <project>")}`,
+      `- 요청 취소: ${code(project ? `/cancel project:${project}` : "/cancel")}`,
+    ];
+  }
   return ["", "다음 액션:", `- 텔레그램: ${code("/now")}`];
 }
 
@@ -933,6 +981,7 @@ export function remoteHelpReport(mode: "basic" | "advanced" = "basic"): string {
     "- `/revise <피드백>`: 현재 계획을 수정 요청",
     "- `/cancel`: 승인 전 계획/요청 취소",
     "- `/recover`: 실패한 계획 결과로 복구 계획 요청 생성",
+    "- `/drop stale project:<project>`: 같은 프로젝트의 오래된 pending 요청 정리",
     "- `/now`: 지금 보낼 다음 명령 확인",
     "- `/check`: 짧은 상태 확인",
     "- `/problems`: 이상 징후 진단",
@@ -1022,6 +1071,38 @@ export function remoteProjectAmbiguityReport(input: {
     "",
     "긴 검토와 세부 로그는 CLI 또는 dashboard에서 확인하세요.",
   ].filter(Boolean).join("\n");
+}
+
+export function remoteDuplicatePendingRequestReport(input: { projectId: string }): string {
+  return [
+    "# work",
+    "",
+    "이미 같은 pending 요청이 있습니다. 새 요청은 만들지 않았습니다.",
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code(`/plan ${input.projectId}`)}`,
+  ].join("\n");
+}
+
+export function remoteDropPendingRequestsReport(input: {
+  mode: "stale" | "all" | "recovery";
+  projectId: string;
+  discardedCount: number;
+  keptCount: number;
+}): string {
+  return [
+    "# drop",
+    "",
+    `프로젝트: ${code(input.projectId)}`,
+    `정리 대상: ${code(input.mode)}`,
+    `discarded 처리: ${input.discardedCount}개`,
+    input.keptCount ? `남은 pending_plan: ${input.keptCount}개` : "남은 pending_plan: 0개",
+    "",
+    "plan/task/action은 변경하지 않았습니다.",
+    "",
+    "다음 액션:",
+    `- 텔레그램: ${code("/now")}`,
+  ].join("\n");
 }
 
 export function remoteAnswerRecordedReport(): string {
@@ -1198,7 +1279,7 @@ export function nowReport(input: {
   const currentPlans = (input.orchestratorPlans ?? []).filter((plan) => plan.status === "planned" || plan.status === "questions");
   if (currentPlans.length > 1) return [...rankingLines, "", currentPlanAmbiguityReport({ plans: currentPlans })].join("\n");
   const currentRequests = (input.orchestrationRequests ?? []).filter((request) => request.status === "pending_plan");
-  if (currentRequests.length > 1) return [...rankingLines, "", currentRequestAmbiguityReport({ requests: currentRequests })].join("\n");
+  if (currentRequests.length > 1) return currentRequestAmbiguityReport({ requests: currentRequests });
 
   const blockerClarification = latestCurrentPendingBlockerClarification(
     input.decisions ?? [],

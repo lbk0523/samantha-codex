@@ -43,6 +43,17 @@ function projectOnlyArgument(value: string | undefined): { projectId?: string } 
   return { projectId: parsed.projectId };
 }
 
+function dropArgument(value: string): { dropMode: "stale" | "all" | "recovery"; projectId: string } {
+  const parts = commandParts(value);
+  const [mode, project] = parts;
+  if (parts.length !== 2 || (mode !== "stale" && mode !== "all" && mode !== "recovery")) {
+    throw new Error("unsupported remote command");
+  }
+  const parsed = projectOnlyArgument(project);
+  if (!parsed.projectId) throw new Error("unsupported remote command");
+  return { dropMode: mode, projectId: parsed.projectId };
+}
+
 function deprecatedReplacement(command: string): string | undefined {
   const replacements: Record<string, string> = {
     "/help_advanced": "/help",
@@ -203,6 +214,14 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
   }
   if (text === "/problems") {
     return { id: `remote-${commandToken}-problems`, type: "ops:doctor", args: { source: "remote" } };
+  }
+  const dropArgs = commandArgument(text, "/drop");
+  if (dropArgs !== undefined) {
+    return {
+      id: `remote-${commandToken}-drop`,
+      type: "orchestrator:drop-pending",
+      args: { ...dropArgument(dropArgs), source: "remote", receivedAt },
+    };
   }
   if (text.startsWith("/work ")) {
     const parsed = projectPrefixedArgument(text.slice("/work ".length));

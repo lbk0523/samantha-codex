@@ -66,6 +66,8 @@ import {
   nextActionReport,
   remoteHelpReport,
   remoteDeprecatedCommandReport,
+  remoteDropPendingRequestsReport,
+  remoteDuplicatePendingRequestReport,
   remoteGoNoActionablePlanReport,
   remoteApprovalRedirectReport,
   remoteProjectAmbiguityReport,
@@ -1915,6 +1917,25 @@ function projectExamplesForPlanDecisions(
   return examples;
 }
 
+function requestCreatedAtMs(request: OrchestrationRequestRecord): number {
+  return Date.parse(request.createdAt) || 0;
+}
+
+function isRecoveryPendingRequest(request: OrchestrationRequestRecord): boolean {
+  return Boolean(request.recoveryOfPlanId);
+}
+
+function latestRequest(requests: OrchestrationRequestRecord[]): OrchestrationRequestRecord | undefined {
+  return requests
+    .slice()
+    .sort((a, b) => requestCreatedAtMs(b) - requestCreatedAtMs(a))
+    .at(0);
+}
+
+function pendingProjectRequestMatches(request: OrchestrationRequestRecord, projectId: string): boolean {
+  return selectedProjectIdFromAncestry(request.ancestry) === projectId;
+}
+
 async function selectSingleCurrentPlan(input: {
   args: ParsedArgs;
   requestedProjectId?: string;
@@ -1942,7 +1963,7 @@ async function selectPendingRequestForPlan(input: {
   args: ParsedArgs;
   requestedProjectId?: string;
   requestedScopeId?: string;
-}): Promise<{ request?: OrchestrationRequestRecord; report?: string }> {
+}): Promise<{ request?: OrchestrationRequestRecord; report?: string; staleDuplicateCount?: number }> {
   await validateRemoteProjectContext(input);
   const [requests, projectProfiles] = await Promise.all([
     new OrchestrationRequestStore(orchestrationRequestsPath(input.args)).list(),
@@ -1951,9 +1972,8 @@ async function selectPendingRequestForPlan(input: {
   const pending = requests
     .filter((request) => request.status === "pending_plan")
     .filter((request) => {
-      if (!input.requestedProjectId) return true;
-      const projectId = selectedProjectIdFromAncestry(request.ancestry);
-      return !projectId || projectId === input.requestedProjectId;
+      if (!input.requestedProjectId) return !isRecoveryPendingRequest(request);
+      return !isRecoveryPendingRequest(request) && pendingProjectRequestMatches(request, input.requestedProjectId);
     });
 
   if (pending.length === 0) return {};
@@ -1973,11 +1993,15 @@ async function selectPendingRequestForPlan(input: {
     return { request };
   }
 
+  if (input.requestedProjectId && pending.length > 1) {
+    return { request: latestRequest(pending), staleDuplicateCount: pending.length - 1 };
+  }
+
   if (pending.length > 1) {
     return {
       report: remoteProjectAmbiguityReport({
         command: "/plan",
-        reason: "두 개 이상의 현재 작업 요청이 계획 대상이 될 수 있습니다. 프로젝트를 지정해도 여러 요청이 남으면 로컬에서 정확한 요청을 확인하세요.",
+        reason: "두 개 이상의 현재 작업 요청이 계획 대상이 될 수 있습니다. 프로젝트별 명령으로 최신 요청을 계획하거나 오래된 중복을 정리하세요.",
         example: input.requestedProjectId ? undefined : "/plan <project>",
         examples: input.requestedProjectId ? undefined : projectExamplesForRecords(pending, "/plan"),
       }),
@@ -2635,6 +2659,17 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     const projectProfiles = await loadProjectProfiles(projectProfilesDir(args));
     const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
     await validateRemoteProjectContext({ args, requestedProjectId });
+    const requestStore = new OrchestrationRequestStore(orchestrationRequestsPath(args));
+    if (requestedProjectId) {
+      const duplicate = (await requestStore.list()).find(
+        (request) =>
+          request.status === "pending_plan" &&
+          !isRecoveryPendingRequest(request) &&
+          pendingProjectRequestMatches(request, requestedProjectId) &&
+          request.text.trim() === text.trim(),
+      );
+      if (duplicate) return remoteDuplicatePendingRequestReport({ projectId: requestedProjectId });
+    }
     const request: OrchestrationRequestRecord = {
       schemaVersion: 1,
       id: requestId,
@@ -2658,8 +2693,43 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     });
     request.admission = queueAdmissionRecord({ decidedAt: receivedAt, result: admission });
     if (!request.id) throw new Error("orchestration request id is required");
-    await new OrchestrationRequestStore(orchestrationRequestsPath(args)).append(request);
+    await requestStore.append(request);
     return orchestrationRequestAddedReport(request);
+  }
+  if (command.type === "orchestrator:drop-pending") {
+    const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
+    const projectId = String(command.args?.projectId ?? "");
+    const dropMode = String(command.args?.dropMode ?? "");
+    if (dropMode !== "stale" && dropMode !== "all" && dropMode !== "recovery") {
+      throw new Error("unsupported remote command");
+    }
+    await validateRemoteProjectContext({ args, requestedProjectId: projectId });
+    const requestStore = new OrchestrationRequestStore(orchestrationRequestsPath(args));
+    const projectPending = (await requestStore.list())
+      .filter((request) => request.status === "pending_plan")
+      .filter((request) => pendingProjectRequestMatches(request, projectId));
+    const normalPending = projectPending.filter((request) => !isRecoveryPendingRequest(request));
+    const latestNormal = latestRequest(normalPending);
+    const targets =
+      dropMode === "all"
+        ? projectPending
+        : dropMode === "recovery"
+          ? projectPending.filter(isRecoveryPendingRequest)
+          : normalPending.filter((request) => request.id !== latestNormal?.id);
+
+    for (const request of targets) {
+      await requestStore.markDiscarded(request.id, { discardedAt: receivedAt });
+    }
+
+    const remaining = (await requestStore.list())
+      .filter((request) => request.status === "pending_plan")
+      .filter((request) => pendingProjectRequestMatches(request, projectId));
+    return remoteDropPendingRequestsReport({
+      mode: dropMode,
+      projectId,
+      discardedCount: targets.length,
+      keptCount: remaining.length,
+    });
   }
   if (command.type === "orchestrator:recover-latest") {
     const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
@@ -2879,7 +2949,10 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
         createdAt: plan.completedAt ?? receivedAt,
       });
     }
-    return orchestratorPlanReport({ request: reportedRequest, plan, blocker });
+    const report = orchestratorPlanReport({ request: reportedRequest, plan, blocker });
+    return selectedRequest.staleDuplicateCount
+      ? `${report}\n\n보류 중인 이전 요청 ${selectedRequest.staleDuplicateCount}개는 실행하지 않았습니다. 정리: \`/drop stale project:${requestedProjectId}\``
+      : report;
   }
   if (command.type === "orchestrator:show-current-plan") {
     const selected = await selectSingleCurrentPlan({
