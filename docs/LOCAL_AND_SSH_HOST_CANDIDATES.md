@@ -193,11 +193,12 @@ Mac to SSH:
 1. Stop Mac launchd/manual Samantha runtime processes.
 2. Confirm Mac `health:check` no longer reports a live watcher.
 3. Copy or restore required host-owned runtime state to the SSH environment.
-4. Mark Mac as client or let ownership expire.
-5. Mark SSH as `active_automation_host`.
-6. Run restore and migration validation where manifests are available.
-7. Start SSH service-manager processes.
-8. Run `doctor`, process one safe inbox command, and build the dashboard.
+4. On the Mac, mark Mac as client or let ownership expire.
+5. Preserve the Mac `state/host-ownership.json` as old-host migration evidence.
+6. On SSH, mark SSH as `active_automation_host` after state is restored.
+7. Use explicit old/new ownership paths when running `migration:validate`.
+8. Start SSH service-manager processes.
+9. Run `doctor`, process one safe inbox command, and build the dashboard.
 
 SSH to Mac uses the same sequence in reverse.
 

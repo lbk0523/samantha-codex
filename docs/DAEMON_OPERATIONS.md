@@ -129,13 +129,26 @@ Restore validation checks:
 
 Host migration is a handoff drill, not an automatic service action. Stop the
 old host services first, record the old host as `client_machine` or let its
-ownership expire, restore/copy state to the new host, claim ownership on the
-new host, then validate:
+ownership expire, preserve that old-host ownership record as migration
+evidence, restore/copy state to the new host, claim ownership on the new host,
+then validate.
+
+Run this on the old host after its services are stopped:
 
 ```bash
 bun run samantha host:client --host-id=<old-host-id>
+```
+
+Copy the resulting old-host `state/host-ownership.json` to the new host or to a
+handoff evidence path. Then run this on the new host after state is restored:
+
+```bash
 bun run samantha host:claim --host-id=<new-host-id>
 ```
+
+Both helpers default to the current checkout's `state/host-ownership.json`.
+Use `--host-ownership-path=<path>` when writing an explicit old or new evidence
+file instead of the default runtime state file.
 
 Add `--expires-at=<iso-timestamp>` to `host:claim` when the claim should go
 stale automatically.

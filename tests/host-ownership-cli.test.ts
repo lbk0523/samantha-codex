@@ -141,4 +141,52 @@ describe("host ownership CLI", () => {
     expect(snapshot.warnings).not.toContain("telegram offset state is missing");
     expect(snapshot.warnings).not.toContain("telegram reply state is missing");
   });
+
+  test("doctor --local-only ignores malformed Telegram state files", async () => {
+    const root = await makeRoot();
+    const stateDir = join(root, "state");
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      join(stateDir, "host-ownership.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        role: "active_automation_host",
+        hostId: "mac-candidate",
+        updatedAt: "2026-05-11T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(join(stateDir, "telegram-offset.json"), "{bad json\n", "utf8");
+    await writeFile(join(stateDir, "telegram-replies.json"), "{bad json\n", "utf8");
+
+    const result = await runSamantha(
+      [
+        "doctor",
+        "--json",
+        "--local-only",
+        "--host-id=mac-candidate",
+        `--state-dir=${stateDir}`,
+        `--env-file=${join(root, ".env")}`,
+        `--inbox-dir=${join(root, "inbox")}`,
+        `--outbox-dir=${join(root, "outbox")}`,
+        `--archive-dir=${join(root, "archive", "inbox")}`,
+      ],
+      {
+        SAMANTHA_CODEX_BIN: "bun",
+        TELEGRAM_ALLOWED_SENDER_ID: "",
+        TELEGRAM_BOT_TOKEN: "",
+        TELEGRAM_CHAT_ID: "",
+        TELEGRAM_REPLY_CHAT_ID: "",
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("");
+    const snapshot = JSON.parse(result.stdout) as {
+      failures: string[];
+      telegram: Record<string, unknown>;
+    };
+    expect(snapshot.failures).toContain("daemon lock is missing");
+    expect(snapshot.telegram).toEqual({});
+  });
 });

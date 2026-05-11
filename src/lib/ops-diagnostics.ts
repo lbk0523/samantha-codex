@@ -419,6 +419,7 @@ export async function collectOpsSnapshot(input: {
 }): Promise<OpsSnapshot> {
   const now = input.now ?? new Date();
   const env = input.env ?? process.env;
+  const localOnly = input.localOnly === true;
   const hostOwnershipPath = input.hostOwnershipPath ?? join(dirname(input.heartbeatPath), "host-ownership.json");
   const envValues = await envFileValues(input.envFilePath);
   const envHostId = env.SAMANTHA_HOST_ID?.trim() || envValues.get("SAMANTHA_HOST_ID");
@@ -435,7 +436,9 @@ export async function collectOpsSnapshot(input: {
   const codexCommand = env.SAMANTHA_CODEX_BIN?.trim() || envValues.get("SAMANTHA_CODEX_BIN") || "codex";
   const hasCodexExecutable = await hasExecutable(codexCommand, env);
   const remoteOutbox = await remoteOutboxFiles(input.outboxDir);
-  const replyState = sanitizeReplyState(await readOptionalJson<TelegramReplyState>(input.telegramRepliesPath));
+  const replyState = localOnly
+    ? undefined
+    : sanitizeReplyState(await readOptionalJson<TelegramReplyState>(input.telegramRepliesPath));
   const sentFiles = new Set(replyState?.sentFiles ?? []);
   const hostPlatform = input.hostPlatform ?? platform();
   const shouldCheckSystemd = input.systemdUserDir !== undefined || hostPlatform === "linux";
@@ -511,10 +514,12 @@ export async function collectOpsSnapshot(input: {
     ...(latestRemoteCommandSummary ? { latestRemoteCommand: latestRemoteCommandSummary } : {}),
     ...(latestRemoteOutboxSummary ? { latestRemoteOutbox: latestRemoteOutboxSummary } : {}),
   };
-  const telegram: TelegramStateDiagnostics = {
-    offset: await readOptionalJson<TelegramOffsetState>(input.telegramOffsetPath),
-    replyState,
-  };
+  const telegram: TelegramStateDiagnostics = localOnly
+    ? {}
+    : {
+        offset: await readOptionalJson<TelegramOffsetState>(input.telegramOffsetPath),
+        replyState,
+      };
   const envDiagnostics: EnvDiagnostics = {
     envFilePath: input.envFilePath,
     envFileExists: await exists(input.envFilePath),
@@ -529,7 +534,6 @@ export async function collectOpsSnapshot(input: {
     currentHostId,
     now,
   });
-  const localOnly = input.localOnly === true;
   const missingServiceTemplates = serviceTemplates.files.filter((file) => !file.installed);
   const replyFailures = replyState?.failures ?? [];
   const latestReplyFailure = replyFailures.at(-1);
