@@ -44,6 +44,7 @@ The orchestrator proposes work. The control plane owns execution and safety. Age
 - Do not run Samantha daemon, watch, poll, reply, worker dispatch, or dashboard runtime processes from a client machine.
 - Runtime state belongs to the automation host: `state/`, `runs/`, `.samantha-worktrees/`, dashboard runtime output, outbox/archive data, and live logs.
 - Repo code and docs should not hard-code local absolute paths. Prefer repo-relative paths, project ids, environment variables, or project profile resolution.
+- Mac/SSH host-candidate handoff remains manual and single-active-host. See [docs/LOCAL_AND_SSH_HOST_CANDIDATES.md](docs/LOCAL_AND_SSH_HOST_CANDIDATES.md).
 
 ## Supported Remote Flow
 
@@ -111,6 +112,8 @@ Useful command groups:
 - `worktree:cleanup` removes completed worker worktrees after integration.
 - `inbox:*`, `remote:enqueue`, and `telegram:poll` map narrow remote inputs into local inbox records.
 - `health:check` reports daemon heartbeat and lock health.
+- `doctor --local-only` suppresses Telegram-required failures for CLI/dashboard-only diagnostics.
+- `host:claim` and `host:client` write host ownership records for manual host handoff; they do not run services or migrate state.
 - `dashboard:build` writes read-only dashboard HTML.
 - `dashboard:serve` serves the read-only dashboard on the automation host.
 
@@ -176,5 +179,6 @@ For deeper context, see:
 - [docs/MVP_HARDENING.md](docs/MVP_HARDENING.md)
 - [docs/NORTH_STAR.md](docs/NORTH_STAR.md)
 - [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md)
+- [docs/LOCAL_AND_SSH_HOST_CANDIDATES.md](docs/LOCAL_AND_SSH_HOST_CANDIDATES.md)
 - [docs/REMOTE_ADAPTERS.md](docs/REMOTE_ADAPTERS.md)
 - [docs/PARALLELISM_EVIDENCE.md](docs/PARALLELISM_EVIDENCE.md)

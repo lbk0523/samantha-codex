@@ -1,6 +1,6 @@
 # Samantha Daemon Operations
 
-Last updated: 2026-05-10
+Last updated: 2026-05-11
 
 ## Purpose
 
@@ -32,6 +32,13 @@ Run full local diagnostics:
 bun run samantha doctor
 ```
 
+When Telegram is not configured and the operator only wants local CLI or
+dashboard diagnostics:
+
+```bash
+bun run samantha doctor --local-only
+```
+
 Build the read-only operations dashboard:
 
 ```bash
@@ -44,9 +51,9 @@ recent runs, and latest run lifecycle state. It does not expose write actions.
 
 ## Runtime Files
 
-- `state/host-ownership.json`: read-only host ownership record used by
-  diagnostics to decide whether the current machine is the active automation
-  host, a client machine, stale, or unknown
+- `state/host-ownership.json`: host-local ownership record used by diagnostics
+  to decide whether the current machine is the active automation host, a client
+  machine, stale, or unknown
 - `state/daemon.lock`: prevents duplicate `inbox:watch` processes
 - `state/heartbeat.json`: last daemon heartbeat
 - `state/proposals.jsonl`: remote work proposals and review state
@@ -82,6 +89,9 @@ Bad inbox commands are archived and get an outbox failure report instead of cras
 Only one automation host should run these services at a time. Stop the old host before enabling services on a new host.
 
 Use `ops/systemd/` on Linux or WSL hosts. Use `ops/launchd/` on macOS hosts.
+
+For the Mac plus SSH candidate handoff workflow, see
+[Local And SSH Host Candidates](LOCAL_AND_SSH_HOST_CANDIDATES.md).
 
 ## Backup, Restore, And Host Migration Drills
 
@@ -119,8 +129,16 @@ Restore validation checks:
 
 Host migration is a handoff drill, not an automatic service action. Stop the
 old host services first, record the old host as `client_machine` or let its
-ownership expire, restore/copy state to the new host, write the new
-`state/host-ownership.json` as `active_automation_host`, then validate:
+ownership expire, restore/copy state to the new host, claim ownership on the
+new host, then validate:
+
+```bash
+bun run samantha host:client --host-id=<old-host-id>
+bun run samantha host:claim --host-id=<new-host-id>
+```
+
+Add `--expires-at=<iso-timestamp>` to `host:claim` when the claim should go
+stale automatically.
 
 ```bash
 bun run samantha migration:validate \
@@ -158,6 +176,18 @@ Fields:
 - `expiresAt`: optional stale marker; when expired, diagnostics classify the
   host ownership state as `stale`
 
+Ownership helpers:
+
+```bash
+bun run samantha host:claim --host-id=<host-id>
+bun run samantha host:client --host-id=<host-id>
+```
+
+Both helpers use `state/host-ownership.json` by default. They also honor
+`--state-dir=<dir>` and `--host-ownership-path=<path>`. They write only the
+ownership record. They do not start services, stop services, migrate state,
+dispatch workers, merge, push, cleanup, or recover anything.
+
 Diagnostic states:
 
 - `active`: record says this `hostId` is the active automation host; automation
@@ -170,8 +200,8 @@ Diagnostic states:
 - `unknown`: record is missing or malformed; create or repair the host-local
   ownership record before running automation
 
-This stage adds diagnostics only. It does not start services, stop old hosts,
-dispatch workers, migrate state, merge, push, cleanup, or recover.
+Host ownership diagnostics and helper writes do not start services, stop old
+hosts, dispatch workers, migrate state, merge, push, cleanup, or recover.
 
 ## Watchdog Diagnostics
 

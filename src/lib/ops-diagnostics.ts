@@ -412,6 +412,7 @@ export async function collectOpsSnapshot(input: {
   hostPlatform?: NodeJS.Platform;
   maxAgeMs?: number;
   maxPendingInboxAgeMs?: number;
+  localOnly?: boolean;
   env?: NodeJS.ProcessEnv;
   now?: Date;
   isAlive?: (pid: number) => boolean;
@@ -528,6 +529,7 @@ export async function collectOpsSnapshot(input: {
     currentHostId,
     now,
   });
+  const localOnly = input.localOnly === true;
   const missingServiceTemplates = serviceTemplates.files.filter((file) => !file.installed);
   const replyFailures = replyState?.failures ?? [];
   const latestReplyFailure = replyFailures.at(-1);
@@ -542,7 +544,7 @@ export async function collectOpsSnapshot(input: {
           },
         ]
       : []),
-    ...(!hasBotToken
+    ...(!localOnly && !hasBotToken
       ? [
           {
             severity: "blocked" as const,
@@ -552,7 +554,7 @@ export async function collectOpsSnapshot(input: {
           },
         ]
       : []),
-    ...(!hasPollChatId
+    ...(!localOnly && !hasPollChatId
       ? [
           {
             severity: "blocked" as const,
@@ -562,7 +564,7 @@ export async function collectOpsSnapshot(input: {
           },
         ]
       : []),
-    ...(!hasReplyChatId
+    ...(!localOnly && !hasReplyChatId
       ? [
           {
             severity: "blocked" as const,
@@ -599,7 +601,7 @@ export async function collectOpsSnapshot(input: {
       message: `${serviceTemplates.provider} template not installed: ${file.file}`,
       action: `Install the ${serviceTemplates.provider} template from docs/DAEMON_OPERATIONS.md on the active automation host.`,
     })),
-    ...(latestReplyFailure
+    ...(!localOnly && latestReplyFailure
       ? [
           {
             severity: "needs_bk" as const,
@@ -615,11 +617,11 @@ export async function collectOpsSnapshot(input: {
     .map((issue) => issue.message);
   const warnings = [
     ...pidVisibilityViolations.map((violation) => `pid visibility check failed: ${violation}`),
-    ...(!telegram.offset ? ["telegram offset state is missing"] : []),
-    ...(!telegram.replyState ? ["telegram reply state is missing"] : []),
+    ...(!localOnly && !telegram.offset ? ["telegram offset state is missing"] : []),
+    ...(!localOnly && !telegram.replyState ? ["telegram reply state is missing"] : []),
     ...missingServiceTemplates.map((file) => `${serviceTemplates.provider} template not installed: ${file.file}`),
-    ...(queues.unsentRemoteOutboxCount > 0 ? [`${queues.unsentRemoteOutboxCount} unsent remote outbox report(s)`] : []),
-    ...((replyState?.failures?.length ?? 0) > 0 ? [`${replyState?.failures?.length ?? 0} Telegram reply failure(s)`] : []),
+    ...(!localOnly && queues.unsentRemoteOutboxCount > 0 ? [`${queues.unsentRemoteOutboxCount} unsent remote outbox report(s)`] : []),
+    ...(!localOnly && (replyState?.failures?.length ?? 0) > 0 ? [`${replyState?.failures?.length ?? 0} Telegram reply failure(s)`] : []),
   ];
 
   return {

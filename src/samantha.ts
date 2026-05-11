@@ -94,7 +94,7 @@ import {
   tasksListReport,
   taskShowReport,
 } from "./lib/operator-reports";
-import { collectOpsSnapshot, withoutActiveInboxCommand } from "./lib/ops-diagnostics";
+import { collectOpsSnapshot, withoutActiveInboxCommand, type HostOwnershipRecord, type HostOwnershipRole } from "./lib/ops-diagnostics";
 import { operatorReviewReport, type OperatorReviewSubjectType } from "./lib/operator-review-report";
 import { createOrchestratorPlanBlocker, payloadBlockerForPlan, type OrchestratorPlanBlocker } from "./lib/orchestrator-blockers";
 import {
@@ -385,6 +385,10 @@ function heartbeatPath(args: ParsedArgs): string {
   return resolve(flag(args, "heartbeat-file", join(stateDir(args), "heartbeat.json")));
 }
 
+function hostOwnershipPath(args: ParsedArgs): string {
+  return resolve(flag(args, "host-ownership-path", join(stateDir(args), "host-ownership.json")));
+}
+
 function telegramOffsetPath(args: ParsedArgs): string {
   return resolve(flag(args, "telegram-offset-file", join(stateDir(args), "telegram-offset.json")));
 }
@@ -426,6 +430,37 @@ function clipText(value: string, maxLength = 1200): string {
 
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
+}
+
+function stableHostId(value: string): string | undefined {
+  const hostId = value.trim();
+  return hostId && !/[\\/]/.test(hostId) ? hostId : undefined;
+}
+
+function isoTimestampFlag(name: string, value: string): string {
+  if (!value || Number.isNaN(Date.parse(value))) {
+    throw new Error(`${name} must be a valid ISO timestamp`);
+  }
+  return value;
+}
+
+async function writeHostOwnership(args: ParsedArgs, role: HostOwnershipRole): Promise<void> {
+  const hostId = stableHostId(flag(args, "host-id", ""));
+  if (!hostId) {
+    throw new Error(`usage: ${args.command} --host-id=<id>${role === "active_automation_host" ? " [--expires-at=<iso>]" : ""}`);
+  }
+  const expiresAt = role === "active_automation_host" ? flag(args, "expires-at", "") : "";
+  const record: HostOwnershipRecord = {
+    schemaVersion: 1,
+    role,
+    hostId,
+    updatedAt: new Date().toISOString(),
+    ...(expiresAt ? { expiresAt: isoTimestampFlag("--expires-at", expiresAt) } : {}),
+  };
+  const path = hostOwnershipPath(args);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  printJson({ path, record });
 }
 
 function decisionKind(value: string): DecisionKind {
@@ -786,7 +821,7 @@ async function collectOps(args: ParsedArgs) {
     inboxDir: resolve(flag(args, "inbox-dir", join(root, "inbox"))),
     outboxDir: resolve(flag(args, "outbox-dir", join(root, "outbox"))),
     archiveInboxDir: resolve(flag(args, "archive-dir", join(root, "archive", "inbox"))),
-    hostOwnershipPath: resolve(flag(args, "host-ownership-path", join(stateDir(args), "host-ownership.json"))),
+    hostOwnershipPath: hostOwnershipPath(args),
     currentHostId: hostId || undefined,
     heartbeatPath: heartbeatPath(args),
     lockPath: daemonLockPath(args),
@@ -794,6 +829,7 @@ async function collectOps(args: ParsedArgs) {
     telegramRepliesPath: telegramRepliesPath(args),
     maxAgeMs: Number(flag(args, "max-age-ms", "15000")),
     maxPendingInboxAgeMs: Number(flag(args, "max-pending-inbox-age-ms", "300000")),
+    localOnly: args.flags.get("local-only") === true,
   });
 }
 
@@ -4054,6 +4090,11 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === "host:claim" || args.command === "host:client") {
+    await writeHostOwnership(args, args.command === "host:claim" ? "active_automation_host" : "client_machine");
+    return;
+  }
+
   if (args.command === "doctor" || args.command === "ops:doctor") {
     const snapshot = await collectOps(args);
     if (args.flags.get("json") === true) {
@@ -4249,8 +4290,10 @@ async function main(): Promise<void> {
       "  orchestrator:current [--project=<id>]",
       "  orchestrator:question-draft --blocker=<text> --subject-type=<type> --subject-id=<id> [--context=<text>]",
       "  next-action",
-      "  doctor [--json] [--host-id=<id>] [--host-ownership-path=<path>] [--max-pending-inbox-age-ms=300000]",
+      "  doctor [--json] [--local-only] [--host-id=<id>] [--host-ownership-path=<path>] [--max-pending-inbox-age-ms=300000]",
       "  health:check [--max-age-ms=15000]",
+      "  host:claim --host-id=<id> [--expires-at=<iso>]",
+      "  host:client --host-id=<id>",
       "  dashboard:build [--project=<id>]",
       "  dashboard:serve [--port=4173] [--host=127.0.0.1]",
       "",
