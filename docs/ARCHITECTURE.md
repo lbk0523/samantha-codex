@@ -176,6 +176,14 @@ Behavior-changing SOP or skill publication remains a governed memory and/or
 capability/profile change. The markdown document can explain methodology; it
 cannot grant runtime authority.
 
+External agent frameworks, prompt packs, or skill systems may be mined for
+bounded patterns only. Samantha should not import another runtime wholesale,
+let LLMs promote their own skills, mutate memory automatically, pool
+credentials across providers, or bypass deterministic deny rules. Useful
+adoption candidates should enter a governed learning or capability review flow,
+then graduate through the same explicit policy, audit, and test gates as local
+features.
+
 ## Planning Memory Context
 
 The orchestrator planning path may include a small selected memory context when

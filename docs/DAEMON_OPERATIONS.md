@@ -90,8 +90,10 @@ Only one automation host should run these services at a time. Stop the old host 
 
 Use `ops/systemd/` on Linux or WSL hosts. Use `ops/launchd/` on macOS hosts.
 
-For the Mac plus SSH candidate handoff workflow, see
-[Local And SSH Host Candidates](LOCAL_AND_SSH_HOST_CANDIDATES.md).
+Mac and SSH hosts follow the same single-active-host handoff rule documented in
+this file. Client machines may edit, test, commit, and push repo code, but they
+must not run daemon, watch, poll, reply, action execution, or dashboard runtime
+processes.
 
 ## Backup, Restore, And Host Migration Drills
 

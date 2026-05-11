@@ -136,5 +136,5 @@ Do not let Telegram implementation details define Samantha's core architecture.
 Use the roadmap as the source of truth for current and future phases.
 
 For the long-range roadmap, see [CEO_OFFICE_ROADMAP.md](CEO_OFFICE_ROADMAP.md).
-For the first MVP execution stages, see [MVP_IMPLEMENTATION.md](MVP_IMPLEMENTATION.md).
-For the current hardening phase, see [MVP_HARDENING.md](MVP_HARDENING.md).
+For the current system contract, see [ARCHITECTURE.md](ARCHITECTURE.md).
+For the remote adapter contract, see [REMOTE_ADAPTERS.md](REMOTE_ADAPTERS.md).

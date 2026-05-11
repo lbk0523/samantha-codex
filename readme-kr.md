@@ -42,7 +42,7 @@ CEO office는 상태, 실행 권한, 안전을 소유합니다. LLM agent는 제
 - 클라이언트 머신에서는 Samantha daemon, watch, poll, reply, worker dispatch, dashboard runtime process를 실행하지 않습니다.
 - Runtime state는 automation host 소유입니다: `state/`, `runs/`, `.samantha-worktrees/`, dashboard runtime output, outbox/archive data, live log.
 - Repo code와 docs에는 로컬 절대경로를 하드코딩하지 않습니다. repo-relative path, project id, environment variable, project profile resolution을 우선합니다.
-- Mac/SSH host-candidate handoff는 수동이며 single-active-host 모델을 유지합니다. 자세한 절차는 [docs/LOCAL_AND_SSH_HOST_CANDIDATES.md](docs/LOCAL_AND_SSH_HOST_CANDIDATES.md)를 봅니다.
+- Mac/SSH host handoff는 수동이며 single-active-host 모델을 유지합니다. 자세한 절차는 [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md)를 봅니다.
 
 ## 지원되는 원격 어댑터
 
@@ -174,10 +174,8 @@ Writer agent는 commit하거나 push하지 않습니다. Production code writer�
 - [docs/SAMANTHA_WORKFLOW_PLAYBOOK.md](docs/SAMANTHA_WORKFLOW_PLAYBOOK.md)
 - [docs/DETERMINISTIC_CEO_OFFICE.md](docs/DETERMINISTIC_CEO_OFFICE.md)
 - [docs/CEO_OFFICE_ROADMAP.md](docs/CEO_OFFICE_ROADMAP.md)
-- [docs/MVP_IMPLEMENTATION.md](docs/MVP_IMPLEMENTATION.md)
-- [docs/MVP_HARDENING.md](docs/MVP_HARDENING.md)
 - [docs/NORTH_STAR.md](docs/NORTH_STAR.md)
 - [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md)
-- [docs/LOCAL_AND_SSH_HOST_CANDIDATES.md](docs/LOCAL_AND_SSH_HOST_CANDIDATES.md)
 - [docs/REMOTE_ADAPTERS.md](docs/REMOTE_ADAPTERS.md)
 - [docs/PARALLELISM_EVIDENCE.md](docs/PARALLELISM_EVIDENCE.md)
+- [docs/ROLLBACK_AND_RECOVERY_DRILLS.md](docs/ROLLBACK_AND_RECOVERY_DRILLS.md)

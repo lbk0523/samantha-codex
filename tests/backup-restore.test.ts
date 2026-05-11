@@ -280,7 +280,7 @@ describe("backup, restore, and host migration drills", () => {
       projectId: "samantha",
       enabled: true,
       riskClass: "medium",
-      sourceEvidence: ["docs/CONTINUOUS_24_7_OPERATIONS.md M11"],
+      sourceEvidence: ["docs/DAEMON_OPERATIONS.md backup restore contract"],
       fingerprintInputs: [{ key: "cadence", value: "daily" }],
       activationDecisionId: "decision-missing-routine-activation",
       createdAt: "2026-05-10T02:00:00.000Z",

@@ -32,7 +32,7 @@ function triggerFixture(input: Partial<Parameters<typeof createRoutineTriggerRec
     projectId: "samantha",
     enabled: true,
     riskClass: "medium",
-    sourceEvidence: ["docs/CONTINUOUS_24_7_OPERATIONS.md M5"],
+    sourceEvidence: ["docs/DAEMON_OPERATIONS.md routine trigger contract"],
     fingerprintInputs: [
       { key: "cadence", value: "daily" },
       { key: "intent", value: "review-open-work" },

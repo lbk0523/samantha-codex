@@ -150,7 +150,7 @@ describe("Phase 9 continuous operations exit drill", () => {
       projectId: "samantha",
       enabled: true,
       riskClass: "medium",
-      sourceEvidence: ["docs/CONTINUOUS_24_7_OPERATIONS.md M10"],
+      sourceEvidence: ["docs/DAEMON_OPERATIONS.md continuous operation gates"],
       fingerprintInputs: [
         { key: "cadence", value: "daily" },
         { key: "intent", value: "review-open-work" },

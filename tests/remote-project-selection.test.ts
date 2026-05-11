@@ -240,7 +240,7 @@ describe("remote project selection guards", () => {
       projectId: "samantha",
       enabled: true,
       riskClass: "medium",
-      sourceEvidence: ["docs/CONTINUOUS_24_7_OPERATIONS.md M6"],
+      sourceEvidence: ["docs/DAEMON_OPERATIONS.md routine intake contract"],
       fingerprintInputs: [
         { key: "cadence", value: "daily" },
         { key: "intent", value: "review-open-work" },

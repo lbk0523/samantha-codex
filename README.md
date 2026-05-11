@@ -44,7 +44,7 @@ The orchestrator proposes work. The control plane owns execution and safety. Age
 - Do not run Samantha daemon, watch, poll, reply, worker dispatch, or dashboard runtime processes from a client machine.
 - Runtime state belongs to the automation host: `state/`, `runs/`, `.samantha-worktrees/`, dashboard runtime output, outbox/archive data, and live logs.
 - Repo code and docs should not hard-code local absolute paths. Prefer repo-relative paths, project ids, environment variables, or project profile resolution.
-- Mac/SSH host-candidate handoff remains manual and single-active-host. See [docs/LOCAL_AND_SSH_HOST_CANDIDATES.md](docs/LOCAL_AND_SSH_HOST_CANDIDATES.md).
+- Mac/SSH host handoff remains manual and single-active-host. See [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md).
 
 ## Supported Remote Flow
 
@@ -176,10 +176,8 @@ For deeper context, see:
 - [docs/SAMANTHA_WORKFLOW_PLAYBOOK.md](docs/SAMANTHA_WORKFLOW_PLAYBOOK.md)
 - [docs/DETERMINISTIC_CEO_OFFICE.md](docs/DETERMINISTIC_CEO_OFFICE.md)
 - [docs/CEO_OFFICE_ROADMAP.md](docs/CEO_OFFICE_ROADMAP.md)
-- [docs/MVP_IMPLEMENTATION.md](docs/MVP_IMPLEMENTATION.md)
-- [docs/MVP_HARDENING.md](docs/MVP_HARDENING.md)
 - [docs/NORTH_STAR.md](docs/NORTH_STAR.md)
 - [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md)
-- [docs/LOCAL_AND_SSH_HOST_CANDIDATES.md](docs/LOCAL_AND_SSH_HOST_CANDIDATES.md)
 - [docs/REMOTE_ADAPTERS.md](docs/REMOTE_ADAPTERS.md)
 - [docs/PARALLELISM_EVIDENCE.md](docs/PARALLELISM_EVIDENCE.md)
+- [docs/ROLLBACK_AND_RECOVERY_DRILLS.md](docs/ROLLBACK_AND_RECOVERY_DRILLS.md)
