@@ -52,6 +52,32 @@ bun run samantha ceo:status
 /now
 ```
 
+## Telegram 명령어 빠른 참조
+
+Telegram은 운영 보고, 새 work 접수, 계획 승인, 짧은 feedback, recovery 시작만
+다룬다. Shell command, 임의 repo path, 내부 task/action/run/decision id는 받지
+않는다.
+
+| 명령어 | 수행 작업 |
+| --- | --- |
+| `/help`, `/start` | 기본 Telegram workflow와 안전 경계를 보여준다. |
+| `/now` | 현재 상태에서 다음으로 보낼 안전한 Telegram 명령이나 필요한 local action을 제안한다. |
+| `/work <요청>` | 새 작업 요청을 orchestration request로 저장한다. Worker를 바로 실행하지 않는다. |
+| `/plan [project_id] [scope_id]` | pending request에 대해 read-only Orchestrator Agent planning을 실행하고 plan을 저장한다. |
+| `/plan_current [project:<id>]` | 현재 미승인 plan을 Codex 재실행 없이 다시 보여준다. |
+| `/approve [project:<id>]` | 현재 plan approval decision 하나만 승인한다. 일반 실행은 보통 `/go`를 쓴다. |
+| `/answer [project:<id>] <답변>` | 현재 blocker clarification 하나에 답변을 기록하고 plan은 유지한다. |
+| `/go [project:<id>]` | valid plan을 materialize해 task/action을 만들거나, 최신 성공 run의 integration gate를 전진시킨다. |
+| `/revise [project:<id>] <피드백>` | 현재 미승인 plan을 supersede하고 feedback을 반영한 새 planning request를 만든다. |
+| `/cancel [project:<id>] [reason]` | 현재 pending request 또는 미승인 plan을 취소한다. 이미 실행 중인 worker를 멈추지는 않는다. |
+| `/recover [project:<id>]` | 최신 실패한 materialized plan result를 근거로 recovery request를 만든다. Retry나 dispatch는 하지 않는다. |
+| `/check` | compact status view를 보여준다. |
+| `/problems` | host, daemon, queue, Telegram poll/reply 등 운영 이상 징후를 진단한다. |
+
+`project:<id>`는 여러 프로젝트에 현재 항목이 있어 명령이 모호할 때만 붙인다.
+낡은 proposal/draft/task/action/run id 기반 Telegram 명령은 실행되지 않고 현재
+workflow의 대체 명령만 안내한다.
+
 ## 일일 운영 루프
 
 ### 1. 현재 상태 확인
