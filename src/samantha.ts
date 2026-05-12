@@ -1603,6 +1603,7 @@ function autopilotResultReport(input: {
   resultReport?: string;
   failure?: string;
 }): string {
+  const nestedReport = stripReportOnlyCommandChoreography(input.resultReport ?? input.planReport ?? "");
   const lines = [
     "# autopilot-result",
     "",
@@ -1615,9 +1616,18 @@ function autopilotResultReport(input: {
     `요약: ${input.summary}`,
     input.failure ? `막힌 이유: ${input.failure}` : "",
     "",
-    input.resultReport ?? input.planReport ?? "",
+    nestedReport,
   ];
   return lines.filter((line) => line !== "").join("\n");
+}
+
+const reportOnlyCommandChoreographyPattern = /(^|[^\w/])\/(?:plan|go|approve|now|check)\b/;
+
+function stripReportOnlyCommandChoreography(report: string): string {
+  const lines = report.split("\n").filter((line) => !reportOnlyCommandChoreographyPattern.test(line));
+  while (lines.at(-1)?.trim() === "") lines.pop();
+  if (lines.at(-1)?.trim() === "다음 액션:") lines.pop();
+  return lines.join("\n");
 }
 
 async function appendAutopilotEvidence(input: {

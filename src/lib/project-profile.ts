@@ -146,6 +146,7 @@ const planningPhrases = [
 ];
 
 const noEditPhrases = [
+  "복구 실행 없이",
   "수정하지 말고",
   "변경하지 말고",
   "구현하지 말고",

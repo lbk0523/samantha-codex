@@ -990,6 +990,9 @@ describe("inbox and remote commands", () => {
     expect(report).toContain("권한: `authority-grant-remote-report-only-autopilot-baseline`");
     expect(report).toContain("# plan-result");
     expect(report).toContain("보고 작업이 완료되었습니다.");
+    for (const command of ["/plan", "/go", "/approve", "/now", "/check"] as const) {
+      expect(report).not.toContain(command);
+    }
 
     expect(await new DecisionStore(join(state, "decisions.jsonl")).list()).toEqual([]);
     expect((await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).find("request-autopilot-readonly-plan"))).toMatchObject({

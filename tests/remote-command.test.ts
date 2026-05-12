@@ -2,6 +2,29 @@ import { describe, expect, test } from "bun:test";
 import { commandFromRemoteInput } from "../src/lib/remote-command";
 
 describe("commandFromRemoteInput", () => {
+  test("maps plain Telegram text to a CEO turn instead of rejecting natural input", () => {
+    const command = commandFromRemoteInput(
+      {
+        senderId: "bk",
+        text: "사만다 지금 진행 중인 보고 작업 정리해줘",
+        receivedAt: "2026-05-12T09:00:00.000Z",
+        remoteId: 12,
+      },
+      "bk",
+    );
+
+    expect(command).toMatchObject({
+      type: "ceo:turn",
+      args: {
+        source: "remote",
+        text: "사만다 지금 진행 중인 보고 작업 정리해줘",
+        senderId: "bk",
+        receivedAt: "2026-05-12T09:00:00.000Z",
+      },
+    });
+    expect(command.id).toContain("ceo-turn");
+  });
+
   test("maps narrow Telegram approval to latest decision approval without ids", () => {
     const command = commandFromRemoteInput(
       {

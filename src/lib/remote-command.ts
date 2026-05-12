@@ -266,6 +266,19 @@ export function commandFromRemoteInput(input: RemoteCommandInput, allowedSenderI
     };
   }
 
+  if (text && !text.startsWith("/")) {
+    return {
+      id: `remote-${commandToken}-ceo-turn`,
+      type: "ceo:turn",
+      args: {
+        text,
+        senderId: input.senderId,
+        source: "remote",
+        receivedAt,
+      },
+    };
+  }
+
   throw new Error(`unsupported remote command: ${text}`);
 }
 
