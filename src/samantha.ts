@@ -15,7 +15,14 @@ import {
   type AutopilotTransition,
 } from "./lib/autopilot-evidence-store";
 import { buildCeoStatusSnapshot, formatCeoStatusReport, type CeoStatusSnapshot } from "./lib/ceo-status";
-import { CeoTurnStore } from "./lib/ceo-turn-store";
+import {
+  CeoTurnStore,
+  type CeoTurnActor,
+  type CeoTurnDetectedIntent,
+  type CeoTurnLinkedStateIds,
+  type CeoTurnResponseBoundary,
+  type CeoTurnSource,
+} from "./lib/ceo-turn-store";
 import {
   buildCeoReportId,
   buildNotificationDigestId,
@@ -147,7 +154,7 @@ import {
   type ProjectProfile,
 } from "./lib/project-profile";
 import { ProjectBriefStore } from "./lib/project-brief-store";
-import { searchContext } from "./lib/context-search";
+import { searchContext, type ContextSearchResult } from "./lib/context-search";
 import { GovernedMemoryStore } from "./lib/memory-store";
 import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
 import {
@@ -191,6 +198,7 @@ import { branchForTask, worktreePathForTask } from "./lib/worktree";
 import { executeWorkerDispatch, prepareWorkerDispatch, commitWorkerChanges } from "./lib/worker-dispatch";
 import { evaluateWorkerResult } from "./lib/worker-result";
 import { gitHead, gitTopLevel } from "./lib/git";
+import { buildOperatingSurfaceView } from "./lib/operating-surface";
 import {
   buildBackupManifest,
   validateHostMigration,
@@ -2933,6 +2941,573 @@ async function answerLatestRemoteBlockerClarification(args: ParsedArgs, received
   return remoteAnswerRecordedReport();
 }
 
+interface CeoTurnContext {
+  projectProfiles: ProjectProfile[];
+  inferredProjectId?: string;
+  snapshot: CeoStatusSnapshot;
+  requests: OrchestrationRequestRecord[];
+  plans: OrchestratorPlanRecord[];
+  decisions: DecisionItem[];
+  actions: RemoteActionRecord[];
+  tasks: TaskSpec[];
+  runs: RunSummary[];
+  reports: CeoReportRecord[];
+  relevantRecords: ContextSearchResult[];
+}
+
+interface CeoTurnProcessResult {
+  response: string;
+  detectedIntent: CeoTurnDetectedIntent;
+  responseBoundary: CeoTurnResponseBoundary;
+  linkedStateIds: CeoTurnLinkedStateIds;
+}
+
+function naturalTurnSource(value: unknown): CeoTurnSource {
+  return value === "local" || value === "system" ? value : "remote";
+}
+
+function naturalTurnActor(value: unknown): CeoTurnActor {
+  return value === "operator" || value === "system" ? value : "bk";
+}
+
+async function loadCeoTurnContext(input: {
+  args: ParsedArgs;
+  text: string;
+  generatedAt: string;
+  requestedProjectId?: string;
+}): Promise<CeoTurnContext> {
+  const [
+    runs,
+    tasks,
+    taskDrafts,
+    decisions,
+    actions,
+    requests,
+    plans,
+    ops,
+    lifecycles,
+    reports,
+    governanceEvents,
+    budgetObservations,
+    budgetPolicies,
+    projectProfiles,
+    activeMemory,
+  ] = await Promise.all([
+    new RunIndex(runsPath(input.args)).list(),
+    new TaskStore(tasksPath(input.args)).list(),
+    new TaskDraftStore(taskDraftsPath(input.args)).list(),
+    new DecisionStore(decisionsPath(input.args)).list(),
+    new RemoteActionStore(remoteActionsPath(input.args)).list(),
+    new OrchestrationRequestStore(orchestrationRequestsPath(input.args)).list(),
+    new OrchestratorPlanStore(orchestratorPlansPath(input.args)).list(),
+    collectOps(input.args),
+    new RunLifecycleStore(runLifecyclePath(input.args)).list(),
+    new CeoReportStore(ceoReportsPath(input.args)).list(),
+    new GovernanceEventStore(governanceEventsPath(input.args)).list(),
+    new CostBudgetAuditStore(costBudgetAuditPath(input.args)).list(),
+    new BudgetPolicyStore(budgetPoliciesPath(input.args)).list(),
+    loadProjectProfiles(projectProfilesDir(input.args)),
+    new GovernedMemoryStore(memoryPath(input.args), new GovernanceEventStore(governanceEventsPath(input.args))).listActive(),
+  ]);
+  const inferredProject = input.requestedProjectId
+    ? undefined
+    : inferProjectProfile(projectProfiles, { requestText: input.text });
+  const projectId = input.requestedProjectId ?? inferredProject?.id;
+  const blockers = await orchestratorPlanBlockersForReport(input.args, plans);
+  const snapshot = buildCeoStatusSnapshot({
+    projectId,
+    generatedAt: input.generatedAt,
+    runs,
+    tasks,
+    taskDrafts,
+    decisions,
+    actions,
+    orchestrationRequests: requests,
+    orchestratorPlans: plans,
+    orchestratorPlanBlockers: blockers,
+    ops,
+    lifecycles,
+    reports,
+    governanceEvents,
+    budgetObservations,
+    budgetPolicies,
+  });
+  const projectBriefRead = projectId
+    ? await new ProjectBriefStore(projectBriefsPath(input.args), { profiles: projectProfiles }).readProjectBrief(projectId)
+    : undefined;
+  const decisionSummary = buildDecisionHistorySummary({
+    decisions,
+    governanceEvents,
+    reports,
+    plans,
+    generatedAt: input.generatedAt,
+    scope: projectId ? { projectId } : undefined,
+  });
+  const relevantRecords = searchContext({
+    ceoReports: reports,
+    decisionSummaries: [decisionSummary],
+    projectBriefReads: projectBriefRead ? [projectBriefRead] : [],
+    memoryRecords: activeMemory,
+    governanceEvents,
+  }, { text: input.text, projectId, limit: 8 }).results;
+
+  return {
+    projectProfiles,
+    inferredProjectId: projectId,
+    snapshot,
+    requests,
+    plans,
+    decisions,
+    actions,
+    tasks,
+    runs,
+    reports,
+    relevantRecords,
+  };
+}
+
+function normalizeTurnText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function isCeoStatusRequest(text: string): boolean {
+  const normalized = normalizeTurnText(text);
+  if (!normalized) return false;
+  const hasStatusSignal =
+    /(상태|현황|진행 상황|어디까지|막힌|막혔|막힘|블로커|문제|위험|지금 뭐|현재 뭐|what.*status|status|blocked|progress|summary)/i
+      .test(normalized);
+  if (!hasStatusSignal) return false;
+
+  const asksForNewWork =
+    /(구현|수정|고쳐|바꿔|추가|생성|작성|계획 보고|계획서|review|spec|evaluate|implementation|recover|recovery|복구)/i
+      .test(normalized);
+  if (/막힌|막혔|막힘|상태|현황|progress|status|blocked/i.test(normalized)) return true;
+  return !asksForNewWork;
+}
+
+function isNaturalApprovalAttempt(text: string): boolean {
+  const normalized = normalizeTurnText(text);
+  return /^(승인|승인해|진행|진행해|좋아|오케이|ㅇㅋ|ok|okay|yes|approve|go|proceed)(?:[.!。]*| 해줘| 해)$/.test(normalized);
+}
+
+function statusBoundaryKind(snapshot: CeoStatusSnapshot): CeoTurnResponseBoundary["kind"] {
+  const latestDecision = snapshot.needsDecision[0];
+  if (latestDecision?.decisionKind === "orchestrator_plan_approval") return "approval_boundary";
+  if (latestDecision) return "blocker";
+  if (snapshot.overall === "blocked" || snapshot.overall === "failed" || snapshot.overall === "needs_recovery") return "blocker";
+  if (snapshot.active.length > 0 || snapshot.nextAction.kind !== "none") return "next_safe_action";
+  return "result";
+}
+
+function lineItem(input: { title: string; status: string; detail?: string; id?: string }): string {
+  const detail = input.detail ? ` - ${compactLine(input.detail)}` : "";
+  const audit = input.id ? ` [${input.id}]` : "";
+  return `- ${compactLine(input.title)} (${input.status})${detail}${audit}`;
+}
+
+function formatLimitedSection<T>(
+  title: string,
+  items: T[],
+  format: (item: T) => string,
+  limit = 3,
+): string[] {
+  if (items.length === 0) return [];
+  const clipped = items.slice(0, limit).map(format);
+  return [
+    `${title}:`,
+    ...clipped,
+    items.length > limit ? `- 외 ${items.length - limit}건` : "",
+    "",
+  ].filter(Boolean);
+}
+
+function naturalNextSafeAction(snapshot: CeoStatusSnapshot): string {
+  const action = snapshot.nextAction;
+  if (action.kind === "none") return "지금 BK가 새로 결정할 일은 없습니다.";
+  if (action.kind === "plan") return "대기 중인 요청은 계획 생성이 다음 안전 단계입니다.";
+  if (action.kind === "review_plan") return "현재 계획은 검토, 수정, 또는 취소 같은 BK 판단 경계에 있습니다.";
+  if (action.kind === "answer_questions") return "계획 질문에 대한 BK 답변이 필요합니다.";
+  if (action.kind === "resolve_decision") return "pending 결정 항목을 BK가 명시적으로 판단해야 합니다.";
+  if (action.kind === "approve_action") return "worker action 승인은 deterministic approval gate 뒤에 멈춰 있습니다.";
+  if (action.kind === "watch_action") return "이미 준비되었거나 실행 중인 action은 Samantha 런타임이 계속 추적해야 합니다.";
+  if (action.kind === "recover") return "복구가 필요하지만 이 턴에서는 복구 실행을 시작하지 않았습니다.";
+  if (action.kind === "diagnose") return "운영 진단이 다음 안전 행동입니다.";
+  return action.reason;
+}
+
+function formatNaturalStatusResponse(input: {
+  snapshot: CeoStatusSnapshot;
+  relevantRecords: ContextSearchResult[];
+  approvalAttempt?: boolean;
+}): string {
+  const view = buildOperatingSurfaceView(input.snapshot);
+  const boundary = input.approvalAttempt ? "approval_boundary" : statusBoundaryKind(input.snapshot);
+  const lines = [
+    input.approvalAttempt
+      ? "자연어 승인은 아직 처리하지 않았습니다. 지금은 상태와 결정 경계만 정리합니다."
+      : boundary === "result"
+        ? "정리하면, 지금 BK가 직접 붙잡고 있어야 할 현재 작업은 없습니다."
+        : "정리하면, Samantha는 현재 상태를 확인했고 다음 경계가 분명합니다.",
+    "",
+    `현재 경계: ${boundary}`,
+    `상태: ${input.snapshot.overall}`,
+    `요약: ${view.summary}`,
+    "",
+    ...formatLimitedSection("BK 결정 필요", input.snapshot.needsDecision, (item) =>
+      lineItem({ title: item.title, status: item.status, detail: item.reason, id: `decision:${item.id}` }),
+    ),
+    ...formatLimitedSection("진행 중", input.snapshot.active, (item) =>
+      lineItem({ title: item.title, status: item.status, detail: item.detail, id: `${item.kind}:${item.id}` }),
+    ),
+    ...formatLimitedSection("막힌 항목", input.snapshot.blocked, (item) =>
+      lineItem({ title: item.title, status: item.status, detail: item.detail, id: `${item.kind}:${item.id}` }),
+    ),
+    ...formatLimitedSection("최근 완료", input.snapshot.completed, (item) =>
+      lineItem({ title: item.title, status: item.status, detail: item.detail, id: `${item.kind}:${item.id}` }),
+    ),
+    input.snapshot.risks.length ? "위험:" : "",
+    ...input.snapshot.risks.slice(0, 3).map((risk) => `- ${compactLine(risk)}`),
+    input.snapshot.risks.length ? "" : "",
+    `다음 안전 행동: ${naturalNextSafeAction(input.snapshot)}`,
+    input.relevantRecords.length
+      ? `참조한 deterministic context: ${input.relevantRecords.slice(0, 3).map((record) => `${record.kind}:${record.id}`).join(", ")}`
+      : "",
+  ];
+  return stripCeoTurnCommandChoreography(lines.filter((line) => line !== "").join("\n"));
+}
+
+function addLinkedId(target: CeoTurnLinkedStateIds, field: keyof CeoTurnLinkedStateIds, id: string | undefined): void {
+  if (!id) return;
+  const existing = target[field] ?? [];
+  if (!existing.includes(id)) target[field] = [...existing, id] as string[] | undefined;
+}
+
+function mergeLinkedStateIds(...items: CeoTurnLinkedStateIds[]): CeoTurnLinkedStateIds {
+  const merged: CeoTurnLinkedStateIds = {};
+  for (const item of items) {
+    for (const [field, ids] of Object.entries(item) as [keyof CeoTurnLinkedStateIds, string[] | undefined][]) {
+      for (const id of ids ?? []) addLinkedId(merged, field, id);
+    }
+  }
+  return merged;
+}
+
+function linkedStateFromContext(context: CeoTurnContext): CeoTurnLinkedStateIds {
+  const linked: CeoTurnLinkedStateIds = {};
+  for (const request of context.requests.filter((request) => request.status === "pending_plan")) {
+    addLinkedId(linked, "requestIds", request.id);
+  }
+  for (const plan of context.plans.filter((plan) => plan.status === "planned" || plan.status === "questions" || plan.status === "failed")) {
+    addLinkedId(linked, "planIds", plan.id);
+  }
+  for (const decision of context.decisions.filter((decision) => decision.status === "pending")) {
+    addLinkedId(linked, "decisionIds", decision.id);
+  }
+  for (const task of context.tasks.filter((task) => task.status === "pending" || task.status === "in_progress" || task.status === "blocked")) {
+    addLinkedId(linked, "taskIds", task.id);
+  }
+  for (const action of context.actions.filter((action) => action.status === "pending" || action.status === "approved" || action.status === "running" || action.status === "waiting")) {
+    addLinkedId(linked, "actionIds", action.id);
+  }
+  for (const run of context.runs.slice(-3)) addLinkedId(linked, "runIds", run.runId);
+  for (const report of context.reports.slice(-3)) addLinkedId(linked, "reportIds", report.id);
+  for (const result of context.relevantRecords) {
+    for (const citation of result.citations) {
+      if (citation.kind === "decision") addLinkedId(linked, "decisionIds", citation.id);
+      if (citation.kind === "orchestrator_plan") addLinkedId(linked, "planIds", citation.id);
+      if (citation.kind === "task") addLinkedId(linked, "taskIds", citation.id);
+      if (citation.kind === "remote_action") addLinkedId(linked, "actionIds", citation.id);
+      if (citation.kind === "run_log") addLinkedId(linked, "runIds", citation.id);
+      if (citation.kind === "ceo_report") addLinkedId(linked, "reportIds", citation.id);
+      if (citation.kind === "memory") addLinkedId(linked, "memoryIds", citation.id);
+      if (citation.kind === "governance_event") addLinkedId(linked, "governanceEventIds", citation.id);
+    }
+  }
+  return linked;
+}
+
+function linkedStateForPlanningResult(input: {
+  context: CeoTurnContext;
+  request?: OrchestrationRequestRecord;
+  plan?: OrchestratorPlanRecord;
+  decision?: DecisionItem;
+}): CeoTurnLinkedStateIds {
+  const linked = linkedStateFromContext(input.context);
+  addLinkedId(linked, "requestIds", input.request?.id);
+  addLinkedId(linked, "planIds", input.plan?.id);
+  addLinkedId(linked, "decisionIds", input.decision?.id);
+  for (const taskId of input.plan?.taskIds ?? []) addLinkedId(linked, "taskIds", taskId);
+  for (const actionId of input.plan?.actionIds ?? []) addLinkedId(linked, "actionIds", actionId);
+  return linked;
+}
+
+function latestMatchingRequest(input: {
+  requests: OrchestrationRequestRecord[];
+  requestId: string;
+  text: string;
+  projectId?: string;
+}): OrchestrationRequestRecord | undefined {
+  const exact = input.requests.find((request) => request.id === input.requestId);
+  if (exact) return exact;
+  return input.requests
+    .slice()
+    .reverse()
+    .find((request) => {
+      if (request.text.trim() !== input.text.trim()) return false;
+      if (!input.projectId) return true;
+      return selectedProjectIdFromAncestry(request.ancestry) === input.projectId;
+    });
+}
+
+function boundaryForPlannedTurn(input: {
+  plan?: OrchestratorPlanRecord;
+  blocker?: OrchestratorPlanBlocker;
+  decision?: DecisionItem;
+  failure?: string;
+}): CeoTurnResponseBoundary["kind"] {
+  if (input.failure || !input.plan) return "blocker";
+  if (input.plan.status === "failed" || input.plan.status === "questions" || input.blocker) return "blocker";
+  if (input.decision?.status === "pending") return "approval_boundary";
+  return "next_safe_action";
+}
+
+function formatPlanningResponse(input: {
+  request?: OrchestrationRequestRecord;
+  plan?: OrchestratorPlanRecord;
+  blocker?: OrchestratorPlanBlocker;
+  decision?: DecisionItem;
+  failure?: string;
+  relevantRecords: ContextSearchResult[];
+}): string {
+  const boundary = boundaryForPlannedTurn(input);
+  const plan = input.plan;
+  const payload = plan?.payload;
+  const taskLines = payload?.tasks.slice(0, 4).map((task) =>
+    `- ${compactLine(task.title)} (${task.targetAgent}, ${task.resultMode ?? "write"})`,
+  ) ?? [];
+  const questionLines = payload?.questions.slice(0, 3).map((question) => `- ${compactLine(question)}`) ?? [];
+  const blockerLines = [
+    ...(payload?.prerequisites ?? []),
+    ...(payload?.blockers ?? []),
+    ...(input.blocker?.violations ?? []),
+  ].slice(0, 5).map((item) => `- ${compactLine(item)}`);
+  const riskLines = payload?.risks.slice(0, 3).map((risk) => `- ${compactLine(risk)}`) ?? [];
+
+  const headline =
+    input.failure
+      ? "요청을 처리하려 했지만 deterministic planning boundary에서 막혔습니다."
+      : boundary === "approval_boundary"
+        ? "계획은 만들었습니다. 실행은 BK의 명시 판단과 deterministic materialization gate 뒤에 멈춰 있습니다."
+        : boundary === "blocker"
+          ? "요청은 처리했지만 바로 안전하게 진행할 수 없는 blocker가 있습니다."
+          : "요청을 처리했고 다음 안전 행동이 정리됐습니다.";
+
+  const lines = [
+    headline,
+    "",
+    `현재 경계: ${boundary}`,
+    input.request ? `요청 기록: ${input.request.id}` : "",
+    plan ? `계획 기록: ${plan.id}` : "",
+    plan ? `계획 상태: ${plan.status}` : "",
+    payload?.summary ? `요약: ${compactLine(payload.summary)}` : "",
+    input.failure ? `막힌 이유: ${compactLine(input.failure)}` : "",
+    "",
+    questionLines.length ? "BK에게 필요한 판단:" : "",
+    ...questionLines,
+    questionLines.length ? "" : "",
+    blockerLines.length ? "막힌 이유:" : "",
+    ...blockerLines,
+    blockerLines.length ? "" : "",
+    taskLines.length ? "선택된 계획 경로:" : "",
+    ...taskLines,
+    taskLines.length ? "" : "",
+    riskLines.length ? "위험:" : "",
+    ...riskLines,
+    riskLines.length ? "" : "",
+    input.decision && boundary === "approval_boundary"
+      ? `승인 경계: ${input.decision.title}. 이 턴에서는 승인, task 생성, action 승인, dispatch를 하지 않았습니다.`
+      : "",
+    boundary === "blocker"
+      ? "다음 안전 행동: BK 판단이나 계획 수정이 필요합니다. Samantha가 임의로 승인하거나 실행하지 않습니다."
+      : boundary === "approval_boundary"
+        ? "다음 안전 행동: BK가 계획을 승인하거나 수정 방향을 줘야 합니다. 그 전까지 실행 상태는 바뀌지 않습니다."
+        : "다음 안전 행동: 기존 deterministic queue와 safety gate가 계속 소유합니다.",
+    input.relevantRecords.length
+      ? `참조한 deterministic context: ${input.relevantRecords.slice(0, 3).map((record) => `${record.kind}:${record.id}`).join(", ")}`
+      : "",
+  ];
+  return stripCeoTurnCommandChoreography(lines.filter((line) => line !== "").join("\n"));
+}
+
+const ceoTurnCommandChoreographyPattern = /(^|[^\w/])\/(?:plan|plan_current|go|approve|now|check)\b/;
+
+function stripCeoTurnCommandChoreography(report: string): string {
+  const lines = report.split("\n").filter((line) => !ceoTurnCommandChoreographyPattern.test(line));
+  while (lines.at(-1)?.trim() === "") lines.pop();
+  return lines.join("\n");
+}
+
+async function processCeoTurnPlanningRequest(input: {
+  args: ParsedArgs;
+  command: InboxCommand;
+  text: string;
+  receivedAt: string;
+  senderId?: string;
+  source: CeoTurnSource;
+  context: CeoTurnContext;
+  requestedProjectId?: string;
+}): Promise<CeoTurnProcessResult> {
+  const classification = classifyRemoteRequest(input.text);
+  const requestedProjectId = input.requestedProjectId ?? input.context.inferredProjectId;
+  const requestId = buildOrchestrationRequestId(input.receivedAt, `${input.command.id ?? "ceo-turn"}-request`);
+
+  try {
+    await handleInboxCommand({
+      id: `${input.command.id ?? "ceo-turn"}-request`,
+      type: "orchestrator:add-request",
+      args: {
+        requestId,
+        text: input.text,
+        senderId: input.senderId,
+        source: input.source === "local" ? "local" : "remote",
+        receivedAt: input.receivedAt,
+        ...(requestedProjectId ? { projectId: requestedProjectId } : {}),
+      },
+    }, input.args);
+    await handleInboxCommand({
+      id: `${input.command.id ?? "ceo-turn"}-plan`,
+      type: "orchestrator:plan-latest",
+      args: {
+        source: input.source,
+        receivedAt: input.receivedAt,
+        ...(requestedProjectId ? { projectId: requestedProjectId } : {}),
+      },
+    }, input.args);
+  } catch (err) {
+    const failure = errorMessage(err);
+    return {
+      response: formatPlanningResponse({
+        failure,
+        relevantRecords: input.context.relevantRecords,
+      }),
+      detectedIntent: {
+        kind: classification.intent,
+        summary: `${classification.safeHandling}: ${classification.reasons.join("; ") || "classified CEO turn"}`,
+      },
+      responseBoundary: {
+        kind: "blocker",
+        summary: failure,
+        respondedAt: input.receivedAt,
+      },
+      linkedStateIds: linkedStateFromContext(input.context),
+    };
+  }
+
+  const [requests, plans, decisions] = await Promise.all([
+    new OrchestrationRequestStore(orchestrationRequestsPath(input.args)).list(),
+    new OrchestratorPlanStore(orchestratorPlansPath(input.args)).list(),
+    new DecisionStore(decisionsPath(input.args)).list(),
+  ]);
+  const request = latestMatchingRequest({ requests, requestId, text: input.text, projectId: requestedProjectId });
+  const plan = request
+    ? await new OrchestratorPlanStore(orchestratorPlansPath(input.args)).latestForRequest(request.id)
+    : undefined;
+  const blocker = plan
+    ? await blockerForOrchestratorPlan({
+        args: input.args,
+        plan,
+        createdAt: input.receivedAt,
+        commandId: `${input.command.id ?? "ceo-turn"}-preflight`,
+      })
+    : undefined;
+  const decision = plan
+    ? decisions
+        .slice()
+        .reverse()
+        .find((item) => item.subject?.type === "orchestrator_plan" && item.subject.id === plan.id && item.status === "pending")
+    : undefined;
+  const boundaryKind = boundaryForPlannedTurn({ plan, blocker, decision });
+
+  return {
+    response: formatPlanningResponse({
+      request,
+      plan,
+      blocker,
+      decision,
+      relevantRecords: input.context.relevantRecords,
+    }),
+    detectedIntent: {
+      kind: classification.intent,
+      summary: `${classification.safeHandling}: ${classification.reasons.join("; ") || "classified CEO turn"}`,
+    },
+    responseBoundary: {
+      kind: boundaryKind,
+      summary: plan?.payload?.summary ?? plan?.failure ?? "CEO turn planning request processed.",
+      respondedAt: input.receivedAt,
+    },
+    linkedStateIds: mergeLinkedStateIds(
+      linkedStateFromContext(input.context),
+      linkedStateForPlanningResult({ context: input.context, request, plan, decision }),
+    ),
+  };
+}
+
+async function handleCeoTurn(command: InboxCommand, args: ParsedArgs): Promise<string> {
+  const text = String(command.args?.text ?? "");
+  if (!text.trim()) throw new Error("CEO turn text is required");
+  const receivedAt = String(command.args?.receivedAt ?? new Date().toISOString());
+  const source = naturalTurnSource(command.args?.source);
+  const actor = naturalTurnActor(command.args?.actor);
+  const senderId = typeof command.args?.senderId === "string" ? command.args.senderId : undefined;
+  const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
+  const context = await loadCeoTurnContext({ args, text, generatedAt: receivedAt, requestedProjectId });
+  const approvalAttempt = isNaturalApprovalAttempt(text) && context.snapshot.needsDecision.length > 0;
+  const result = isCeoStatusRequest(text) || approvalAttempt
+    ? {
+        response: formatNaturalStatusResponse({
+          snapshot: context.snapshot,
+          relevantRecords: context.relevantRecords,
+          approvalAttempt,
+        }),
+        detectedIntent: {
+          kind: approvalAttempt ? "natural_approval_attempt" : "status_request",
+          summary: approvalAttempt
+            ? "Natural approval wording was not treated as deterministic approval in Stage 4."
+            : "Natural CEO status turn answered from deterministic state.",
+        },
+        responseBoundary: {
+          kind: approvalAttempt ? "approval_boundary" : statusBoundaryKind(context.snapshot),
+          summary: approvalAttempt
+            ? "Natural approval matching is not enabled; no decision was resolved."
+            : "Answered from deterministic CEO status context.",
+          respondedAt: receivedAt,
+        },
+        linkedStateIds: linkedStateFromContext(context),
+      }
+    : await processCeoTurnPlanningRequest({
+        args,
+        command,
+        text,
+        receivedAt,
+        senderId,
+        source,
+        context,
+        requestedProjectId,
+      });
+
+  await new CeoTurnStore(ceoTurnsPath(args)).create({
+    source,
+    actor,
+    text,
+    detectedIntent: result.detectedIntent,
+    responseBoundary: result.responseBoundary,
+    linkedStateIds: result.linkedStateIds,
+    createdAt: receivedAt,
+    updatedAt: receivedAt,
+  });
+  return result.response;
+}
+
 async function writeCeoNotificationOutbox(
   args: ParsedArgs,
   snapshot: CeoStatusSnapshot,
@@ -3248,38 +3823,7 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
     });
   }
   if (command.type === "ceo:turn") {
-    const text = String(command.args?.text ?? "");
-    if (!text.trim()) throw new Error("CEO turn text is required");
-    const createdAt = String(command.args?.receivedAt ?? new Date().toISOString());
-    const source = command.args?.source === "local" || command.args?.source === "system" ? command.args.source : "remote";
-    const actor = command.args?.actor === "operator" || command.args?.actor === "system" ? command.args.actor : "bk";
-    await new CeoTurnStore(ceoTurnsPath(args)).create({
-      source,
-      actor,
-      text,
-      detectedIntent: {
-        kind: "natural_turn",
-        summary: "Natural CEO turn captured from inbox routing.",
-      },
-      responseBoundary: {
-        kind: "queued_for_ceo_turn_runner",
-        summary: "Stage 3 records natural input only; no approval, execution, or orchestration transition was performed.",
-      },
-      createdAt,
-    });
-    return [
-      "# ceo-turn",
-      "",
-      "Natural CEO turn recorded.",
-      "",
-      "Routing:",
-      "- Plain non-slash Telegram text -> `ceo:turn`.",
-      "- Slash commands keep their compatibility mappings.",
-      "",
-      "Boundary:",
-      "- No shell command was executed.",
-      "- No approval, orchestration request, task, action, dispatch, merge, push, cleanup, or recovery was performed.",
-    ].join("\n");
+    return handleCeoTurn(command, args);
   }
   if (command.type === "status:show") {
     const runs = await new RunIndex(runsPath(args)).list();

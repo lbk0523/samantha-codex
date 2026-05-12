@@ -513,9 +513,11 @@ describe("inbox and remote commands", () => {
     const reports = (await readdir(outbox)).filter((file) => file.endsWith(".md"));
     expect(reports).toHaveLength(1);
     const report = await readFile(join(outbox, reports[0]), "utf8");
-    expect(report).toContain("# ceo-turn");
-    expect(report).toContain("Plain non-slash Telegram text -> `ceo:turn`.");
-    expect(report).toContain("No shell command was executed.");
+    expect(report).toContain("현재 경계:");
+    expect(report).toContain("다음 안전 행동:");
+    for (const command of ["/plan", "/go", "/approve", "/now", "/check"] as const) {
+      expect(report).not.toContain(command);
+    }
 
     const turns = await new CeoTurnStore(join(state, "ceo-turns.jsonl")).list();
     expect(turns).toEqual([
@@ -523,11 +525,11 @@ describe("inbox and remote commands", () => {
         source: "remote",
         actor: "bk",
         text: "사만다 지금 막힌 작업만 짧게 정리해줘",
-        detectedIntent: { kind: "natural_turn", summary: "Natural CEO turn captured from inbox routing." },
-        responseBoundary: {
-          kind: "queued_for_ceo_turn_runner",
-          summary: "Stage 3 records natural input only; no approval, execution, or orchestration transition was performed.",
-        },
+        detectedIntent: { kind: "status_request", summary: "Natural CEO status turn answered from deterministic state." },
+        responseBoundary: expect.objectContaining({
+          kind: expect.stringMatching(/^(result|blocker|next_safe_action)$/),
+          respondedAt: "2026-05-12T09:15:00.000Z",
+        }),
         linkedStateIds: {},
         createdAt: "2026-05-12T09:15:00.000Z",
         updatedAt: "2026-05-12T09:15:00.000Z",
@@ -537,6 +539,276 @@ describe("inbox and remote commands", () => {
     expect(await pathExists(join(state, "decisions.jsonl"))).toBe(false);
     expect(await pathExists(join(state, "tasks.jsonl"))).toBe(false);
     expect(await pathExists(join(state, "remote-actions.jsonl"))).toBe(false);
+  });
+
+  test("processes a CEO planning turn through the orchestrator and stops at an approval boundary", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-ceo-turn-planning-"));
+    tmpRoots.push(root);
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const agents = join(root, "agents");
+    const projects = join(root, "projects");
+    const repo = join(root, "repo");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await mkdir(repo, { recursive: true });
+    await writeActiveHostOwnership(state);
+    const fakeCodex = await writeFakeCodex(root, {
+      summary: "CEO turn planning report",
+      assumptions: ["보고 작업은 read-only입니다."],
+      questions: [],
+      scope: ["다음 작업 계획을 정리합니다."],
+      nonScope: ["파일 수정과 dispatch는 하지 않습니다."],
+      risks: ["실행은 별도 BK 판단이 필요합니다."],
+      tasks: [
+        {
+          id: "ceo-turn-plan-report",
+          title: "CEO turn plan report",
+          targetAgent: "codex-spec",
+          projectId: "samantha",
+          repoRoot: repo,
+          resultMode: "report",
+          targetFiles: [],
+          forbiddenChanges: ["**/*"],
+          setupCommands: [],
+          verifyCommands: ["true"],
+          instructions: "Read current context and produce a plan report. Do not edit files.",
+          dependencies: [],
+        },
+      ],
+      batches: [["ceo-turn-plan-report"]],
+      userMessage: "계획 보고 초안을 만들었습니다.",
+    });
+    await writeFile(join(agents, "codex-orchestrator.json"), `${JSON.stringify(orchestrator, null, 2)}\n`, "utf8");
+    await writeFile(
+      join(agents, "codex-spec.json"),
+      `${JSON.stringify(
+        {
+          ...reviewer,
+          id: "codex-spec",
+          role: "spec",
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(projects, "samantha.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "samantha",
+          repoRoot: repo,
+          keywords: ["samantha", "사만다"],
+          setupCommands: [],
+          verifyCommands: ["true"],
+          forbiddenChanges: ["state/**"],
+          defaultRemoteScopeId: "planning_report",
+          remoteScopes: [
+            {
+              id: "planning_report",
+              label: "Samantha report",
+              description: "Read-only Samantha planning reports.",
+              risk: "low",
+              resultMode: "report",
+              targetFiles: ["docs/**"],
+              keywords: ["계획", "보고"],
+              planSteps: ["Read context.", "Return report."],
+              successCriteria: ["Report is actionable."],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-ceo-turn.json"),
+      JSON.stringify({
+        id: "remote-ceo-turn-plan",
+        type: "ceo:turn",
+        args: {
+          text: "samantha 다음 작업 계획 보고해줘",
+          senderId: "bk",
+          source: "remote",
+          receivedAt: "2026-05-12T10:00:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+        `--codex-bin=${fakeCodex}`,
+        `--orchestrator-repo-root=${root}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "001-ceo-turn.md"), "utf8");
+    expect(report).toContain("현재 경계: approval_boundary");
+    expect(report).toContain("계획은 만들었습니다.");
+    expect(report).toContain("CEO turn plan report");
+    for (const command of ["/plan", "/go", "/approve", "/now", "/check"] as const) {
+      expect(report).not.toContain(command);
+    }
+
+    const requests = await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).list();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      status: "planned",
+      text: "samantha 다음 작업 계획 보고해줘",
+      ancestry: {
+        mode: "assigned",
+        projectId: "samantha",
+      },
+    });
+    const plans = await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).list();
+    expect(plans).toHaveLength(1);
+    expect(plans[0]).toMatchObject({
+      status: "planned",
+      requestId: requests[0]?.id,
+      payload: {
+        summary: "CEO turn planning report",
+        tasks: [{ id: "ceo-turn-plan-report", targetAgent: "codex-spec", resultMode: "report" }],
+      },
+    });
+    const decisions = await new DecisionStore(join(state, "decisions.jsonl")).list();
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      kind: "orchestrator_plan_approval",
+      status: "pending",
+      subject: { type: "orchestrator_plan", id: plans[0]?.id },
+    });
+    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    expect(await new RemoteActionStore(join(state, "remote-actions.jsonl")).list()).toEqual([]);
+
+    const turns = await new CeoTurnStore(join(state, "ceo-turns.jsonl")).list();
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      detectedIntent: { kind: "planning_report" },
+      responseBoundary: {
+        kind: "approval_boundary",
+        summary: "CEO turn planning report",
+        respondedAt: "2026-05-12T10:00:00.000Z",
+      },
+      linkedStateIds: {
+        requestIds: [requests[0]?.id],
+        planIds: [plans[0]?.id],
+        decisionIds: [decisions[0]?.id],
+      },
+    });
+  });
+
+  test("does not treat natural approval wording as deterministic approval", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-ceo-turn-natural-approval-"));
+    tmpRoots.push(root);
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    const decision = createDecisionItem({
+      title: "Review pending decision",
+      prompt: "Approve or revise the pending decision.",
+      kind: "manual",
+      source: "system",
+      subject: { type: "manual", id: "manual-natural-approval" },
+      options: ["approve", "revise", "cancel"],
+      createdAt: "2026-05-12T10:10:00.000Z",
+    });
+    await writeFile(join(state, "decisions.jsonl"), `${JSON.stringify(decision)}\n`, "utf8");
+    await writeFile(
+      join(inbox, "001-ceo-approval.json"),
+      JSON.stringify({
+        id: "remote-ceo-natural-approval",
+        type: "ceo:turn",
+        args: {
+          text: "좋아",
+          senderId: "bk",
+          source: "remote",
+          receivedAt: "2026-05-12T10:11:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "001-ceo-approval.md"), "utf8");
+    expect(report).toContain("자연어 승인은 아직 처리하지 않았습니다.");
+    expect(report).toContain("현재 경계: approval_boundary");
+    for (const command of ["/plan", "/go", "/approve", "/now", "/check"] as const) {
+      expect(report).not.toContain(command);
+    }
+    expect(await new DecisionStore(join(state, "decisions.jsonl")).find(decision.id)).toMatchObject({
+      status: "pending",
+    });
+    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    expect(await new RemoteActionStore(join(state, "remote-actions.jsonl")).list()).toEqual([]);
+    expect((await new CeoTurnStore(join(state, "ceo-turns.jsonl")).list())[0]).toMatchObject({
+      detectedIntent: {
+        kind: "natural_approval_attempt",
+        summary: "Natural approval wording was not treated as deterministic approval in Stage 4.",
+      },
+      responseBoundary: {
+        kind: "approval_boundary",
+        summary: "Natural approval matching is not enabled; no decision was resolved.",
+        respondedAt: "2026-05-12T10:11:00.000Z",
+      },
+      linkedStateIds: {
+        decisionIds: [decision.id],
+      },
+    });
   });
 
   test("processes remote dispatch preparation into a pending action without executing", async () => {
