@@ -1011,7 +1011,7 @@ describe("inbox and remote commands", () => {
     });
   });
 
-  test("does not treat natural approval wording as deterministic approval", async () => {
+  test("does not treat vague natural feedback as deterministic approval", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-ceo-turn-natural-approval-"));
     tmpRoots.push(root);
     const state = join(root, "state");
@@ -1066,8 +1066,8 @@ describe("inbox and remote commands", () => {
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 
     const report = await readFile(join(outbox, "001-ceo-approval.md"), "utf8");
-    expect(report).toContain("자연어 승인은 아직 처리하지 않았습니다.");
-    expect(report).toContain("현재 경계: approval_boundary");
+    expect(report).toContain("명시 승인 문구가 아니어서 decision을 resolve하지 않았습니다.");
+    expect(report).toContain("현재 경계: blocker");
     for (const command of ["/plan", "/go", "/approve", "/now", "/check"] as const) {
       expect(report).not.toContain(command);
     }
@@ -1078,12 +1078,12 @@ describe("inbox and remote commands", () => {
     expect(await new RemoteActionStore(join(state, "remote-actions.jsonl")).list()).toEqual([]);
     expect((await new CeoTurnStore(join(state, "ceo-turns.jsonl")).list())[0]).toMatchObject({
       detectedIntent: {
-        kind: "natural_approval_attempt",
-        summary: "Natural approval wording was not treated as deterministic approval in Stage 4.",
+        kind: "decision_feedback",
+        summary: "Natural feedback at a decision boundary was not explicit approval; no decision was resolved.",
       },
       responseBoundary: {
-        kind: "approval_boundary",
-        summary: "Natural approval matching is not enabled; no decision was resolved.",
+        kind: "blocker",
+        summary: "Feedback was not explicit approval; no decision was resolved.",
         respondedAt: "2026-05-12T10:11:00.000Z",
       },
       linkedStateIds: {

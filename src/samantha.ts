@@ -3109,7 +3109,25 @@ function isCeoStatusRequest(text: string): boolean {
 
 function isNaturalApprovalAttempt(text: string): boolean {
   const normalized = normalizeTurnText(text);
-  return /^(승인|승인해|진행|진행해|좋아|오케이|ㅇㅋ|ok|okay|yes|approve|go|proceed)(?:[.!。]*| 해줘| 해)$/.test(normalized);
+  if (!normalized) return false;
+  if (/[?？]/.test(normalized)) return false;
+  if (/(승인하지|진행하지|실행하지|하지 마|하지마|보류|취소|거절|수정|don't|do not|not approve|not approved|hold|wait|cancel|reject|revise)/i.test(normalized)) {
+    return false;
+  }
+  return (
+    /(^|\s)(승인|승인해|승인합니다|승인할게|승인하자|승인해줘|승인 완료)(\s|[.!。]|$)/.test(normalized) ||
+    /(계획|plan).{0,16}승인/.test(normalized) ||
+    /승인.{0,16}(계획|plan)/.test(normalized) ||
+    /(진행|실행)(해|하자|해줘|하세요|시켜)(\s|[.!。]|$)/.test(normalized) ||
+    /\b(i approve|approve it|approve the plan|approved|approval granted|go ahead|proceed|proceed with it|greenlight|green light)\b/i.test(normalized) ||
+    /^go[.!。]?$/.test(normalized)
+  );
+}
+
+function isNonApprovalDecisionFeedback(text: string): boolean {
+  const normalized = normalizeTurnText(text);
+  if (!normalized || isNaturalApprovalAttempt(text)) return false;
+  return /^(좋아|좋네|좋아 보|괜찮|오케이|ㅇㅋ|ok|okay|yes|응|그래|sounds good|looks good|nice|good)(\s|[.!。]|$)/i.test(normalized);
 }
 
 function statusBoundaryKind(snapshot: CeoStatusSnapshot): CeoTurnResponseBoundary["kind"] {
@@ -3160,16 +3178,17 @@ function naturalNextSafeAction(snapshot: CeoStatusSnapshot): string {
 function formatNaturalStatusResponse(input: {
   snapshot: CeoStatusSnapshot;
   relevantRecords: ContextSearchResult[];
-  approvalAttempt?: boolean;
+  nonApprovalFeedback?: boolean;
 }): string {
   const view = buildOperatingSurfaceView(input.snapshot);
-  const boundary = input.approvalAttempt ? "approval_boundary" : statusBoundaryKind(input.snapshot);
+  const boundary = statusBoundaryKind(input.snapshot);
+  const headline = input.nonApprovalFeedback
+    ? "피드백은 확인했지만 명시 승인 문구가 아니어서 decision을 resolve하지 않았습니다."
+    : boundary === "result"
+      ? "정리하면, 지금 BK가 직접 붙잡고 있어야 할 현재 작업은 없습니다."
+      : "정리하면, Samantha는 현재 상태를 확인했고 다음 경계가 분명합니다.";
   const lines = [
-    input.approvalAttempt
-      ? "자연어 승인은 아직 처리하지 않았습니다. 지금은 상태와 결정 경계만 정리합니다."
-      : boundary === "result"
-        ? "정리하면, 지금 BK가 직접 붙잡고 있어야 할 현재 작업은 없습니다."
-        : "정리하면, Samantha는 현재 상태를 확인했고 다음 경계가 분명합니다.",
+    headline,
     "",
     `현재 경계: ${boundary}`,
     `상태: ${input.snapshot.overall}`,
@@ -3771,6 +3790,213 @@ async function storeLearningCandidates(
   return stored;
 }
 
+interface NaturalApprovalCandidate {
+  decision: DecisionItem;
+  plan?: OrchestratorPlanRecord;
+  projectId?: string;
+}
+
+function naturalApprovalCandidates(input: {
+  context: CeoTurnContext;
+  projectId?: string;
+}): NaturalApprovalCandidate[] {
+  return input.context.decisions
+    .filter((decision) =>
+      decisionIsCurrentPlanApproval(decision, input.context.plans) &&
+      decisionMatchesProject(decision, input.context.plans, input.projectId)
+    )
+    .map((decision) => {
+      const plan = input.context.plans.find((item) => item.id === decision.subject?.id);
+      return {
+        decision,
+        plan,
+        projectId: projectIdForPlanDecision(decision, input.context.plans),
+      };
+    });
+}
+
+function decisionMatchesNaturalApprovalScope(input: {
+  decision: DecisionItem;
+  plans: OrchestratorPlanRecord[];
+  projectId?: string;
+}): boolean {
+  if (!input.projectId) return true;
+  const decisionProjectId = selectedProjectIdFromAncestry(input.decision.ancestry);
+  if (decisionProjectId) return decisionProjectId === input.projectId;
+  if (input.decision.subject?.type === "orchestrator_plan") {
+    return decisionMatchesProject(input.decision, input.plans, input.projectId);
+  }
+  return true;
+}
+
+function naturalApprovalLikeCandidates(input: {
+  context: CeoTurnContext;
+  projectId?: string;
+}): NaturalApprovalCandidate[] {
+  return input.context.decisions
+    .filter((decision) =>
+      decision.status === "pending" &&
+      decision.options.includes("approve") &&
+      decisionHasCurrentPlanSubject(decision, input.context.plans) &&
+      decisionMatchesNaturalApprovalScope({ decision, plans: input.context.plans, projectId: input.projectId })
+    )
+    .map((decision) => {
+      const plan = decision.subject?.type === "orchestrator_plan"
+        ? input.context.plans.find((item) => item.id === decision.subject?.id)
+        : undefined;
+      return {
+        decision,
+        plan,
+        projectId: projectIdForPlanDecision(decision, input.context.plans),
+      };
+    });
+}
+
+function naturalApprovalCandidateLabel(candidate: NaturalApprovalCandidate): string {
+  const title = compactLine(candidate.decision.title);
+  return candidate.projectId ? `${candidate.projectId}: ${title}` : title;
+}
+
+function linkedStateForNaturalApproval(input: {
+  context: CeoTurnContext;
+  candidates?: NaturalApprovalCandidate[];
+  decision?: DecisionItem;
+  plan?: OrchestratorPlanRecord;
+}): CeoTurnLinkedStateIds {
+  const linked = linkedStateFromContext(input.context);
+  addLinkedId(linked, "decisionIds", input.decision?.id);
+  addLinkedId(linked, "planIds", input.plan?.id);
+  for (const candidate of input.candidates ?? []) {
+    addLinkedId(linked, "decisionIds", candidate.decision.id);
+    addLinkedId(linked, "planIds", candidate.plan?.id);
+  }
+  return linked;
+}
+
+function formatNaturalApprovalResolvedResponse(input: {
+  decision: DecisionItem;
+  plan?: OrchestratorPlanRecord;
+}): string {
+  const lines = [
+    "승인했습니다. 자연어 문구가 pending deterministic plan approval decision 하나와만 일치했습니다.",
+    "",
+    "현재 경계: next_safe_action",
+    `승인한 결정: ${compactLine(input.decision.title)}`,
+    input.plan?.payload?.summary ? `계획 요약: ${compactLine(input.plan.payload.summary)}` : "",
+    "다음 안전 행동: 기존 materialization, queue, writer, project, risk gate가 계속 소유합니다. 이 턴에서는 task 생성, action 승인, dispatch, merge, push, cleanup, recovery, memory write를 하지 않았습니다.",
+  ];
+  return stripCeoTurnCommandChoreography(lines.filter(Boolean).join("\n"));
+}
+
+function formatNaturalApprovalAmbiguousResponse(input: {
+  candidates: NaturalApprovalCandidate[];
+  projectId?: string;
+}): string {
+  const labels = input.candidates.slice(0, 4).map(naturalApprovalCandidateLabel);
+  const question = !input.projectId && input.candidates.some((candidate) => candidate.projectId)
+    ? "어느 프로젝트의 계획을 승인할까요?"
+    : "어느 계획을 승인할까요?";
+  const lines = [
+    "승인하지 않았습니다. 자연어 승인 문구가 여러 pending approval-capable deterministic decision에 걸립니다.",
+    "",
+    "현재 경계: approval_boundary",
+    `확인 질문: ${question}`,
+    labels.length ? `후보: ${labels.join(" / ")}` : "",
+    input.candidates.length > labels.length ? `외 ${input.candidates.length - labels.length}건` : "",
+    "경계: 잘못된 프로젝트나 계획 승인을 막기 위해 state를 변경하지 않았습니다.",
+  ];
+  return stripCeoTurnCommandChoreography(lines.filter(Boolean).join("\n"));
+}
+
+function formatNaturalApprovalNoMatchResponse(input: {
+  snapshot: CeoStatusSnapshot;
+  relevantRecords: ContextSearchResult[];
+  projectId?: string;
+}): string {
+  const lines = [
+    "승인하지 않았습니다. 자연어 승인 문구와 일치하는 current pending plan approval decision이 없습니다.",
+    "",
+    input.projectId ? `선택된 프로젝트: ${input.projectId}` : "",
+    "경계: stale approval, manual/governance/memory/risk-only decision, merge, push, cleanup, recovery, and authority gates are not resolved by natural wording alone.",
+    "",
+    formatNaturalStatusResponse({
+      snapshot: input.snapshot,
+      relevantRecords: input.relevantRecords,
+    }),
+  ];
+  return stripCeoTurnCommandChoreography(lines.filter(Boolean).join("\n"));
+}
+
+async function processCeoTurnNaturalApproval(input: {
+  args: ParsedArgs;
+  receivedAt: string;
+  context: CeoTurnContext;
+  requestedProjectId?: string;
+}): Promise<CeoTurnProcessResult> {
+  const projectId = input.requestedProjectId ?? input.context.inferredProjectId;
+  const candidates = naturalApprovalCandidates({ context: input.context, projectId });
+  const approvalLikeCandidates = naturalApprovalLikeCandidates({ context: input.context, projectId });
+
+  if (candidates.length !== 1 || approvalLikeCandidates.length !== 1) {
+    const ambiguousCandidates = approvalLikeCandidates.length > 1 ? approvalLikeCandidates : candidates;
+    const response = ambiguousCandidates.length > 1
+      ? formatNaturalApprovalAmbiguousResponse({ candidates: ambiguousCandidates, projectId })
+      : formatNaturalApprovalNoMatchResponse({
+          snapshot: input.context.snapshot,
+          relevantRecords: input.context.relevantRecords,
+          projectId,
+        });
+    return {
+      response,
+      detectedIntent: {
+        kind: "natural_approval_attempt",
+        summary: ambiguousCandidates.length > 1
+          ? "Natural approval wording was ambiguous across pending approval-capable decisions; no decision was resolved."
+          : "Natural approval wording had no matching current plan approval decision; no decision was resolved.",
+      },
+      responseBoundary: {
+        kind: "approval_boundary",
+        summary: ambiguousCandidates.length > 1
+          ? "Multiple pending approval-capable decisions could match."
+          : "No current plan approval decision matched natural approval wording.",
+        respondedAt: input.receivedAt,
+      },
+      linkedStateIds: linkedStateForNaturalApproval({
+        context: input.context,
+        candidates: ambiguousCandidates,
+      }),
+    };
+  }
+
+  const candidate = candidates[0];
+  const resolved = await new DecisionStore(decisionsPath(input.args)).resolve(candidate.decision.id, {
+    resolvedAt: input.receivedAt,
+    resolution: "approved",
+    note: "Approved via natural CEO turn.",
+  });
+
+  return {
+    response: formatNaturalApprovalResolvedResponse({
+      decision: resolved,
+      plan: candidate.plan,
+    }),
+    detectedIntent: {
+      kind: "natural_approval_attempt",
+      summary: "Natural approval wording resolved exactly one current plan approval decision.",
+    },
+    responseBoundary: {
+      kind: "next_safe_action",
+      summary: "Approved exactly one current deterministic plan approval decision; no execution was performed.",
+      respondedAt: input.receivedAt,
+    },
+    linkedStateIds: linkedStateForNaturalApproval({
+      context: input.context,
+      decision: resolved,
+      plan: candidate.plan,
+    }),
+  };
+}
+
 async function handleCeoTurn(command: InboxCommand, args: ParsedArgs): Promise<string> {
   const text = String(command.args?.text ?? "");
   if (!text.trim()) throw new Error("CEO turn text is required");
@@ -3780,39 +4006,53 @@ async function handleCeoTurn(command: InboxCommand, args: ParsedArgs): Promise<s
   const senderId = typeof command.args?.senderId === "string" ? command.args.senderId : undefined;
   const requestedProjectId = typeof command.args?.projectId === "string" ? command.args.projectId : undefined;
   const context = await loadCeoTurnContext({ args, text, generatedAt: receivedAt, requestedProjectId });
-  const approvalAttempt = isNaturalApprovalAttempt(text) && context.snapshot.needsDecision.length > 0;
-  const result = isCeoStatusRequest(text) || approvalAttempt
-    ? {
-        response: formatNaturalStatusResponse({
-          snapshot: context.snapshot,
-          relevantRecords: context.relevantRecords,
-          approvalAttempt,
-        }),
-        detectedIntent: {
-          kind: approvalAttempt ? "natural_approval_attempt" : "status_request",
-          summary: approvalAttempt
-            ? "Natural approval wording was not treated as deterministic approval in Stage 4."
-            : "Natural CEO status turn answered from deterministic state.",
-        },
-        responseBoundary: {
-          kind: approvalAttempt ? "approval_boundary" : statusBoundaryKind(context.snapshot),
-          summary: approvalAttempt
-            ? "Natural approval matching is not enabled; no decision was resolved."
-            : "Answered from deterministic CEO status context.",
-          respondedAt: receivedAt,
-        },
-        linkedStateIds: linkedStateFromContext(context),
-      }
-    : await processCeoTurnPlanningRequest({
-        args,
-        command,
-        text,
-        receivedAt,
-        senderId,
-        source,
-        context,
-        requestedProjectId,
-      });
+  const approvalAttempt = isNaturalApprovalAttempt(text);
+  const hasPendingDecision = context.decisions.some((decision) =>
+    decision.status === "pending" && decisionHasCurrentPlanSubject(decision, context.plans)
+  );
+  const nonApprovalFeedback = !approvalAttempt && hasPendingDecision && isNonApprovalDecisionFeedback(text);
+  let result: CeoTurnProcessResult;
+  if (approvalAttempt) {
+    result = await processCeoTurnNaturalApproval({
+      args,
+      receivedAt,
+      context,
+      requestedProjectId,
+    });
+  } else if (isCeoStatusRequest(text) || nonApprovalFeedback) {
+    result = {
+      response: formatNaturalStatusResponse({
+        snapshot: context.snapshot,
+        relevantRecords: context.relevantRecords,
+        nonApprovalFeedback,
+      }),
+      detectedIntent: {
+        kind: nonApprovalFeedback ? "decision_feedback" : "status_request",
+        summary: nonApprovalFeedback
+          ? "Natural feedback at a decision boundary was not explicit approval; no decision was resolved."
+          : "Natural CEO status turn answered from deterministic state.",
+      },
+      responseBoundary: {
+        kind: statusBoundaryKind(context.snapshot),
+        summary: nonApprovalFeedback
+          ? "Feedback was not explicit approval; no decision was resolved."
+          : "Answered from deterministic CEO status context.",
+        respondedAt: receivedAt,
+      },
+      linkedStateIds: linkedStateFromContext(context),
+    };
+  } else {
+    result = await processCeoTurnPlanningRequest({
+      args,
+      command,
+      text,
+      receivedAt,
+      senderId,
+      source,
+      context,
+      requestedProjectId,
+    });
+  }
 
   const turn = createCeoTurnRecord({
     source,

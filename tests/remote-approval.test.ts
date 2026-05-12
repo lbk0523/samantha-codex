@@ -315,6 +315,185 @@ describe("remote approval inbox flow", () => {
     });
   });
 
+  test("clear natural approval resolves the single current plan decision without executing work", async () => {
+    const root = await makeRoot();
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    await mkdir(state, { recursive: true });
+    await mkdir(inbox, { recursive: true });
+    const decision = createDecisionItem({
+      title: "Review plan: Natural approval",
+      prompt: "Approve, revise, or cancel before dispatch.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-natural-approval" },
+      createdAt: "2026-05-07T11:00:00.000Z",
+    });
+    await writeFile(join(state, "decisions.jsonl"), `${JSON.stringify(decision)}\n`, "utf8");
+    await writeFile(join(state, "orchestrator-plans.jsonl"), `${JSON.stringify(planRecord("plan-natural-approval"))}\n`, "utf8");
+    await writeFile(
+      join(inbox, "natural-approve.json"),
+      JSON.stringify({
+        id: "natural-approve",
+        type: "ceo:turn",
+        args: {
+          source: "remote",
+          senderId: "bk",
+          text: "승인해줘",
+          receivedAt: "2026-05-07T11:02:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    expect(await processInbox({ state, inbox, outbox, archive })).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "natural-approve.md"), "utf8");
+    expect(report).toContain("승인했습니다.");
+    expect(report).toContain("현재 경계: next_safe_action");
+    expect(report).toContain("task 생성, action 승인, dispatch, merge, push, cleanup, recovery, memory write를 하지 않았습니다.");
+    for (const command of ["/plan", "/go", "/approve", "/now", "/check"] as const) {
+      expect(report).not.toContain(command);
+    }
+    const decisions = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { status: string; resolution?: string; resolutionNote?: string });
+    expect(decisions[0]).toMatchObject({
+      status: "resolved",
+      resolution: "approved",
+      resolutionNote: "Approved via natural CEO turn.",
+    });
+    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(state, "remote-actions.jsonl"), "utf8")).rejects.toThrow();
+    const turns = (await readFile(join(state, "ceo-turns.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { detectedIntent: { kind: string; summary?: string }; responseBoundary: { kind: string; summary?: string } });
+    expect(turns[0]).toMatchObject({
+      detectedIntent: {
+        kind: "natural_approval_attempt",
+        summary: "Natural approval wording resolved exactly one current plan approval decision.",
+      },
+      responseBoundary: {
+        kind: "next_safe_action",
+        summary: "Approved exactly one current deterministic plan approval decision; no execution was performed.",
+      },
+    });
+  });
+
+  test("ambiguous natural approval asks one clarifying question and does not resolve decisions", async () => {
+    const root = await makeRoot();
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    await mkdir(state, { recursive: true });
+    await mkdir(inbox, { recursive: true });
+    const decisions = ["A", "B"].map((title, index) =>
+      createDecisionItem({
+        title: `Review plan: Natural ${title}`,
+        prompt: "Approve, revise, or cancel before dispatch.",
+        kind: "orchestrator_plan_approval",
+        source: "system",
+        subject: { type: "orchestrator_plan", id: `plan-natural-${index}` },
+        createdAt: `2026-05-07T11:0${index}:00.000Z`,
+      }),
+    );
+    await writeFile(join(state, "decisions.jsonl"), decisions.map((decision) => JSON.stringify(decision)).join("\n") + "\n", "utf8");
+    await writeFile(
+      join(state, "orchestrator-plans.jsonl"),
+      [planRecord("plan-natural-0"), planRecord("plan-natural-1")].map((item) => JSON.stringify(item)).join("\n") + "\n",
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "natural-ambiguous.json"),
+      JSON.stringify({
+        id: "natural-ambiguous",
+        type: "ceo:turn",
+        args: {
+          source: "remote",
+          senderId: "bk",
+          text: "진행해줘",
+          receivedAt: "2026-05-07T11:03:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    expect(await processInbox({ state, inbox, outbox, archive })).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "natural-ambiguous.md"), "utf8");
+    expect(report).toContain("승인하지 않았습니다.");
+    expect(report).toContain("현재 경계: approval_boundary");
+    expect(report).toContain("확인 질문: 어느 계획을 승인할까요?");
+    expect(report).toContain("Review plan: Natural A");
+    expect(report).toContain("Review plan: Natural B");
+    for (const command of ["/plan", "/go", "/approve", "/now", "/check"] as const) {
+      expect(report).not.toContain(command);
+    }
+    const records = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { id: string; status: string; resolution?: string });
+    expect(records).toEqual([
+      expect.objectContaining({ id: decisions[0]?.id, status: "pending" }),
+      expect.objectContaining({ id: decisions[1]?.id, status: "pending" }),
+    ]);
+    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(state, "remote-actions.jsonl"), "utf8")).rejects.toThrow();
+  });
+
+  test("vague natural feedback at an approval boundary is not treated as approval", async () => {
+    const root = await makeRoot();
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    await mkdir(state, { recursive: true });
+    await mkdir(inbox, { recursive: true });
+    const decision = createDecisionItem({
+      title: "Review plan: Vague feedback",
+      prompt: "Approve, revise, or cancel before dispatch.",
+      kind: "orchestrator_plan_approval",
+      source: "system",
+      subject: { type: "orchestrator_plan", id: "plan-vague-feedback" },
+      createdAt: "2026-05-07T11:00:00.000Z",
+    });
+    await writeFile(join(state, "decisions.jsonl"), `${JSON.stringify(decision)}\n`, "utf8");
+    await writeFile(join(state, "orchestrator-plans.jsonl"), `${JSON.stringify(planRecord("plan-vague-feedback"))}\n`, "utf8");
+    await writeFile(
+      join(inbox, "natural-feedback.json"),
+      JSON.stringify({
+        id: "natural-feedback",
+        type: "ceo:turn",
+        args: {
+          source: "remote",
+          senderId: "bk",
+          text: "좋아 보여",
+          receivedAt: "2026-05-07T11:04:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    expect(await processInbox({ state, inbox, outbox, archive })).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "natural-feedback.md"), "utf8");
+    expect(report).toContain("명시 승인 문구가 아니어서 decision을 resolve하지 않았습니다.");
+    expect(report).toContain("현재 경계:");
+    const decisions = (await readFile(join(state, "decisions.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { status: string; resolution?: string });
+    expect(decisions[0]).toMatchObject({ status: "pending" });
+    await expect(readFile(join(state, "orchestration-requests.jsonl"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(state, "remote-actions.jsonl"), "utf8")).rejects.toThrow();
+  });
+
   test("redirects Telegram approval when more than one current plan decision is pending", async () => {
     const root = await makeRoot();
     const state = join(root, "state");
