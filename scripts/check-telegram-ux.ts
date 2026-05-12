@@ -255,8 +255,10 @@ const runLog: WorkerRunLog = {
 
 function checkCommandSurface(): void {
   const help = remoteHelpReport();
+  assert(help.includes("Samantha에게 자연어로 말하세요."), "remote help must point BK to natural CEO turns");
+  assert(help.includes("/help"), "remote help must include /help");
   for (const command of visibleTelegramCommands.filter((command) => command !== "/start" && command !== "/help")) {
-    assert(help.includes(command), `remote help must include ${command}`);
+    assert(!help.includes(command), `remote help must not include dogfood-hidden command ${command}`);
   }
   assertDoesNotContainAny("remote help", help, deprecatedTelegramCommands);
   assertNoHyphenCommands("remote help", help);

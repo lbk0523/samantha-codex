@@ -204,16 +204,15 @@ const orchestratorPlan: OrchestratorPlanRecord = {
 };
 
 describe("operator reports", () => {
-  test("documents safe-gated remote commands", () => {
+  test("dogfood help points BK to natural CEO turns instead of slash choreography", () => {
     const report = remoteHelpReport();
 
-    expect(report).toContain("/now");
-    expect(report).toContain("/work <요청>");
-    expect(report).toContain("/plan");
-    expect(report).toContain("/approve");
-    expect(report).toContain("/go");
-    expect(report).toContain("/unblock");
-    expect(report).toContain("/drop stale project:<project>");
+    expect(report).toContain("Samantha에게 자연어로 말하세요.");
+    expect(report).toContain("report-only 요청은 가능한 범위까지 Samantha가 진행");
+    expect(report).toContain("/help");
+    for (const command of ["/work", "/plan", "/plan_current", "/approve", "/answer", "/go", "/revise", "/cancel", "/recover", "/unblock", "/drop", "/now", "/check", "/problems"] as const) {
+      expect(report).not.toContain(command);
+    }
     expect(report).not.toContain("/help_advanced");
     expect(report).not.toContain("/action_current");
     expect(report).not.toContain("/draft_prepare <project_id>");
@@ -221,7 +220,8 @@ describe("operator reports", () => {
     expect(report).not.toContain("/prepare-dispatch <task_id>");
 
     const advanced = remoteHelpReport("advanced");
-    expect(advanced).toContain("고급 명령 목록은 Telegram에서 제거했습니다.");
+    expect(advanced).toContain("Telegram 고급 명령 목록은 dogfood 표면에서 제거했습니다.");
+    expect(advanced).toContain("자연어로 말하세요.");
     expect(advanced).toContain("/help");
     expect(advanced).not.toContain("/run <run_id>");
     expect(advanced).not.toContain("/approve_action <action_id>");
