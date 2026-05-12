@@ -612,7 +612,7 @@ describe("inbox and remote commands", () => {
     expect(candidates.every((candidate) => candidate.evidence.some((evidence) => evidence.kind === "ceo_turn" && evidence.id === turns[0].id))).toBe(true);
   });
 
-  test("processes a CEO planning turn through the orchestrator and stops at an approval boundary", async () => {
+  test("processes a CEO implementation planning turn through the orchestrator and stops at an approval boundary", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-ceo-turn-planning-"));
     tmpRoots.push(root);
     const state = join(root, "state");
@@ -629,16 +629,210 @@ describe("inbox and remote commands", () => {
     await mkdir(repo, { recursive: true });
     await writeActiveHostOwnership(state);
     const fakeCodex = await writeFakeCodex(root, {
-      summary: "CEO turn planning report",
-      assumptions: ["보고 작업은 read-only입니다."],
+      summary: "CEO turn implementation plan",
+      assumptions: ["구현 작업은 BK approval 뒤에만 materialize됩니다."],
       questions: [],
-      scope: ["다음 작업 계획을 정리합니다."],
-      nonScope: ["파일 수정과 dispatch는 하지 않습니다."],
+      scope: ["src/samantha.ts 변경 계획을 정리합니다."],
+      nonScope: ["이 턴에서는 파일 수정과 dispatch는 하지 않습니다."],
       risks: ["실행은 별도 BK 판단이 필요합니다."],
       tasks: [
         {
-          id: "ceo-turn-plan-report",
-          title: "CEO turn plan report",
+          id: "ceo-turn-write-plan",
+          title: "CEO turn write plan",
+          targetAgent: "codex-worker",
+          projectId: "samantha",
+          repoRoot: repo,
+          resultMode: "write",
+          targetFiles: ["src/samantha.ts"],
+          forbiddenChanges: ["state/**"],
+          setupCommands: [],
+          verifyCommands: ["true"],
+          instructions: "Plan the requested implementation. Do not edit files in the orchestrator.",
+          dependencies: [],
+        },
+      ],
+      batches: [["ceo-turn-write-plan"]],
+      userMessage: "구현 계획을 만들었습니다.",
+    });
+    await writeFile(join(agents, "codex-orchestrator.json"), `${JSON.stringify(orchestrator, null, 2)}\n`, "utf8");
+    await writeFile(
+      join(agents, "codex-worker.json"),
+      `${JSON.stringify(
+        {
+          ...writer,
+          skillPolicy: {
+            requiredBundles: [],
+            blockedSkills: [
+              "using-git-worktrees",
+              "dispatching-parallel-agents",
+              "subagent-driven-development",
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(projects, "samantha.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "samantha",
+          repoRoot: repo,
+          keywords: ["samantha", "사만다"],
+          setupCommands: [],
+          verifyCommands: ["true"],
+          forbiddenChanges: ["state/**"],
+          defaultRemoteScopeId: "planning_report",
+          remoteScopes: [
+            {
+              id: "planning_report",
+              label: "Samantha report",
+              description: "Read-only Samantha planning reports.",
+              risk: "low",
+              resultMode: "report",
+              targetFiles: ["docs/**"],
+              keywords: ["계획", "보고"],
+              planSteps: ["Read context.", "Return report."],
+              successCriteria: ["Report is actionable."],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(inbox, "001-ceo-turn.json"),
+      JSON.stringify({
+        id: "remote-ceo-turn-plan",
+        type: "ceo:turn",
+        args: {
+          text: "samantha src/samantha.ts 수정 구현해줘",
+          senderId: "bk",
+          source: "remote",
+          receivedAt: "2026-05-12T10:00:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--agent-profiles-dir=${agents}`,
+        `--project-profiles-dir=${projects}`,
+        `--codex-bin=${fakeCodex}`,
+        `--orchestrator-repo-root=${root}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "001-ceo-turn.md"), "utf8");
+    expect(report).toContain("현재 경계: approval_boundary");
+    expect(report).toContain("계획은 만들었습니다.");
+    expect(report).toContain("CEO turn write plan");
+    for (const command of ["/plan", "/go", "/approve", "/now", "/check"] as const) {
+      expect(report).not.toContain(command);
+    }
+
+    const requests = await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).list();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      status: "planned",
+      text: "samantha src/samantha.ts 수정 구현해줘",
+      ancestry: {
+        mode: "assigned",
+        projectId: "samantha",
+      },
+    });
+    const plans = await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).list();
+    expect(plans).toHaveLength(1);
+    expect(plans[0]).toMatchObject({
+      status: "planned",
+      requestId: requests[0]?.id,
+      payload: {
+        summary: "CEO turn implementation plan",
+        tasks: [{ id: "ceo-turn-write-plan", targetAgent: "codex-worker", resultMode: "write" }],
+      },
+    });
+    const decisions = await new DecisionStore(join(state, "decisions.jsonl")).list();
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      kind: "orchestrator_plan_approval",
+      status: "pending",
+      subject: { type: "orchestrator_plan", id: plans[0]?.id },
+    });
+    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
+    expect(await new RemoteActionStore(join(state, "remote-actions.jsonl")).list()).toEqual([]);
+
+    const turns = await new CeoTurnStore(join(state, "ceo-turns.jsonl")).list();
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      detectedIntent: { kind: "implementation" },
+      responseBoundary: {
+        kind: "approval_boundary",
+        summary: "CEO turn implementation plan",
+        respondedAt: "2026-05-12T10:00:00.000Z",
+      },
+      linkedStateIds: {
+        requestIds: [requests[0]?.id],
+        planIds: [plans[0]?.id],
+        decisionIds: [decisions[0]?.id],
+      },
+    });
+  });
+
+  test("natural CEO report-only turn autopilots planning, report execution, and synthesis to a result", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-ceo-turn-autopilot-report-"));
+    tmpRoots.push(root);
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const agents = join(root, "agents");
+    const projects = join(root, "projects");
+    const repo = join(root, "repo");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(agents, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await mkdir(repo, { recursive: true });
+    await writeActiveHostOwnership(state);
+    await git(["init", "-b", "main"], repo);
+    await git(["config", "user.email", "samantha@example.local"], repo);
+    await git(["config", "user.name", "Samantha Test"], repo);
+    await writeFile(join(repo, "README.md"), "fixture\n", "utf8");
+    await git(["add", "README.md"], repo);
+    await git(["commit", "-m", "initial"], repo);
+
+    const fakeCodex = await writeAutopilotFakeCodex(root, {
+      summary: "CEO turn report-only dogfood",
+      assumptions: ["보고 작업은 read-only입니다."],
+      questions: [],
+      scope: ["command choreography 없이 현재 계획 보고를 정리합니다."],
+      nonScope: ["파일 수정과 writer dispatch는 하지 않습니다."],
+      risks: ["후속 구현은 별도 approval 필요"],
+      tasks: [
+        {
+          id: "ceo-turn-report",
+          title: "CEO turn report",
           targetAgent: "codex-spec",
           projectId: "samantha",
           repoRoot: repo,
@@ -647,12 +841,12 @@ describe("inbox and remote commands", () => {
           forbiddenChanges: ["**/*"],
           setupCommands: [],
           verifyCommands: ["true"],
-          instructions: "Read current context and produce a plan report. Do not edit files.",
+          instructions: "자연어 CEO 요청에 대한 report-only 결과를 작성합니다.",
           dependencies: [],
         },
       ],
-      batches: [["ceo-turn-plan-report"]],
-      userMessage: "계획 보고 초안을 만들었습니다.",
+      batches: [["ceo-turn-report"]],
+      userMessage: "보고 계획을 만들었습니다.",
     });
     await writeFile(join(agents, "codex-orchestrator.json"), `${JSON.stringify(orchestrator, null, 2)}\n`, "utf8");
     await writeFile(
@@ -708,15 +902,15 @@ describe("inbox and remote commands", () => {
       "utf8",
     );
     await writeFile(
-      join(inbox, "001-ceo-turn.json"),
+      join(inbox, "001-ceo-turn-report.json"),
       JSON.stringify({
-        id: "remote-ceo-turn-plan",
+        id: "remote-ceo-report-autopilot",
         type: "ceo:turn",
         args: {
           text: "samantha 다음 작업 계획 보고해줘",
           senderId: "bk",
           source: "remote",
-          receivedAt: "2026-05-12T10:00:00.000Z",
+          receivedAt: "2026-05-12T11:00:00.000Z",
         },
       }),
       "utf8",
@@ -736,6 +930,7 @@ describe("inbox and remote commands", () => {
         `--project-profiles-dir=${projects}`,
         `--codex-bin=${fakeCodex}`,
         `--orchestrator-repo-root=${root}`,
+        `--log-dir=${join(root, "runs")}`,
       ],
       { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
     );
@@ -746,57 +941,72 @@ describe("inbox and remote commands", () => {
     ]);
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 
-    const report = await readFile(join(outbox, "001-ceo-turn.md"), "utf8");
-    expect(report).toContain("현재 경계: approval_boundary");
-    expect(report).toContain("계획은 만들었습니다.");
-    expect(report).toContain("CEO turn plan report");
+    const report = await readFile(join(outbox, "001-ceo-turn-report.md"), "utf8");
+    expect(report).toContain("완료했습니다.");
+    expect(report).toContain("현재 경계: result");
+    expect(report).toContain("보고 작업이 완료되었습니다.");
+    expect(report).toContain("근거: request:");
+    expect(report).toContain("evidence:");
     for (const command of ["/plan", "/go", "/approve", "/now", "/check"] as const) {
       expect(report).not.toContain(command);
     }
 
+    expect(await new DecisionStore(join(state, "decisions.jsonl")).list()).toEqual([]);
     const requests = await new OrchestrationRequestStore(join(state, "orchestration-requests.jsonl")).list();
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({
       status: "planned",
       text: "samantha 다음 작업 계획 보고해줘",
-      ancestry: {
-        mode: "assigned",
-        projectId: "samantha",
-      },
+      ancestry: { mode: "assigned", projectId: "samantha" },
     });
     const plans = await new OrchestratorPlanStore(join(state, "orchestrator-plans.jsonl")).list();
-    expect(plans).toHaveLength(1);
     expect(plans[0]).toMatchObject({
-      status: "planned",
-      requestId: requests[0]?.id,
-      payload: {
-        summary: "CEO turn planning report",
-        tasks: [{ id: "ceo-turn-plan-report", targetAgent: "codex-spec", resultMode: "report" }],
+      status: "materialized",
+      resultReportedAt: expect.any(String),
+      taskIds: ["task-ceo-turn-report"],
+      payload: { tasks: [{ id: "ceo-turn-report", resultMode: "report" }] },
+    });
+    expect((await new TaskStore(join(state, "tasks.jsonl")).list())[0]).toMatchObject({
+      id: "task-ceo-turn-report",
+      status: "completed",
+      resultMode: "report",
+    });
+    const actions = await new RemoteActionStore(join(state, "remote-actions.jsonl")).list();
+    expect(actions[0]).toMatchObject({
+      status: "completed",
+      targetAgent: "codex-spec",
+      result: { pass: true },
+    });
+    const evidence = (await readFile(join(state, "autopilot-evidence.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(evidence).toMatchObject([
+      {
+        requestId: requests[0]?.id,
+        planId: plans[0]?.id,
+        authorityGrantId: "authority-grant-remote-report-only-autopilot-baseline",
+        endpoint: "result",
+        status: "completed",
       },
-    });
-    const decisions = await new DecisionStore(join(state, "decisions.jsonl")).list();
-    expect(decisions).toHaveLength(1);
-    expect(decisions[0]).toMatchObject({
-      kind: "orchestrator_plan_approval",
-      status: "pending",
-      subject: { type: "orchestrator_plan", id: plans[0]?.id },
-    });
-    await expect(readFile(join(state, "tasks.jsonl"), "utf8")).rejects.toThrow();
-    expect(await new RemoteActionStore(join(state, "remote-actions.jsonl")).list()).toEqual([]);
+    ]);
 
     const turns = await new CeoTurnStore(join(state, "ceo-turns.jsonl")).list();
     expect(turns).toHaveLength(1);
     expect(turns[0]).toMatchObject({
       detectedIntent: { kind: "planning_report" },
       responseBoundary: {
-        kind: "approval_boundary",
-        summary: "CEO turn planning report",
-        respondedAt: "2026-05-12T10:00:00.000Z",
+        kind: "result",
+        summary: "Report-only autopilot completed from one remote input.",
+        responseId: evidence[0].id,
+        respondedAt: "2026-05-12T11:00:00.000Z",
       },
       linkedStateIds: {
         requestIds: [requests[0]?.id],
         planIds: [plans[0]?.id],
-        decisionIds: [decisions[0]?.id],
+        taskIds: ["task-ceo-turn-report"],
+        actionIds: [actions[0]?.id],
+        runIds: [actions[0]?.result?.runId],
       },
     });
   });

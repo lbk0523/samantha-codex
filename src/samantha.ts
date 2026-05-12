@@ -3361,6 +3361,283 @@ function formatPlanningResponse(input: {
   return stripCeoTurnCommandChoreography(lines.filter((line) => line !== "").join("\n"));
 }
 
+function isReportOnlyCeoAutopilotCandidate(input: {
+  source: CeoTurnSource;
+  classification: ReturnType<typeof classifyRemoteRequest>;
+}): boolean {
+  return (
+    input.source === "remote" &&
+    input.classification.resultMode === "report" &&
+    input.classification.safeHandling === "report_only"
+  );
+}
+
+function latestAutopilotEvidenceForRequest(
+  evidence: AutopilotEvidenceRecord[],
+  requestId: string,
+): AutopilotEvidenceRecord | undefined {
+  return evidence.slice().reverse().find((record) => record.requestId === requestId);
+}
+
+async function loadCeoReportOnlyAutopilotState(input: {
+  args: ParsedArgs;
+  requestId: string;
+}): Promise<{
+  request?: OrchestrationRequestRecord;
+  plan?: OrchestratorPlanRecord;
+  evidence?: AutopilotEvidenceRecord;
+  decisions: DecisionItem[];
+  actions: RemoteActionRecord[];
+  runs: RunSummary[];
+}> {
+  const [requests, plans, decisions, actions, runs, evidence] = await Promise.all([
+    new OrchestrationRequestStore(orchestrationRequestsPath(input.args)).list(),
+    new OrchestratorPlanStore(orchestratorPlansPath(input.args)).list(),
+    new DecisionStore(decisionsPath(input.args)).list(),
+    new RemoteActionStore(remoteActionsPath(input.args)).list(),
+    new RunIndex(runsPath(input.args)).list(),
+    new AutopilotEvidenceStore(autopilotEvidencePath(input.args)).list(),
+  ]);
+  const request = requests.find((item) => item.id === input.requestId);
+  const latestEvidence = latestAutopilotEvidenceForRequest(evidence, input.requestId);
+  const plan = latestEvidence?.planId
+    ? plans.find((item) => item.id === latestEvidence.planId)
+    : plans.slice().reverse().find((item) => item.requestId === input.requestId);
+  const actionIds = new Set(latestEvidence?.actionIds ?? plan?.actionIds ?? []);
+  const runIds = new Set(latestEvidence?.runIds ?? []);
+
+  return {
+    request,
+    plan,
+    evidence: latestEvidence,
+    decisions,
+    actions: actions.filter((action) => actionIds.has(action.id)),
+    runs: runs.filter((run) => runIds.has(run.runId)),
+  };
+}
+
+function ceoReportOnlyAutopilotBoundary(input: {
+  evidence?: AutopilotEvidenceRecord;
+  plan?: OrchestratorPlanRecord;
+  decisions: DecisionItem[];
+  failure?: string;
+}): CeoTurnResponseBoundary["kind"] {
+  if (input.evidence?.status === "completed" && input.evidence.endpoint === "result") return "result";
+  const pendingPlanDecision = input.plan
+    ? input.decisions
+        .slice()
+        .reverse()
+        .find((decision) =>
+          decision.subject?.type === "orchestrator_plan" &&
+          decision.subject.id === input.plan?.id &&
+          decision.status === "pending"
+        )
+    : undefined;
+  if (pendingPlanDecision?.kind === "orchestrator_plan_approval") return "approval_boundary";
+  if (input.evidence?.endpoint === "bk_judgment") return "blocker";
+  return "blocker";
+}
+
+function linkedStateForCeoReportOnlyAutopilot(input: {
+  context: CeoTurnContext;
+  request?: OrchestrationRequestRecord;
+  plan?: OrchestratorPlanRecord;
+  decisions: DecisionItem[];
+  actions: RemoteActionRecord[];
+  runs: RunSummary[];
+}): CeoTurnLinkedStateIds {
+  const linked = linkedStateFromContext(input.context);
+  addLinkedId(linked, "requestIds", input.request?.id);
+  addLinkedId(linked, "planIds", input.plan?.id);
+  for (const decision of input.decisions) {
+    if (
+      input.plan &&
+      decision.status === "pending" &&
+      decision.subject?.type === "orchestrator_plan" &&
+      decision.subject.id === input.plan.id
+    ) {
+      addLinkedId(linked, "decisionIds", decision.id);
+    }
+  }
+  for (const taskId of input.plan?.taskIds ?? []) addLinkedId(linked, "taskIds", taskId);
+  for (const action of input.actions) addLinkedId(linked, "actionIds", action.id);
+  for (const run of input.runs) addLinkedId(linked, "runIds", run.runId);
+  return linked;
+}
+
+function formatCeoReportOnlyAutopilotResponse(input: {
+  request?: OrchestrationRequestRecord;
+  plan?: OrchestratorPlanRecord;
+  evidence?: AutopilotEvidenceRecord;
+  decisions: DecisionItem[];
+  actions: RemoteActionRecord[];
+  runs: RunSummary[];
+  failure?: string;
+}): string {
+  const boundary = ceoReportOnlyAutopilotBoundary(input);
+  const completed = input.evidence?.status === "completed" && input.evidence.endpoint === "result";
+  const synthesis = input.plan?.synthesis;
+  const summary = compactLine(
+    synthesis?.summary ??
+      synthesis?.userMessage ??
+      input.evidence?.summary ??
+      input.plan?.payload?.summary ??
+      input.failure ??
+      "report-only CEO turn reached a deterministic boundary.",
+  );
+  const failure = compactLine(input.failure ?? input.evidence?.failure ?? input.plan?.failure ?? input.plan?.synthesisFailure ?? "");
+  const refs = [
+    input.request ? `request:${input.request.id}` : "",
+    input.plan ? `plan:${input.plan.id}` : "",
+    input.evidence ? `evidence:${input.evidence.id}` : "",
+    ...input.actions.slice(0, 3).map((action) => `action:${action.id}`),
+    ...input.runs.slice(0, 3).map((run) => `run:${run.runId}`),
+  ].filter(Boolean);
+  const completedActions = input.actions.filter((action) => action.status === "completed" && action.result?.pass !== false).length;
+  const risks = synthesis?.risks.slice(0, 3) ?? input.plan?.payload?.risks.slice(0, 3) ?? [];
+
+  const lines = [
+    completed
+      ? "완료했습니다. Samantha가 report-only CEO 요청을 내부 planning, report 실행, synthesis까지 처리했습니다."
+      : "처리 가능한 범위까지 진행했고 deterministic boundary에서 멈췄습니다.",
+    "",
+    `현재 경계: ${boundary}`,
+    input.evidence ? `상태: ${input.evidence.status}` : "상태: blocked",
+    `요약: ${summary}`,
+    failure ? `막힌 이유: ${failure}` : "",
+    input.actions.length ? `report action: ${completedActions}/${input.actions.length} 완료` : "",
+    risks.length ? "위험:" : "",
+    ...risks.map((risk) => `- ${compactLine(risk)}`),
+    risks.length ? "" : "",
+    refs.length ? `근거: ${refs.join(", ")}` : "",
+    "경계: writer 작업, 복구 실행, merge, push, cleanup, approval은 이 턴에서 실행하지 않았습니다.",
+  ];
+
+  return stripCeoTurnCommandChoreography(lines.filter((line) => line !== "").join("\n"));
+}
+
+async function processCeoTurnReportOnlyAutopilot(input: {
+  args: ParsedArgs;
+  command: InboxCommand;
+  text: string;
+  receivedAt: string;
+  senderId?: string;
+  source: CeoTurnSource;
+  context: CeoTurnContext;
+  requestedProjectId?: string;
+  classification: ReturnType<typeof classifyRemoteRequest>;
+}): Promise<CeoTurnProcessResult | undefined> {
+  if (!isReportOnlyCeoAutopilotCandidate({ source: input.source, classification: input.classification })) {
+    return undefined;
+  }
+
+  const requestedProjectId = input.requestedProjectId ?? input.context.inferredProjectId;
+  const requestId = buildOrchestrationRequestId(input.receivedAt, `${input.command.id ?? "ceo-turn"}-request`);
+  const detectedIntent = {
+    kind: input.classification.intent,
+    summary: `${input.classification.safeHandling}: ${input.classification.reasons.join("; ") || "classified CEO report-only turn"}`,
+  };
+
+  try {
+    await handleInboxCommand({
+      id: `${input.command.id ?? "ceo-turn"}-request`,
+      type: "orchestrator:add-request",
+      args: {
+        requestId,
+        text: input.text,
+        senderId: input.senderId,
+        source: "remote",
+        receivedAt: input.receivedAt,
+        ...(requestedProjectId ? { projectId: requestedProjectId } : {}),
+      },
+    }, input.args);
+
+    const requests = await new OrchestrationRequestStore(orchestrationRequestsPath(input.args)).list();
+    const request = latestMatchingRequest({ requests, requestId, text: input.text, projectId: requestedProjectId });
+    const projectId = requestedProjectId ?? selectedProjectIdFromAncestry(request?.ancestry);
+    if (!request || !projectId) {
+      const failure = request?.ancestry?.mode === "unassigned"
+        ? `project boundary: ${request.ancestry.reason}`
+        : "project boundary: no project profile was selected for this report-only turn";
+      const state = request
+        ? await loadCeoReportOnlyAutopilotState({ args: input.args, requestId: request.id })
+        : { decisions: [], actions: [], runs: [] };
+      return {
+        response: formatCeoReportOnlyAutopilotResponse({
+          request,
+          plan: "plan" in state ? state.plan : undefined,
+          evidence: "evidence" in state ? state.evidence : undefined,
+          decisions: state.decisions,
+          actions: state.actions,
+          runs: state.runs,
+          failure,
+        }),
+        detectedIntent,
+        responseBoundary: {
+          kind: "blocker",
+          summary: failure,
+          respondedAt: input.receivedAt,
+        },
+        linkedStateIds: linkedStateForCeoReportOnlyAutopilot({
+          context: input.context,
+          request,
+          plan: "plan" in state ? state.plan : undefined,
+          decisions: state.decisions,
+          actions: state.actions,
+          runs: state.runs,
+        }),
+      };
+    }
+
+    const autopilotReport = await tryRunRemoteReportOnlyAutopilot({
+      args: input.args,
+      request,
+      receivedAt: input.receivedAt,
+      requestedProjectId: projectId,
+    });
+    const state = await loadCeoReportOnlyAutopilotState({ args: input.args, requestId: request.id });
+    const failure = autopilotReport
+      ? undefined
+      : "report-only authority boundary: deterministic policy did not allow autopilot progress for this turn";
+    const boundaryKind = ceoReportOnlyAutopilotBoundary({ ...state, failure });
+
+    return {
+      response: formatCeoReportOnlyAutopilotResponse({
+        ...state,
+        failure,
+      }),
+      detectedIntent,
+      responseBoundary: {
+        kind: boundaryKind,
+        summary: state.evidence?.summary ?? failure ?? "Report-only CEO turn progressed through deterministic autopilot.",
+        responseId: state.evidence?.id,
+        respondedAt: input.receivedAt,
+      },
+      linkedStateIds: linkedStateForCeoReportOnlyAutopilot({
+        context: input.context,
+        ...state,
+      }),
+    };
+  } catch (err) {
+    const failure = errorMessage(err);
+    return {
+      response: formatCeoReportOnlyAutopilotResponse({
+        decisions: [],
+        actions: [],
+        runs: [],
+        failure,
+      }),
+      detectedIntent,
+      responseBoundary: {
+        kind: "blocker",
+        summary: failure,
+        respondedAt: input.receivedAt,
+      },
+      linkedStateIds: linkedStateFromContext(input.context),
+    };
+  }
+}
+
 const ceoTurnCommandChoreographyPattern = /(^|[^\w/])\/(?:plan|plan_current|go|approve|now|check)\b/;
 
 function stripCeoTurnCommandChoreography(report: string): string {
@@ -3380,6 +3657,12 @@ async function processCeoTurnPlanningRequest(input: {
   requestedProjectId?: string;
 }): Promise<CeoTurnProcessResult> {
   const classification = classifyRemoteRequest(input.text);
+  const reportOnlyAutopilot = await processCeoTurnReportOnlyAutopilot({
+    ...input,
+    classification,
+  });
+  if (reportOnlyAutopilot) return reportOnlyAutopilot;
+
   const requestedProjectId = input.requestedProjectId ?? input.context.inferredProjectId;
   const requestId = buildOrchestrationRequestId(input.receivedAt, `${input.command.id ?? "ceo-turn"}-request`);
 

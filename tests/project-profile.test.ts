@@ -173,6 +173,7 @@ describe("project profiles", () => {
 
   test("classifies negated recovery wording as report-only, not recovery execution", () => {
     expect(classifyRemoteRequest("복구 실행 없이 실패 원인 분석해줘")).toMatchObject({
+      intent: "evaluation",
       resultMode: "report",
       safeHandling: "report_only",
     });

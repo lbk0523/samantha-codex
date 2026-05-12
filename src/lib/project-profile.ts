@@ -297,15 +297,14 @@ export function classifyRemoteRequest(requestText: string): RemoteRequestClassif
     return buildClassification("ambiguity_heavy", [...reasons, "implementation wording is not safely scoped"]);
   }
 
+  if (recoveryScore > 0 && noEditScore > 0) {
+    reasons.push("recovery wording was negated by report-only/no-edit wording");
+    return buildClassification("evaluation", reasons);
+  }
+
   if (recoveryScore > 0) {
     reasons.push("recovery wording matched");
-    return buildClassification(
-      "recovery",
-      reasons,
-      noEditScore > 0
-        ? { resultMode: "report", preferredAgentId: "codex-evaluator", safeHandling: "report_only" }
-        : {},
-    );
+    return buildClassification("recovery", reasons);
   }
 
   if (planningPhraseScore > 0) {
