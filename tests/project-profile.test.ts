@@ -177,6 +177,16 @@ describe("project profiles", () => {
       resultMode: "report",
       safeHandling: "report_only",
     });
+    expect(classifyRemoteRequest("복구 실행 없이 계획대로 진행해도 되는지 검토해줘")).toMatchObject({
+      intent: "evaluation",
+      resultMode: "report",
+      safeHandling: "report_only",
+    });
+    expect(classifyRemoteRequest("코드 변경 없이 계획대로 진행 여부만 보고")).toMatchObject({
+      intent: "planning_report",
+      resultMode: "report",
+      safeHandling: "report_only",
+    });
   });
 
   test("does not fall back to unsafe implementation when only write scopes exist", () => {

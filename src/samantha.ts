@@ -2961,6 +2961,7 @@ async function answerLatestRemoteBlockerClarification(args: ParsedArgs, received
 interface CeoTurnContext {
   projectProfiles: ProjectProfile[];
   inferredProjectId?: string;
+  projectAmbiguity?: CeoTurnProjectAmbiguity;
   snapshot: CeoStatusSnapshot;
   requests: OrchestrationRequestRecord[];
   plans: OrchestratorPlanRecord[];
@@ -2980,12 +2981,27 @@ interface CeoTurnProcessResult {
   linkedStateIds: CeoTurnLinkedStateIds;
 }
 
+interface CeoTurnProjectAmbiguity {
+  reason: string;
+  projectIds: string[];
+}
+
 function naturalTurnSource(value: unknown): CeoTurnSource {
   return value === "local" || value === "system" ? value : "remote";
 }
 
 function naturalTurnActor(value: unknown): CeoTurnActor {
   return value === "operator" || value === "system" ? value : "bk";
+}
+
+function ceoTurnProjectAmbiguityFromError(err: unknown): CeoTurnProjectAmbiguity | undefined {
+  const reason = errorMessage(err);
+  const match = /^ambiguous project profile match: (.+); specify project id$/.exec(reason);
+  if (!match) return undefined;
+  return {
+    reason,
+    projectIds: match[1].split(",").map((item) => item.trim()).filter(Boolean),
+  };
 }
 
 async function loadCeoTurnContext(input: {
@@ -3029,9 +3045,16 @@ async function loadCeoTurnContext(input: {
     new GovernedMemoryStore(memoryPath(input.args), new GovernanceEventStore(governanceEventsPath(input.args))).listActive(),
     readCeoConversationMemory(conversationMemoryPath(input.args)),
   ]);
-  const inferredProject = input.requestedProjectId
-    ? undefined
-    : inferProjectProfile(projectProfiles, { requestText: input.text });
+  let inferredProject: ProjectProfile | undefined;
+  let projectAmbiguity: CeoTurnProjectAmbiguity | undefined;
+  if (!input.requestedProjectId) {
+    try {
+      inferredProject = inferProjectProfile(projectProfiles, { requestText: input.text });
+    } catch (err) {
+      projectAmbiguity = ceoTurnProjectAmbiguityFromError(err);
+      if (!projectAmbiguity) throw err;
+    }
+  }
   const projectId = input.requestedProjectId ?? inferredProject?.id;
   const blockers = await orchestratorPlanBlockersForReport(input.args, plans);
   const snapshot = buildCeoStatusSnapshot({
@@ -3075,6 +3098,7 @@ async function loadCeoTurnContext(input: {
   return {
     projectProfiles,
     inferredProjectId: projectId,
+    projectAmbiguity,
     snapshot,
     requests,
     plans,
@@ -3128,6 +3152,19 @@ function isNonApprovalDecisionFeedback(text: string): boolean {
   const normalized = normalizeTurnText(text);
   if (!normalized || isNaturalApprovalAttempt(text)) return false;
   return /^(좋아|좋네|좋아 보|괜찮|오케이|ㅇㅋ|ok|okay|yes|응|그래|sounds good|looks good|nice|good)(\s|[.!。]|$)/i.test(normalized);
+}
+
+function isMemoryOnlyCeoTurn(text: string): boolean {
+  const normalized = normalizeTurnText(text);
+  if (!normalized) return false;
+  const hasMemorySignal =
+    /\b(decision|decided|product direction|roadmap|north star|target product|primary surface|command bot|natural ceo|ceo conversation|rejected path|reject|rejected|avoid|abandon)\b|결정|정했다|하기로|제품 방향|로드맵|북극성|자연어 CEO|CEO 대화|명령봇|거절|폐기|버린다|피하/i
+      .test(normalized);
+  if (!hasMemorySignal) return false;
+  const asksForWork =
+    /(구현|수정|고쳐|바꿔|추가|생성|작성|작업|계획 보고|작업 계획|보고해|검토해|분석해|평가해|승인|진행해|실행|복구|\b(?:implement|fix|build|add|change|write|review|evaluate|plan|report|approve|proceed|recover|recovery)\b)/i
+      .test(normalized);
+  return !asksForWork;
 }
 
 function statusBoundaryKind(snapshot: CeoStatusSnapshot): CeoTurnResponseBoundary["kind"] {
@@ -3215,6 +3252,30 @@ function formatNaturalStatusResponse(input: {
       : "",
   ];
   return stripCeoTurnCommandChoreography(lines.filter((line) => line !== "").join("\n"));
+}
+
+function formatProjectAmbiguityResponse(ambiguity: CeoTurnProjectAmbiguity): string {
+  const projects = ambiguity.projectIds.length ? ambiguity.projectIds.join(", ") : "unknown";
+  const lines = [
+    "프로젝트를 확정하지 못해서 요청을 실행하지 않았습니다.",
+    "",
+    "현재 경계: blocker",
+    `막힌 이유: 자연어가 여러 project profile에 걸립니다: ${projects}.`,
+    "확인 질문: 어느 프로젝트 기준으로 처리할까요?",
+    "경계: 잘못된 프로젝트에 request, plan, task, action, decision, recovery를 만들지 않았습니다.",
+  ];
+  return stripCeoTurnCommandChoreography(lines.join("\n"));
+}
+
+function formatMemoryOnlyCeoTurnResponse(): string {
+  const lines = [
+    "기억 후보로만 남겼습니다. 이 내용은 실행 요청이 아니라 CEO conversation memory 후보입니다.",
+    "",
+    "현재 경계: result",
+    "요약: 제품 방향, 결정, 또는 rejected path를 future planning context 후보로 처리했습니다.",
+    "경계: orchestration request, plan, task, action, decision, recovery 실행, memory write를 만들지 않았습니다.",
+  ];
+  return stripCeoTurnCommandChoreography(lines.join("\n"));
 }
 
 function addLinkedId(target: CeoTurnLinkedStateIds, field: keyof CeoTurnLinkedStateIds, id: string | undefined): void {
@@ -4012,7 +4073,22 @@ async function handleCeoTurn(command: InboxCommand, args: ParsedArgs): Promise<s
   );
   const nonApprovalFeedback = !approvalAttempt && hasPendingDecision && isNonApprovalDecisionFeedback(text);
   let result: CeoTurnProcessResult;
-  if (approvalAttempt) {
+  if (context.projectAmbiguity) {
+    const classification = classifyRemoteRequest(text);
+    result = {
+      response: formatProjectAmbiguityResponse(context.projectAmbiguity),
+      detectedIntent: {
+        kind: classification.intent,
+        summary: `Project ambiguity blocked CEO turn before request creation: ${context.projectAmbiguity.reason}`,
+      },
+      responseBoundary: {
+        kind: "blocker",
+        summary: context.projectAmbiguity.reason,
+        respondedAt: receivedAt,
+      },
+      linkedStateIds: {},
+    };
+  } else if (approvalAttempt) {
     result = await processCeoTurnNaturalApproval({
       args,
       receivedAt,
@@ -4040,6 +4116,20 @@ async function handleCeoTurn(command: InboxCommand, args: ParsedArgs): Promise<s
         respondedAt: receivedAt,
       },
       linkedStateIds: linkedStateFromContext(context),
+    };
+  } else if (isMemoryOnlyCeoTurn(text)) {
+    result = {
+      response: formatMemoryOnlyCeoTurnResponse(),
+      detectedIntent: {
+        kind: "memory_capture",
+        summary: "Natural CEO turn contained durable memory signals only; no orchestration request was created.",
+      },
+      responseBoundary: {
+        kind: "result",
+        summary: "Captured as learning candidates only; no execution state was created.",
+        respondedAt: receivedAt,
+      },
+      linkedStateIds: {},
     };
   } else {
     result = await processCeoTurnPlanningRequest({

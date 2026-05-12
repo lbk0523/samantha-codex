@@ -286,10 +286,6 @@ export function classifyRemoteRequest(requestText: string): RemoteRequestClassif
   const implementationScore = countTerms(text, implementationTerms);
   const planningScore = countTerms(text, planningTerms);
 
-  if (implementationOverrideScore > 0) {
-    return buildClassification("implementation", [...reasons, "explicit implementation override phrase"]);
-  }
-
   if (noEditScore > 0) reasons.push("request asks for no edits/report-only handling");
   if (ambiguityScore > 0) reasons.push("request contains ambiguity-heavy wording");
 
@@ -300,6 +296,10 @@ export function classifyRemoteRequest(requestText: string): RemoteRequestClassif
   if (recoveryScore > 0 && noEditScore > 0) {
     reasons.push("recovery wording was negated by report-only/no-edit wording");
     return buildClassification("evaluation", reasons);
+  }
+
+  if (implementationOverrideScore > 0 && noEditScore === 0) {
+    return buildClassification("implementation", [...reasons, "explicit implementation override phrase"]);
   }
 
   if (recoveryScore > 0) {

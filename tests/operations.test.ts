@@ -542,6 +542,120 @@ describe("inbox and remote commands", () => {
     expect(await pathExists(join(state, "remote-actions.jsonl"))).toBe(false);
   });
 
+  test("ambiguous multi-project CEO turn records a natural blocker without mutating work state", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-ceo-turn-project-ambiguity-"));
+    tmpRoots.push(root);
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const projects = join(root, "projects");
+    const samanthaRepo = join(root, "samantha-repo");
+    const omhtRepo = join(root, "omht-repo");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    await mkdir(projects, { recursive: true });
+    await mkdir(samanthaRepo, { recursive: true });
+    await mkdir(omhtRepo, { recursive: true });
+    for (const [projectId, repoRoot] of [["samantha", samanthaRepo], ["omht", omhtRepo]] as const) {
+      await writeFile(
+        join(projects, `${projectId}.json`),
+        `${JSON.stringify(
+          {
+            schemaVersion: 1,
+            id: projectId,
+            repoRoot,
+            keywords: [projectId],
+            setupCommands: [],
+            verifyCommands: ["true"],
+            forbiddenChanges: ["state/**"],
+            defaultRemoteScopeId: "planning_report",
+            remoteScopes: [
+              {
+                id: "planning_report",
+                label: `${projectId} report`,
+                description: "Read-only planning report.",
+                risk: "low",
+                resultMode: "report",
+                targetFiles: ["docs/**"],
+                keywords: ["계획", "보고"],
+                planSteps: ["Read context.", "Return report."],
+                successCriteria: ["Report is actionable."],
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+    }
+    await writeFile(
+      join(inbox, "001-ceo-ambiguous-project.json"),
+      JSON.stringify({
+        id: "remote-ceo-ambiguous-project",
+        type: "ceo:turn",
+        args: {
+          text: "samantha와 omht 다음 작업 계획 보고해줘",
+          senderId: "bk",
+          source: "remote",
+          receivedAt: "2026-05-12T10:30:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--project-profiles-dir=${projects}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    const report = await readFile(join(outbox, "001-ceo-ambiguous-project.md"), "utf8");
+    expect(report).not.toContain("inbox command failed");
+    expect(report).toContain("프로젝트를 확정하지 못해서 요청을 실행하지 않았습니다.");
+    expect(report).toContain("omht, samantha");
+    expect(report).toContain("잘못된 프로젝트에 request, plan, task, action, decision, recovery를 만들지 않았습니다.");
+    for (const command of ["/plan", "/go", "/approve", "/now", "/check"] as const) {
+      expect(report).not.toContain(command);
+    }
+
+    const turns = await new CeoTurnStore(join(state, "ceo-turns.jsonl")).list();
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      detectedIntent: {
+        kind: "planning_report",
+        summary: "Project ambiguity blocked CEO turn before request creation: ambiguous project profile match: omht, samantha; specify project id",
+      },
+      responseBoundary: {
+        kind: "blocker",
+        summary: "ambiguous project profile match: omht, samantha; specify project id",
+        respondedAt: "2026-05-12T10:30:00.000Z",
+      },
+      linkedStateIds: {},
+    });
+    expect(await pathExists(join(state, "orchestration-requests.jsonl"))).toBe(false);
+    expect(await pathExists(join(state, "orchestrator-plans.jsonl"))).toBe(false);
+    expect(await pathExists(join(state, "decisions.jsonl"))).toBe(false);
+    expect(await pathExists(join(state, "tasks.jsonl"))).toBe(false);
+    expect(await pathExists(join(state, "remote-actions.jsonl"))).toBe(false);
+  });
+
   test("stores CEO memory candidates separately without mutating CEO_Conversation_MEMORY.md", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-ceo-turn-memory-candidates-"));
     tmpRoots.push(root);
@@ -596,6 +710,9 @@ describe("inbox and remote commands", () => {
 
     expect(await readFile(memoryFile, "utf8")).toBe(memoryBefore);
     await expect(readFile(join(state, "memory.jsonl"), "utf8")).rejects.toThrow();
+    const report = await readFile(join(outbox, "001-ceo-memory.md"), "utf8");
+    expect(report).toContain("기억 후보로만 남겼습니다.");
+    expect(report).toContain("현재 경계: result");
 
     const candidates = await new LearningCandidateStore(join(state, "learning-candidates.jsonl")).list();
     expect(candidates.map((candidate) => candidate.proposedMemoryKind)).toEqual([
@@ -608,8 +725,25 @@ describe("inbox and remote commands", () => {
 
     const turns = await new CeoTurnStore(join(state, "ceo-turns.jsonl")).list();
     expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      detectedIntent: {
+        kind: "memory_capture",
+        summary: "Natural CEO turn contained durable memory signals only; no orchestration request was created.",
+      },
+      responseBoundary: {
+        kind: "result",
+        summary: "Captured as learning candidates only; no execution state was created.",
+        respondedAt: "2026-05-12T10:20:00.000Z",
+      },
+      linkedStateIds: {},
+    });
     expect(turns[0].memoryCandidateRefs).toEqual(candidates.map((candidate) => candidate.id));
     expect(candidates.every((candidate) => candidate.evidence.some((evidence) => evidence.kind === "ceo_turn" && evidence.id === turns[0].id))).toBe(true);
+    expect(await pathExists(join(state, "orchestration-requests.jsonl"))).toBe(false);
+    expect(await pathExists(join(state, "orchestrator-plans.jsonl"))).toBe(false);
+    expect(await pathExists(join(state, "decisions.jsonl"))).toBe(false);
+    expect(await pathExists(join(state, "tasks.jsonl"))).toBe(false);
+    expect(await pathExists(join(state, "remote-actions.jsonl"))).toBe(false);
   });
 
   test("processes a CEO implementation planning turn through the orchestrator and stops at an approval boundary", async () => {
