@@ -17,6 +17,7 @@ import {
 import { buildCeoStatusSnapshot, formatCeoStatusReport, type CeoStatusSnapshot } from "./lib/ceo-status";
 import {
   CeoTurnStore,
+  createCeoTurnRecord,
   type CeoTurnActor,
   type CeoTurnDetectedIntent,
   type CeoTurnLinkedStateIds,
@@ -33,6 +34,11 @@ import {
   type CeoNotifyReportRecord,
   type CeoReportRecord,
 } from "./lib/ceo-report-store";
+import {
+  buildConversationMemoryCandidates,
+  readCeoConversationMemory,
+  type CeoConversationMemoryReadResult,
+} from "./lib/conversation-memory";
 import {
   BudgetPolicyStore,
   CostBudgetAuditStore,
@@ -156,7 +162,7 @@ import {
 import { ProjectBriefStore } from "./lib/project-brief-store";
 import { searchContext, type ContextSearchResult } from "./lib/context-search";
 import { GovernedMemoryStore } from "./lib/memory-store";
-import { ProposalStore, type ProposalRecord } from "./lib/proposal-store";
+import { LearningCandidateStore, ProposalStore, type LearningCandidateRecord, type ProposalRecord } from "./lib/proposal-store";
 import {
   createRecoveryDrillOutcomeEvent,
   findRecoveryDrill,
@@ -261,6 +267,10 @@ function proposalsPath(args: ParsedArgs): string {
   return join(stateDir(args), "proposals.jsonl");
 }
 
+function learningCandidatesPath(args: ParsedArgs): string {
+  return join(stateDir(args), "learning-candidates.jsonl");
+}
+
 function taskDraftsPath(args: ParsedArgs): string {
   return join(stateDir(args), "task-drafts.jsonl");
 }
@@ -295,6 +305,10 @@ function projectBriefsPath(args: ParsedArgs): string {
 
 function memoryPath(args: ParsedArgs): string {
   return join(stateDir(args), "memory.jsonl");
+}
+
+function conversationMemoryPath(args: ParsedArgs): string {
+  return resolve(flag(args, "conversation-memory", join(root, "CEO_Conversation_MEMORY.md")));
 }
 
 function authorityGrantsPath(args: ParsedArgs): string {
@@ -353,6 +367,7 @@ async function planningMemoryForRequest(input: {
     plans,
     projectBriefRead,
     activeMemory,
+    conversationMemory,
   ] = await Promise.all([
     new DecisionStore(decisionsPath(input.args)).list(),
     new GovernanceEventStore(governanceEventsPath(input.args)).list(),
@@ -360,6 +375,7 @@ async function planningMemoryForRequest(input: {
     new OrchestratorPlanStore(orchestratorPlansPath(input.args)).list(),
     new ProjectBriefStore(projectBriefsPath(input.args), { profiles: input.projectProfiles }).readProjectBrief(projectId),
     new GovernedMemoryStore(memoryPath(input.args), new GovernanceEventStore(governanceEventsPath(input.args))).listActive(),
+    readCeoConversationMemory(conversationMemoryPath(input.args)),
   ]);
 
   const decisionSummary = buildDecisionHistorySummary({
@@ -375,6 +391,7 @@ async function planningMemoryForRequest(input: {
     decisionSummaries: [decisionSummary],
     projectBriefReads: [projectBriefRead],
     memoryRecords: activeMemory,
+    conversationMemory: [conversationMemory],
     governanceEvents,
   }, { projectId, limit: 12 }).results;
 
@@ -2952,6 +2969,7 @@ interface CeoTurnContext {
   tasks: TaskSpec[];
   runs: RunSummary[];
   reports: CeoReportRecord[];
+  conversationMemory: CeoConversationMemoryReadResult;
   relevantRecords: ContextSearchResult[];
 }
 
@@ -2992,6 +3010,7 @@ async function loadCeoTurnContext(input: {
     budgetPolicies,
     projectProfiles,
     activeMemory,
+    conversationMemory,
   ] = await Promise.all([
     new RunIndex(runsPath(input.args)).list(),
     new TaskStore(tasksPath(input.args)).list(),
@@ -3008,6 +3027,7 @@ async function loadCeoTurnContext(input: {
     new BudgetPolicyStore(budgetPoliciesPath(input.args)).list(),
     loadProjectProfiles(projectProfilesDir(input.args)),
     new GovernedMemoryStore(memoryPath(input.args), new GovernanceEventStore(governanceEventsPath(input.args))).listActive(),
+    readCeoConversationMemory(conversationMemoryPath(input.args)),
   ]);
   const inferredProject = input.requestedProjectId
     ? undefined
@@ -3048,6 +3068,7 @@ async function loadCeoTurnContext(input: {
     decisionSummaries: [decisionSummary],
     projectBriefReads: projectBriefRead ? [projectBriefRead] : [],
     memoryRecords: activeMemory,
+    conversationMemory: [conversationMemory],
     governanceEvents,
   }, { text: input.text, projectId, limit: 8 }).results;
 
@@ -3062,6 +3083,7 @@ async function loadCeoTurnContext(input: {
     tasks,
     runs,
     reports,
+    conversationMemory,
     relevantRecords,
   };
 }
@@ -3452,6 +3474,20 @@ async function processCeoTurnPlanningRequest(input: {
   };
 }
 
+async function storeLearningCandidates(
+  args: ParsedArgs,
+  candidates: LearningCandidateRecord[],
+): Promise<LearningCandidateRecord[]> {
+  if (candidates.length === 0) return [];
+  const store = new LearningCandidateStore(learningCandidatesPath(args));
+  const stored: LearningCandidateRecord[] = [];
+  for (const candidate of candidates) {
+    const existing = await store.find(candidate.id);
+    stored.push(existing ?? await store.append(candidate));
+  }
+  return stored;
+}
+
 async function handleCeoTurn(command: InboxCommand, args: ParsedArgs): Promise<string> {
   const text = String(command.args?.text ?? "");
   if (!text.trim()) throw new Error("CEO turn text is required");
@@ -3495,7 +3531,7 @@ async function handleCeoTurn(command: InboxCommand, args: ParsedArgs): Promise<s
         requestedProjectId,
       });
 
-  await new CeoTurnStore(ceoTurnsPath(args)).create({
+  const turn = createCeoTurnRecord({
     source,
     actor,
     text,
@@ -3504,6 +3540,19 @@ async function handleCeoTurn(command: InboxCommand, args: ParsedArgs): Promise<s
     linkedStateIds: result.linkedStateIds,
     createdAt: receivedAt,
     updatedAt: receivedAt,
+  });
+  const memoryCandidates = buildConversationMemoryCandidates({
+    turn,
+    conversationMemory: context.conversationMemory,
+    responseText: result.response,
+    projectId: requestedProjectId ?? context.inferredProjectId,
+  });
+  const storedMemoryCandidates = await storeLearningCandidates(args, memoryCandidates);
+  await new CeoTurnStore(ceoTurnsPath(args)).append({
+    ...turn,
+    memoryCandidateRefs: storedMemoryCandidates.length
+      ? storedMemoryCandidates.map((candidate) => candidate.id)
+      : undefined,
   });
   return result.response;
 }

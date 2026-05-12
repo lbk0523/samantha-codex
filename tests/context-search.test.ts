@@ -332,6 +332,28 @@ describe("searchable context surface", () => {
     ]));
   });
 
+  test("indexes CEO conversation memory as global strategy context without requiring project ancestry", () => {
+    const response = searchContext({
+      conversationMemory: [{
+        schemaVersion: 1,
+        id: "CEO_Conversation_MEMORY.md",
+        status: "ok",
+        summary: "Natural CEO conversation is broad, execution authority remains deterministic.",
+      }],
+    }, { projectId: "samantha", text: "natural CEO", memoryKind: "strategy_context" });
+
+    expect(response.results).toEqual([
+      expect.objectContaining({
+        kind: "conversation_memory",
+        status: "ok",
+        sourceKind: "conversation_memory",
+        sourceId: "CEO_Conversation_MEMORY.md",
+        memoryKind: "strategy_context",
+        citations: [{ kind: "conversation_memory", id: "CEO_Conversation_MEMORY.md" }],
+      }),
+    ]);
+  });
+
   test("search is read-only against source records and backing stores", async () => {
     const root = await mkdtemp(join(tmpdir(), "samantha-codex-context-search-"));
     tmpRoots.push(root);

@@ -1,5 +1,6 @@
 import type { WorkItemAncestry } from "./ancestry";
 import type { CeoReportRecord } from "./ceo-report-store";
+import type { CeoConversationMemoryReadResult } from "./conversation-memory";
 import type { DecisionHistoryCitation, DecisionHistorySummary } from "./decision-history-summary";
 import type { GovernanceEventRecord, GovernanceEventSourceKind } from "./governance-event-store";
 import type { GovernedMemoryRecord } from "./memory-store";
@@ -15,6 +16,7 @@ export type ContextSearchSourceKind =
   | "decision_history_summary"
   | "project_brief"
   | "memory"
+  | "conversation_memory"
   | "governance_event";
 
 export type ContextSearchResultKind =
@@ -24,6 +26,7 @@ export type ContextSearchResultKind =
   | "decision_summary"
   | "project_brief"
   | "memory"
+  | "conversation_memory"
   | "governance_event"
   | "missing_artifact"
   | "malformed_record";
@@ -66,6 +69,7 @@ export interface ContextSearchInput {
   projectBriefs?: unknown[];
   projectBriefReads?: ProjectBriefReadResult[];
   memoryRecords?: unknown[];
+  conversationMemory?: unknown[];
   governanceEvents?: unknown[];
 }
 
@@ -164,6 +168,7 @@ function malformedResult(input: {
 
 function matchesScope(result: ContextSearchResult, query: ContextSearchQuery): boolean {
   if (!query.projectId && !query.goalId && !query.workItemId) return true;
+  if (result.sourceKind === "conversation_memory") return true;
   const ancestry = result.ancestry;
   if (!ancestry || ancestry.mode !== "assigned") return false;
   if (query.projectId && ancestry.projectId !== query.projectId) return false;
@@ -545,6 +550,29 @@ function indexMemoryRecord(value: unknown): ContextSearchResult[] {
   }];
 }
 
+function indexConversationMemory(value: unknown): ContextSearchResult[] {
+  if (!isObject(value)) {
+    return [malformedResult({ id: "unknown", sourceKind: "conversation_memory", reason: "conversation memory must be an object" })];
+  }
+  const memory = value as Partial<CeoConversationMemoryReadResult>;
+  const id = requiredString(memory.id);
+  if (memory.schemaVersion !== 1 || !id || !requiredString(memory.summary)) {
+    return [malformedResult({ id: String(memory.id ?? "unknown"), sourceKind: "conversation_memory", reason: "conversation memory is missing schemaVersion 1, id, or summary" })];
+  }
+  const status: ContextSearchResultStatus = memory.status === "missing" ? "missing" : "ok";
+  return [{
+    kind: "conversation_memory",
+    status,
+    id,
+    title: "CEO conversation memory",
+    snippet: compactSnippet(memory.summary),
+    sourceKind: "conversation_memory",
+    sourceId: id,
+    memoryKind: "strategy_context",
+    citations: [{ kind: "conversation_memory", id }],
+  }];
+}
+
 function indexGovernanceEvent(value: unknown): ContextSearchResult[] {
   if (!isObject(value)) {
     return [malformedResult({ id: "unknown", sourceKind: "governance_event", reason: "governance event must be an object" })];
@@ -584,6 +612,7 @@ export function buildSearchableContext(input: ContextSearchInput): ContextSearch
     ...(input.projectBriefs ?? []).flatMap(indexProjectBriefValue),
     ...(input.projectBriefReads ?? []).flatMap(indexProjectBriefRead),
     ...(input.memoryRecords ?? []).flatMap(indexMemoryRecord),
+    ...(input.conversationMemory ?? []).flatMap(indexConversationMemory),
     ...(input.governanceEvents ?? []).flatMap(indexGovernanceEvent),
   ];
 }

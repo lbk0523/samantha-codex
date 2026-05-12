@@ -61,6 +61,8 @@ export type OrchestratorContextCitationKind =
   | "safety_policy"
   | "budget_observation"
   | "ceo_status"
+  | "ceo_turn"
+  | "conversation_memory"
   | "ceo_report"
   | "operator_report"
   | "dashboard_view"

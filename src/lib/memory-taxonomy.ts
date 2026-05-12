@@ -36,6 +36,8 @@ export const MEMORY_SOURCE_KINDS = [
   "safety_policy",
   "budget_observation",
   "ceo_status",
+  "ceo_turn",
+  "conversation_memory",
   "operator_report",
   "dashboard_view",
   "telegram_summary",

@@ -52,6 +52,7 @@ export type PlanningMemorySnippetKind =
   | "strategy_context"
   | "operator_report"
   | "ceo_report"
+  | "conversation_memory"
   | "report_artifact"
   | "sop_document"
   | "skill_document";
@@ -713,11 +714,13 @@ function planningMemoryLines(snippets: PlanningMemorySnippet[]): string[] {
 }
 
 function resultMatchesProject(result: ContextSearchResult, projectId: string): boolean {
+  if (result.sourceKind === "conversation_memory") return true;
   if (!result.ancestry || result.ancestry.mode !== "assigned") return false;
   return result.ancestry.projectId === projectId;
 }
 
 function planningMemoryKind(result: ContextSearchResult): PlanningMemorySnippetKind {
+  if (result.kind === "conversation_memory") return "conversation_memory";
   if (result.memoryKind === "preference") return "preference";
   if (result.memoryKind === "known_risk") return "known_risk";
   if (result.memoryKind === "strategy_context") return "strategy_context";
@@ -1135,6 +1138,8 @@ const planningCitationKinds = new Set<OrchestratorContextCitation["kind"]>([
   "safety_policy",
   "budget_observation",
   "ceo_status",
+  "ceo_turn",
+  "conversation_memory",
   "ceo_report",
   "operator_report",
   "dashboard_view",

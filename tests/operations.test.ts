@@ -13,6 +13,7 @@ import type { RunSummary } from "../src/lib/ledger";
 import { buildPlanBatches, type LoadedPlanTask } from "../src/lib/plan-runner";
 import { OrchestrationRequestStore, OrchestratorPlanStore, type OrchestratorPlanPayload } from "../src/lib/orchestrator-store";
 import { materializeOrchestratorPlan } from "../src/lib/orchestrator-materializer";
+import { LearningCandidateStore } from "../src/lib/proposal-store";
 import { createRemoteDispatchAction, RemoteActionStore } from "../src/lib/remote-action-store";
 import { commandFromRemoteInput, enqueueRemoteCommand } from "../src/lib/remote-command";
 import type { WorkerRunLog } from "../src/lib/run-log";
@@ -539,6 +540,76 @@ describe("inbox and remote commands", () => {
     expect(await pathExists(join(state, "decisions.jsonl"))).toBe(false);
     expect(await pathExists(join(state, "tasks.jsonl"))).toBe(false);
     expect(await pathExists(join(state, "remote-actions.jsonl"))).toBe(false);
+  });
+
+  test("stores CEO memory candidates separately without mutating CEO_Conversation_MEMORY.md", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-ceo-turn-memory-candidates-"));
+    tmpRoots.push(root);
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const memoryFile = join(root, "CEO_Conversation_MEMORY.md");
+    await mkdir(inbox, { recursive: true });
+    await mkdir(state, { recursive: true });
+    const memoryBefore = [
+      "# CEO Conversation Memory",
+      "",
+      "Natural CEO conversation is planning context only.",
+    ].join("\n");
+    await writeFile(memoryFile, memoryBefore, "utf8");
+    await writeFile(
+      join(inbox, "001-ceo-memory.json"),
+      JSON.stringify({
+        id: "remote-ceo-memory-candidate",
+        type: "ceo:turn",
+        args: {
+          text: "결정: Samantha v2 product direction은 natural CEO conversation이다. rejected path: command bot은 버린다.",
+          senderId: "bk",
+          source: "remote",
+          receivedAt: "2026-05-12T10:20:00.000Z",
+        },
+      }),
+      "utf8",
+    );
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+        `--conversation-memory=${memoryFile}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    expect(await readFile(memoryFile, "utf8")).toBe(memoryBefore);
+    await expect(readFile(join(state, "memory.jsonl"), "utf8")).rejects.toThrow();
+
+    const candidates = await new LearningCandidateStore(join(state, "learning-candidates.jsonl")).list();
+    expect(candidates.map((candidate) => candidate.proposedMemoryKind)).toEqual([
+      "decision_summary",
+      "strategy_context",
+      "known_risk",
+    ]);
+    expect(candidates.every((candidate) => candidate.status === "pending_review")).toBe(true);
+    expect(candidates.every((candidate) => candidate.evidence.some((evidence) => evidence.kind === "conversation_memory" && evidence.id === "CEO_Conversation_MEMORY.md"))).toBe(true);
+
+    const turns = await new CeoTurnStore(join(state, "ceo-turns.jsonl")).list();
+    expect(turns).toHaveLength(1);
+    expect(turns[0].memoryCandidateRefs).toEqual(candidates.map((candidate) => candidate.id));
+    expect(candidates.every((candidate) => candidate.evidence.some((evidence) => evidence.kind === "ceo_turn" && evidence.id === turns[0].id))).toBe(true);
   });
 
   test("processes a CEO planning turn through the orchestrator and stops at an approval boundary", async () => {

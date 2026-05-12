@@ -163,6 +163,17 @@ describe("orchestrator agent prompt", () => {
         },
         citations: [{ kind: "project_brief", id: "brief-omht" }],
       },
+      {
+        kind: "conversation_memory",
+        status: "ok",
+        id: "CEO_Conversation_MEMORY.md",
+        title: "CEO conversation memory",
+        snippet: "Natural CEO conversation is the product surface; memory is context only.",
+        sourceKind: "conversation_memory",
+        sourceId: "CEO_Conversation_MEMORY.md",
+        memoryKind: "strategy_context",
+        citations: [{ kind: "conversation_memory", id: "CEO_Conversation_MEMORY.md" }],
+      },
     ], { projectId: "samantha" });
 
     const prompt = buildOrchestratorPrompt({
@@ -173,7 +184,9 @@ describe("orchestrator agent prompt", () => {
 
     expect(prompt).toContain("Selected source-backed memory context:");
     expect(prompt).toContain("kind=preference status=ok id=memory-prefer-small-plans");
+    expect(prompt).toContain("kind=conversation_memory status=ok id=CEO_Conversation_MEMORY.md");
     expect(prompt).toContain("decision:decision-small-plans");
+    expect(prompt).toContain("conversation_memory:CEO_Conversation_MEMORY.md");
     expect(prompt).not.toContain("OMHT context must not leak");
     expect(prompt).toContain("include it in `recommendationTrace` with exact citations");
     expect(prompt).toContain("If no selected memory snippet influences the recommendation, set `recommendationTrace` to an empty array.");
