@@ -1,8 +1,15 @@
-# Remote Autopilot Contract
+# Legacy Remote Autopilot Contract
 
 Last updated: 2026-05-11
 
-Status: active contract for the next remote workflow implementation pass.
+Status: legacy historical contract. This file records the remote-autopilot
+correction slice that followed the first remote dogfood pass. It is no longer
+the top-level product direction. The active direction is the CEO turn loop in
+`../CEO_OFFICE_ROADMAP.md` and `../ARCHITECTURE.md`.
+
+Use this document only as implementation background for the existing
+report-only autopilot code path and Telegram compatibility behavior. Do not use
+it to add more user-facing commands or to constrain natural CEO conversation.
 
 ## Principle
 

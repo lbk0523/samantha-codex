@@ -1,19 +1,30 @@
 # Samantha Remote Adapters
 
-Last updated: 2026-05-11
+Last updated: 2026-05-12
 
 ## Policy
 
-Remote adapters are input adapters first. They may create inbox command files for the narrow supported control-plane transitions. A separate local action runner executes approved actions. Remote adapters may not execute shell commands, dispatch workers directly, merge, push, clean worktrees, or accept internal ids as the normal workflow.
+Remote adapters are compact transport adapters first. They may capture BK's
+intent, short feedback, approvals, and status requests, then create inbox files
+for supported control-plane transitions. A separate local action runner
+executes approved actions. Remote adapters may not execute shell commands,
+dispatch workers directly, merge, push, clean worktrees, or accept internal ids
+as the normal workflow.
 
-Telegram is not Samantha's core product surface. It is a notification, approval, short-feedback, and compact status adapter for the deterministic CEO office. Long review, dashboard inspection, and operational debugging should stay in CLI or dashboard surfaces.
+Telegram is not Samantha's core product surface. The target product surface is
+the natural CEO conversation layer described in
+[CEO_OFFICE_ROADMAP.md](CEO_OFFICE_ROADMAP.md) and
+[ARCHITECTURE.md](ARCHITECTURE.md). Telegram is a notification, approval,
+short-feedback, and compact status adapter for that system. Long review,
+dashboard inspection, and operational debugging should stay in CLI, dashboard,
+or a future richer CEO conversation surface.
 
 The previous command-driven user workflow contract has been retired after
-remote dogfood. Remote adapter changes should follow the architecture direction
-that Samantha owns safe progress until it returns a result, asks one BK
-judgment question, or reports a local-only blocker. Adding Telegram commands is
-not a substitute for workflow clarity. The active remote workflow contract is
-[REMOTE_AUTOPILOT.md](REMOTE_AUTOPILOT.md).
+dogfood. Remote adapter changes should follow the architecture direction that
+Samantha owns safe progress and BK should not drive internal command
+choreography. Adding Telegram commands is not a substitute for CEO conversation
+clarity. The old remote-autopilot contract is retained only as historical
+context in [legacy/REMOTE_AUTOPILOT.md](legacy/REMOTE_AUTOPILOT.md).
 
 All remote input must pass through:
 
@@ -21,24 +32,29 @@ All remote input must pass through:
 remote input -> allowlist -> command mapping -> inbox/*.json -> inbox:watch
 ```
 
-## Practical Telegram Flow
+## Adapter Role In The CEO Turn Loop
 
-Use this as the normal Telegram adapter path for read-only progress:
+Target behavior:
 
 ```text
-/work <read-only planning/report request> -> # autopilot-result
-autopilot needs one BK judgment -> /answer <answer> or /approve
-autopilot reaches a local-only blocker -> /now or /check
-stale planning block -> /unblock project:<project>
+BK natural language
+-> adapter captures intent or approval
+-> TypeScript kernel validates state and authority
+-> Samantha replies with a natural CEO update, approval request, result, or
+   local repair boundary
 ```
 
-- `/work <request>` captures new work as an orchestration request. When the
-  request is report-only and authority policy allows autopilot, Samantha may
-  continue through read-only planning, report-only materialization, report-only
-  execution, result reporting, and evidence recording from that one input.
+The current implementation still exposes explicit Telegram commands. Treat
+those commands as compatibility/debug operations while Phase 1 builds the CEO
+turn loop. The adapter should increasingly send natural intent to Samantha
+instead of making BK pick `/plan`, `/go`, `/approve`, `/now`, or `/check`.
+
+- `/work <request>` captures new work as an orchestration request. In the target
+  CEO turn loop, this should become one way to submit natural intent, not the
+  start of a user-driven command chain.
 - `/plan`, `/go`, `/recover`, `/drop`, and `/plan_current` remain supported
-  legacy/debug commands, but they should not be the primary next action for a
-  report-only autopilot-eligible `/work`.
+  compatibility/debug commands, but they should not be the primary product
+  workflow.
 - `/now` shows the next Telegram command, local command, or read-only inspection command for the current state.
 - `/plan` runs the local Codex CLI `codex-orchestrator` profile in read-only mode and returns the generated plan.
 - `/plan_current` shows the current unapproved plan again without rerunning the orchestrator.
@@ -57,13 +73,13 @@ stale planning block -> /unblock project:<project>
 
 `/help` shows only this short flow. Lower-level inspection and explicit id-based commands are not exposed as Telegram commands. Deprecated Telegram commands return a short replacement hint instead of running the old flow.
 
-Plans may be executable, question-only, blocked by prerequisites, or blocked by
-a pending blocker clarification. Question-only and prerequisite-blocked plans
-show `/revise <feedback>` instead of `/go` as the safe next step. Pending
-blocker clarifications show `/answer <answer>` so BK can keep the current plan
-while recording the clarifying judgment. Alternatives and tradeoffs are
-advisory; `/go` materializes only the selected `tasks` and `batches` path after
-deterministic validation.
+Plans may be executable, conversation-only, blocked by prerequisites, or
+blocked by a pending clarification. Compatibility reports may still show
+commands such as `/revise <feedback>`, `/answer <answer>`, or `/go`; future CEO
+turn reports should instead explain the underlying decision or authority
+boundary in natural language. Alternatives and tradeoffs are advisory; the
+deterministic kernel materializes only the selected `tasks` and `batches` path
+after validation.
 
 ## Supported Commands
 
@@ -121,7 +137,10 @@ not routine `/check`.
 
 `/problems` is the deeper diagnostic view. It checks local env readiness, daemon health, queue state, Telegram poll/reply state, latest remote command/report context, reply failures, and expected host service template installation without printing secret values.
 
-Proposal and task draft records still exist as local fallback state, but they are not part of the normal Telegram command surface. Old proposal/draft Telegram commands return deprecated-command guidance and point back to `/work`, `/plan`, `/go`, or `/now`.
+Proposal and task draft records still exist as local fallback state, but they
+are not part of the target CEO conversation surface. Old proposal/draft
+Telegram commands return deprecated-command guidance and point back to the
+current compatibility flow.
 
 Local draft commands remain available for precise patch edits and debugging:
 
@@ -152,7 +171,7 @@ Draft patches may include `setupCommands`. Use this for fresh worktree dependenc
 }
 ```
 
-Project profiles can provide these defaults plus remote scope recipes. The first bundled profile is `omht`, which supplies the local OMHT repo root, `bun install`, a conservative default typecheck command, and remote scopes for implementation and planning/report work. Korean planning/report requests such as `계획`, `보고`, `검토`, and `다음 작업` are routed to the planning/report scope. Use `/plan` for normal Telegram operation and `drafts:prepare` when converting a rough draft into an executable task draft locally.
+Project profiles can provide these defaults plus remote scope recipes. The first bundled profile is `omht`, which supplies the local OMHT repo root, `bun install`, a conservative default typecheck command, and remote scopes for implementation and planning/report work. Korean planning/report requests such as `계획`, `보고`, `검토`, and `다음 작업` are routed to the planning/report scope. Existing compatibility flows may still use `/plan`; future CEO turn flows should hide that command choreography behind natural conversation.
 
 Remote scopes may set `resultMode` to `write` or `report`. `write` remains the default implementation mode and still fails if a writer returns `pass` without changed files. `report` is for planning or read-only dogfood requests: if the worker returns a valid passing HARNESS_RESULT and changes no files, Samantha records the run as successful without requiring a commit.
 

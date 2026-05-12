@@ -4,12 +4,18 @@
 
 ```text
 BK
-  <-> CLI / dashboard / Telegram approval adapter / future UI
-Deterministic CEO Office
+  <-> Samantha CEO Conversation Layer / CLI / dashboard / compact adapters
+Samantha CEO Conversation Layer
+  - supports natural turn-by-turn owner/CEO discussion
+  - understands goals, constraints, priorities, risk, and feedback
+  - retrieves short-term context and long-term conversation memory
+  - translates conversation into structured proposals and safe transition
+    requests
+  - produces natural CEO responses instead of command choreography
+Deterministic TypeScript Kernel
   - stores requests, plans, goals, tasks, actions, and audit logs
   - tracks status, blockers, risks, next actions, and BK decision needs
-  - owns safe progress until it reaches a result, one BK judgment, or a
-    local-only blocker
+  - owns safe state transitions, approvals, and execution authority
   - enforces safety policy before any dispatch
   - governs agent profiles, capabilities, skills, connectors, routines, and
     budgets before they can expand execution authority
@@ -31,50 +37,76 @@ Git worktrees / audit logs / dashboard
 
 ## Near-Term Scope
 
-The first useful system is not a general multi-agent platform and not a Telegram-first command bot. It is a safe personal status reporting and work operations layer:
+The first useful system is not a general multi-agent platform and not a
+Telegram-first command bot. It is a safe personal development operations layer
+with a natural CEO conversation surface:
 
-1. Samantha stores structured work state.
-2. Samantha tracks status, blockers, risks, next actions, and BK decision needs.
-3. Samantha generates clear periodic or on-demand reports.
-4. A bounded Orchestrator Agent call can turn a request into an explicit plan,
-   auto-complete safe read-only planning/report work when policy allows, and
-   ask BK for approval when judgment or authority is needed.
-5. The CEO office materializes an approved plan into one or more safe tasks.
-6. The CEO office may run non-writer agents in parallel.
-7. The CEO office runs at most one production writer until safety gates are proven.
-8. The CEO office verifies, merges, pushes, and reports.
+1. BK can discuss product work with Samantha in natural language at Codex
+   CLI-level breadth and flexibility.
+2. Samantha stores structured work state and retrieves durable conversation
+   memory when it affects future decisions.
+3. Samantha tracks status, blockers, risks, next actions, and BK decision needs.
+4. Samantha generates clear periodic or on-demand CEO reports.
+5. A bounded Orchestrator Agent call can turn a request into an explicit plan,
+   auto-complete safe planning/report work when policy allows, and ask BK for
+   approval when authority is needed.
+6. The TypeScript kernel materializes an approved plan into one or more safe
+   tasks.
+7. The TypeScript kernel may run non-writer agents in parallel.
+8. The TypeScript kernel runs at most one production writer until safety gates
+   are proven.
+9. The TypeScript kernel verifies, merges, pushes, and reports.
 
 ## Current Status
 
 Samantha has reached the north-star baseline for the current Codex-only
 control-plane scope. The declaration is recorded in
-[NORTH_STAR.md](NORTH_STAR.md#phase-10-exit-review). The declaration is an
+[NORTH_STAR.md](NORTH_STAR.md#phase-10-exit-review-and-ceo-conversation-correction). The declaration is an
 audit conclusion, not an authority expansion: deterministic TypeScript remains
 the durable operating authority, `writerCap` remains `1`, and remote adapters,
 routines, budgets, memory, SOPs, skills, backup, restore, and migration remain
 behind the same explicit gates described below.
 
-The current implementation has a useful bounded Orchestrator Agent workflow on top of the deterministic CEO office. Telegram `/work` stores an orchestration request and can now autopilot report-only requests through read-only planning, report-only execution, plan-result reporting, and evidence recording when authority policy allows it. `/plan` runs `codex-orchestrator` through the local Codex CLI in read-only mode, `/plan_current` rereads the current unapproved plan without rerunning Codex, `/approve` approves the single current plan approval decision, `/answer <text>` records an answer for exactly one current blocker clarification without changing the plan, `/revise <feedback>` supersedes the current unapproved plan and creates a revised planning request, `/cancel` discards the current pending request or unapproved plan, `/unblock` clears a stale planning block when Telegram can do so without rewriting execution evidence, and `/go` validates the plan before creating task/action records.
+The current implementation has a useful bounded Orchestrator Agent workflow on
+top of the deterministic TypeScript kernel. Telegram `/work` stores an
+orchestration request, `/plan` runs `codex-orchestrator`, `/approve` resolves
+one current plan approval decision, `/answer <text>` records one current blocker
+answer, `/revise <feedback>` creates a revised request, `/cancel` discards the
+current pending request or unapproved plan, `/unblock` clears a stale planning
+block, and `/go` validates the plan before creating task/action records.
 
-Post-dogfood correction: this command-driven remote loop is safe but not good
-enough as the product experience. It makes BK choose too many state-transition
-commands for routine work. The next architecture direction is remote autopilot:
-remote input captures intent, then the CEO office advances every safe,
-deterministic transition it already has authority to perform until it returns a
-result, asks exactly one BK judgment question, or reports a local-only blocker.
-Adding more Telegram commands is not the fix.
+Post-dogfood correction: this command-driven loop is safe but not good enough
+as the product experience. It makes BK choose too many state-transition
+commands for routine work. The next architecture direction is a CEO turn loop:
+BK speaks naturally, Samantha retrieves context and memory, Samantha reasons as
+a CEO/assistant, and the TypeScript kernel advances only the safe deterministic
+transitions it already has authority to perform. Adding more Telegram commands
+is not the fix.
 
-The Control Plane materializes approved plans into tasks and dispatch actions, promotes dependent actions only after prerequisites pass, runs approved write actions through `actions:watch`, and reruns `codex-orchestrator` to write one `# plan-result` report once all actions for a materialized plan finish. The report-only autopilot slice may run non-writer report actions directly from `/work` and records the authority grant plus evidence. If a plan result failed, `/recover` creates a new recovery orchestration request for the next `/plan` without retrying or dispatching by itself. Recovery requests carry failed-plan evidence, run-log context, failed verify details, and explicit instructions to use project profile canonical repo roots rather than old worker worktrees.
+The Control Plane materializes approved plans into tasks and dispatch actions,
+promotes dependent actions only after prerequisites pass, runs approved write
+actions through `actions:watch`, and reruns `codex-orchestrator` to write one
+result report once all actions for a materialized plan finish. The report-only
+autopilot implementation slice remains a useful internal primitive, but it is
+no longer the top-level product direction. If a plan result failed, `/recover`
+creates a new recovery orchestration request for a later safe turn without
+retrying or dispatching by itself. Recovery requests carry failed-plan evidence,
+run-log context, failed verify details, and explicit instructions to use project
+profile canonical repo roots rather than old worker worktrees.
 
 When a recovery request produces a passing materialized plan, result reports say the original problem was fixed. If the recovery plan also fails, reports say the original problem remains unresolved and recovery is still needed. Linked successful recoveries also prevent stale failed source plans, actions, and tasks from continuing to drive CEO status or next-action reporting.
 
-Telegram is intentionally small and is an adapter for notification, approval, short feedback, and status checks. The routine surface is `/work`, `/plan`, `/plan_current`, `/approve`, `/answer`, `/revise`, `/cancel`, `/go`, `/recover`, `/unblock`, `/now`, `/check`, and `/problems`. Older proposal/draft/task/action/run id commands are no longer normal Telegram operations; they return deprecated-command guidance and point back to the orchestrator flow. Local CLI, dashboard, and inbox commands remain available for deeper operation, debugging, and recovery.
+Telegram is intentionally small and is an adapter for notification, approval,
+short feedback, and status checks. Existing Telegram commands remain
+compatibility and debug surfaces, not the target CEO product surface. Local CLI,
+dashboard, and inbox commands remain available for deeper operation, debugging,
+and recovery.
 
 The previous command-driven user workflow contract has been retired after
-remote dogfood. The replacement workflow contract starts in
-[REMOTE_AUTOPILOT.md](REMOTE_AUTOPILOT.md) and should preserve the remote
-autopilot shape described below: Samantha owns safe progress, BK owns judgment,
-and policy owns authority.
+dogfood. The replacement direction is described in
+[CEO_OFFICE_ROADMAP.md](CEO_OFFICE_ROADMAP.md): natural CEO conversation is
+broad, execution authority is narrow and deterministic, and memory is context
+only.
 
 Telegram notifications are compact outbox reports. On the active automation host, `ceo:notify` runs periodically, writes a remote outbox CEO summary, and records generation in `state/ceo-reports.jsonl`; `telegram:reply` delivers it through the existing Telegram reply adapter and records delivery in `state/telegram-replies.json`. Telegram can approve only the single current plan-approval decision through `/approve`; ambiguous or multiple pending decisions redirect BK back to `/now`, CLI, or dashboard. Telegram never accepts shell commands, repo paths, or task/action/run/decision ids as workflow inputs.
 
@@ -136,23 +168,23 @@ Future expansion should stay governance-first:
   restore, and migration validation. These gates use memory only as context and
   do not expand execution authority.
 
-## Remote Autopilot And Delegated Authority
+## CEO Turn Loop And Delegated Authority
 
-The remote workflow contract is:
+The CEO turn contract is:
 
 ```text
-Samantha owns progress.
-BK owns judgment.
-Policy owns authority.
+Natural CEO conversation is broad.
+Execution authority is narrow and deterministic.
+Memory is context, not authority.
 ```
 
-For remote autopilot, Samantha should continue safe progress without asking BK
-to pick operational commands. A remote request may advance automatically through
-intake, classification, read-only planning, report-only execution, status
-reporting, and evidence recording when the active deterministic policy allows
-those transitions.
+For a CEO turn, Samantha should continue safe progress without asking BK to pick
+operational commands. A natural request may advance automatically through
+intake, classification, memory retrieval, planning, report-only execution,
+status reporting, and evidence recording when the active deterministic policy
+allows those transitions.
 
-The first autopilot scope is deliberately narrow:
+The first turn-loop scope is deliberately narrow:
 
 - read-only planning, analysis, and report-only work may run without BK approval
   when it has no write, dispatch, merge, push, cleanup, connector, secret,
@@ -163,10 +195,10 @@ The first autopilot scope is deliberately narrow:
   budget policy changes, routine authority changes, profile changes, and host
   operations still require deterministic gates and explicit authority.
 
-Memory is not authority. Preference memory, operational memory, and judgment
-history may help Samantha recommend the next action or propose a future
-delegation, but they must not directly grant runtime permission. The required
-authority path is:
+Memory is not authority. `CEO_Conversation_MEMORY.md`, preference memory,
+operational memory, project memory, and judgment history may help Samantha
+understand BK, recommend next actions, or propose future delegation, but they
+must not directly grant runtime permission. The required authority path is:
 
 ```text
 BK decisions -> decision memory -> pattern synthesis -> proposed authority grant

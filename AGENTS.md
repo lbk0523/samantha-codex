@@ -2,11 +2,18 @@
 
 ## Project
 
-This repository builds a Codex-only version of Samantha: a personal 24/7 operations control plane that tracks work state, manages approvals and safety gates, dispatches bounded Codex CLI agents when needed, and reports back through one orchestrator surface.
+This repository builds a Codex-only version of Samantha: a personal 24/7
+operations control plane with a natural CEO conversation layer and a
+deterministic TypeScript policy/state kernel. Samantha tracks work state,
+manages approvals and safety gates, dispatches bounded Codex CLI agents when
+needed, and reports back through one CEO surface.
 
 ## Operating Rules
 
-- The orchestrator is a deterministic TypeScript CEO office, not a permanently running LLM conversation.
+- Samantha should support natural turn-by-turn CEO conversation with BK, while
+  execution authority remains in deterministic TypeScript gates.
+- The TypeScript kernel is the durable state and safety authority, not an
+  ungoverned permanently running LLM.
 - LLM orchestrator calls are bounded planning, synthesis, review, or question-drafting workers.
 - Codex/GPT agents are workers, reviewers, evaluators, or spec helpers.
 - BK talks only to the orchestrator.
@@ -41,13 +48,12 @@ Agents must not create worktrees, dispatch subagents, merge, or push on their ow
 
 ## Current Scope
 
-Build the minimum Codex-only control plane:
+Turn the completed control-plane baseline toward the CEO turn-loop roadmap:
 
-- agent profile contracts
-- task contracts
-- file-backed task store
-- status reporting and decision queues
-- safety policy validation
-- later: remote notification/approval adapters, Codex CLI dispatch, worktree merge, audit dashboard
+- Phase 1: natural CEO turn loop over the existing deterministic kernel
+- Phase 2: short-term context and long-term conversation memory structure
+- Phase 3: a general software development organization built from bounded
+  spec, research, review, evaluation, operations, and writer roles
 
-Avoid adding frameworks before the control-plane contract is stable.
+Avoid adding framework breadth before the CEO turn loop and memory structure are
+dogfooded.

@@ -1,12 +1,11 @@
 # CEO Office Roadmap
 
-Last updated: 2026-05-11
+Last updated: 2026-05-12
 
 ## Purpose
 
-This document is the long-range roadmap for Samantha's Deterministic CEO
-Office. It records product direction and maturity gates, not implementation
-TODOs.
+This document is the long-range roadmap for Samantha's CEO operating system.
+It records product direction and maturity gates, not implementation TODOs.
 
 Detailed stage plans, handoff prompts, and completed implementation notes belong
 in PRs, issues, commits, tests, or git history. Do not add new phase execution
@@ -15,7 +14,8 @@ must keep following.
 
 ## North Star
 
-Build Samantha into BK's personal development operations control plane.
+Build Samantha into BK's personal development operations control plane with a
+natural CEO conversation surface and deterministic execution authority.
 
 The target experience is:
 
@@ -23,9 +23,13 @@ The target experience is:
 BK
   = founder, final decision maker
 
-Deterministic CEO Office
+Samantha CEO Conversation Layer
+  = natural turn-by-turn CEO / executive assistant surface for goals,
+    tradeoffs, product direction, feedback, and decisions
+
+Deterministic TypeScript Kernel
   = durable operating system for work state, reporting, queues, approvals,
-    schedules, safety gates, dispatch, recovery, and audit
+    schedules, safety gates, dispatch, recovery, memory gates, and audit
 
 Bounded LLM Agents
   = planners, synthesizers, reviewers, evaluators, researchers, content agents,
@@ -41,22 +45,23 @@ Samantha should periodically report:
 - what risks exist
 - what Samantha recommends next
 
-Samantha should execute only approved, safe next steps through deterministic
-gates. LLMs may propose and summarize, but durable state and operational
-authority stay in TypeScript code.
+Samantha should converse with BK at roughly the breadth and flexibility of the
+Codex CLI experience. The natural conversation layer may discuss context,
+push back, ask multi-part questions, summarize tradeoffs, and translate intent
+into work. It must not directly mutate production state or grant authority.
 
-The remote product direction is:
+The authority direction is:
 
 ```text
-Samantha owns progress.
-BK owns judgment.
-Policy owns authority.
+Natural CEO conversation is broad.
+Execution authority is narrow and deterministic.
+Memory is context, not authority.
 ```
 
-Remote usage should not make BK manually drive routine state transitions. BK
-should state intent, review a result, or answer one necessary judgment question.
-Samantha should perform safe deterministic progress on BK's behalf until it
-needs judgment, authority, or local repair.
+BK should state intent, exchange product feedback, make decisions, and review
+results without manually choosing internal workflow commands. Samantha should
+perform safe deterministic progress on BK's behalf until the next useful CEO
+conversation turn, approval boundary, result, or local repair boundary.
 
 North-star criteria are tracked in [NORTH_STAR.md](NORTH_STAR.md).
 
@@ -80,22 +85,25 @@ This baseline does not expand runtime authority. `writerCap` remains `1`;
 remote adapters remain non-shell; routines remain intake-only; backup, restore,
 and migration remain read-only validation plus manual handoff.
 
-The first remote dogfood pass exposed a product gap in this baseline: the
-command-driven Telegram flow is safe, but it is too operator-heavy. Asking BK to
-choose `/plan`, `/go`, `/now`, or `/check` for routine read-only progress makes
-BK the scheduler instead of letting Samantha own progress. That gap should be
-treated as the next product correction, not as a reason to add more commands.
+The autopilot dogfood pass exposed a deeper product gap in this baseline: the
+command-driven flow is safe, but it is too operator-heavy. Asking BK to choose
+`/plan`, `/go`, `/approve`, `/now`, or `/check` makes BK the scheduler instead
+of letting Samantha act as a CEO/assistant. That gap should be treated as the
+next product correction, not as a reason to add more commands.
 
 ## Product Principles
 
-- Samantha is a deterministic CEO office, not a persistent LLM boss.
-- BK talks to the orchestrator surface; production state changes go through
-  deterministic stores and safety gates.
+- Samantha needs a natural CEO conversation layer, not a command-bot primary
+  interface.
+- The TypeScript control plane remains the state, policy, execution, and audit
+  kernel.
+- BK talks to Samantha in natural language; Samantha translates conversation
+  into structured proposals and safe internal transitions.
 - Remote adapters capture intent, short feedback, approvals, and compact
-  reports; they do not execute shell commands or accept arbitrary paths or
-  internal ids.
-- Remote autopilot should advance safe deterministic transitions without making
-  BK choose internal workflow commands.
+  reports; they do not define the core product surface and do not execute shell
+  commands or accept arbitrary paths or internal ids.
+- Safe deterministic transitions should advance without making BK choose
+  internal workflow commands.
 - Normal reports should provide one safe next action instead of making BK choose
   from raw state.
 - Telegram UX must not require task, action, run, decision, proposal, or draft
@@ -110,32 +118,74 @@ treated as the next product correction, not as a reason to add more commands.
   merge/cleanup reliability, rollback evidence, and BK approval.
 - Skills, SOPs, memory, routines, budgets, connectors, and secrets are context
   or governed capabilities. They cannot override safety policy.
-- Memory can suggest autonomy, but only deterministic policy can grant
-  autonomy.
+- `CEO_Conversation_MEMORY.md`, governed memory records, decision summaries, and
+  project briefs are planning context. They can preserve product direction and
+  improve future CEO turns, but only deterministic policy can grant runtime
+  authority.
 - Exactly one active automation host owns runtime state at a time.
 
 ## Next Direction
 
-Near-term work should correct the remote flow before broadening scope:
+Near-term work should turn Samantha from a command workflow into a natural CEO
+turn loop before broadening scope:
 
-1. Align the existing architecture, roadmap, and north-star documents around
-   remote autopilot and delegated authority.
-2. Add and maintain `REMOTE_AUTOPILOT.md` as the contract for safe automatic progress,
-   approval boundaries, stop conditions, and report shape.
-3. Implement the first vertical slice: read-only planning/report requests should
-   finish from one remote user intent without BK choosing `/plan`, `/go`, or
-   `/check`.
-4. Record dogfood evidence from autopilot runs so Samantha can later propose
-   bounded authority grants.
+### Phase 1 - CEO Turn Loop
+
+Apply the turn-by-turn agent CEO direction. BK should be able to talk to
+Samantha in natural language at Codex CLI-level breadth and flexibility.
+Samantha should understand intent, constraints, priorities, and risk; retrieve
+conversation context; propose or execute only safe deterministic transitions;
+and respond as a CEO/assistant rather than as a command router.
+
+Phase 1 succeeds when routine planning/report/product-feedback work no longer
+requires BK to drive `/plan`, `/go`, `/approve`, or `/now` choreography. The
+implemented command surfaces may remain as debug and adapter compatibility, but
+they must not be the product workflow.
+
+### Phase 2 - Memory And Context System
+
+Build the learning structure behind CEO conversation. Separate:
+
+- short-term context: current conversation, active request, pending decisions,
+  active plans, recent runs, and current blockers
+- long-term memory: `CEO_Conversation_MEMORY.md`, governed memory records,
+  decision-history summaries, project briefs, and cited reports/artifacts
+
+The memory process is:
+
+```text
+retrieve -> summarize -> cite/source -> use as context -> propose update
+-> deterministic memory write gate
+```
+
+Memory preserves context and product direction. It must not grant execution
+authority, connector access, secret access, budget authority, routine authority,
+profile authority, or host authority.
+
+### Phase 3 - Software Development Organization
+
+Build Samantha's general software development organization after the CEO turn
+loop and memory system are usable. The organization should flex across web,
+app, game, and other software projects by understanding each product's context,
+constraints, platform, design goals, and delivery process.
+
+The first Phase 3 success criterion is one real project flow: BK and Samantha
+discuss product direction naturally, Samantha organizes the right spec,
+research, review, evaluation, operations, and writer roles, then work proceeds
+through implementation, verification, reporting, feedback, and recovery gates.
+General multi-domain capability should come from repeated dogfood evidence, not
+from speculative framework expansion.
 
 Keep the durable reference split:
 
 - keep `ARCHITECTURE.md` as the durable system contract
-- keep `REMOTE_AUTOPILOT.md` as the remote autopilot workflow contract
-- keep `REMOTE_ADAPTERS.md` as the compact remote UX contract
+- keep `CEO_Conversation_MEMORY.md` as the current durable conversation memory
+  file until a governed structured memory flow supersedes it
+- keep `REMOTE_ADAPTERS.md` as the compact adapter implementation contract
 - keep `DAEMON_OPERATIONS.md` as the active-host and runtime operations
   contract
-- rewrite the workflow playbook after the remote autopilot contract is stable
+- keep legacy remote-autopilot notes under `docs/legacy/` as historical context
+  only
 - keep `PARALLELISM_EVIDENCE.md` as the writer-cap evidence ledger
 - keep `ROLLBACK_AND_RECOVERY_DRILLS.md` as the recovery drill catalog
 
@@ -149,9 +199,12 @@ Before expanding Samantha beyond the current baseline, answer these questions:
 
 - What deterministic record owns the new state?
 - What approval or safety gate blocks unsafe use?
-- What command or report shows the next safe action?
-- Can Samantha make safe progress without asking BK to choose a workflow
-  command?
+- What natural CEO turn, report, or approval boundary shows the next useful
+  action?
+- Can Samantha make safe progress without asking BK to choose an internal
+  workflow command?
+- What conversation memory should be retrieved or updated, and is it context
+  only?
 - Which verification profile proves the change?
 - Does this expand worker, connector, secret, routine, budget, merge, push,
   cleanup, recovery, memory, SOP, skill, or host authority?

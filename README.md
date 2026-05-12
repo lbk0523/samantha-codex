@@ -4,7 +4,10 @@ Codex-only Samantha control plane prototype.
 
 Korean version: [readme-kr.md](readme-kr.md)
 
-Samantha-Codex is a personal operations layer where BK talks to one orchestrator surface, the orchestrator turns requests into explicit plans, and deterministic TypeScript control-plane code runs safety, dispatch, verification, integration, and reporting gates.
+Samantha-Codex is a personal operations layer where BK should be able to talk
+to Samantha in natural language, while deterministic TypeScript control-plane
+code runs safety, state, dispatch, verification, integration, memory, and
+reporting gates.
 
 The current repository is not a general multi-agent framework. It is the minimum useful control plane for safe Codex-based work.
 
@@ -12,12 +15,12 @@ The current repository is not a general multi-agent framework. It is the minimum
 
 ```text
 BK
-  <-> Telegram / local operator CLI
-Samantha Orchestrator Agent
-  - discusses goals, scope, risk, and next actions
-  - proposes task plans for approval
-  - synthesizes final results
-Samantha Control Plane
+  <-> Samantha CEO conversation layer / CLI / dashboard / compact adapters
+Samantha CEO Conversation Layer
+  - discusses goals, constraints, feedback, risk, and product direction
+  - retrieves conversation memory and active work context
+  - translates natural language into structured proposals or safe transitions
+Samantha TypeScript Kernel
   - stores requests, plans, tasks, actions, runs, and audit logs
   - validates safety policy before dispatch
   - dispatches approved Codex CLI agents
@@ -34,7 +37,8 @@ Codex Agents
   - codex-orchestrator planner/synthesizer
 ```
 
-The orchestrator proposes work. The control plane owns execution and safety. Agents do not bypass control-plane gates.
+The conversation layer and bounded agents propose work. The TypeScript kernel
+owns execution and safety. Agents do not bypass control-plane gates.
 
 ## Operating Boundaries
 
@@ -46,17 +50,21 @@ The orchestrator proposes work. The control plane owns execution and safety. Age
 - Repo code and docs should not hard-code local absolute paths. Prefer repo-relative paths, project ids, environment variables, or project profile resolution.
 - Mac/SSH host handoff remains manual and single-active-host. See [docs/DAEMON_OPERATIONS.md](docs/DAEMON_OPERATIONS.md).
 
-## Supported Remote Flow
+## Remote And Conversation Direction
 
-Telegram is intentionally small. The normal remote workflow is:
+Telegram is intentionally small. It is a compact notification, approval,
+short-feedback, and status adapter, not the core product surface. The target
+workflow is the CEO turn loop:
 
 ```text
-/work <request>
-/plan
-/go
+BK natural language
+-> Samantha CEO conversation layer
+-> deterministic TypeScript validation and safe progress
+-> result, approval boundary, useful CEO response, or local repair boundary
 ```
 
-Common follow-up commands:
+The existing Telegram command flow remains available as a compatibility/debug
+surface while the CEO turn loop is built. Common commands:
 
 - `/plan_current` shows the current unapproved plan without rerunning Codex.
 - `/approve` approves the single current plan approval decision.
@@ -175,7 +183,6 @@ Writer agents do not commit or push. Production code writers use per-task worktr
 For deeper context, see:
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/REMOTE_AUTOPILOT.md](docs/REMOTE_AUTOPILOT.md)
 - [docs/DETERMINISTIC_CEO_OFFICE.md](docs/DETERMINISTIC_CEO_OFFICE.md)
 - [docs/CEO_OFFICE_ROADMAP.md](docs/CEO_OFFICE_ROADMAP.md)
 - [docs/NORTH_STAR.md](docs/NORTH_STAR.md)
