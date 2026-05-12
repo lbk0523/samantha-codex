@@ -3,6 +3,7 @@ import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 
 import { join } from "node:path";
 import { hostname, tmpdir } from "node:os";
 import type { AgentProfile, TaskSpec } from "../src/lib/contracts";
+import { CeoTurnStore } from "../src/lib/ceo-turn-store";
 import type { DaemonHeartbeat } from "../src/lib/daemon";
 import { renderDashboard, renderLaneViewDashboard, writeDashboard } from "../src/lib/dashboard";
 import { createDecisionItem, DecisionStore } from "../src/lib/decision-store";
@@ -458,6 +459,84 @@ describe("inbox and remote commands", () => {
 
     expect(enqueued.command.type).toBe("remote:deprecated");
     expect(await readFile(enqueued.path, "utf8")).toContain("remote:deprecated");
+  });
+
+  test("routes natural remote text into the CEO turn store without execution or approval", async () => {
+    const root = await mkdtemp(join(tmpdir(), "samantha-codex-ceo-turn-inbox-"));
+    tmpRoots.push(root);
+    const state = join(root, "state");
+    const inbox = join(root, "inbox");
+    const outbox = join(root, "outbox");
+    const archive = join(root, "archive");
+    const inputPath = join(root, "remote.json");
+    await mkdir(state, { recursive: true });
+    await writeFile(
+      inputPath,
+      JSON.stringify({
+        senderId: "bk",
+        text: "사만다 지금 막힌 작업만 짧게 정리해줘",
+        receivedAt: "2026-05-12T09:15:00.000Z",
+        remoteId: 915,
+      }),
+      "utf8",
+    );
+    const enqueued = await enqueueRemoteCommand({ inputPath, inboxDir: inbox, allowedSenderId: "bk" });
+    expect(enqueued.command).toMatchObject({
+      type: "ceo:turn",
+      args: {
+        source: "remote",
+        text: "사만다 지금 막힌 작업만 짧게 정리해줘",
+        senderId: "bk",
+      },
+    });
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "src/samantha.ts",
+        "inbox:process",
+        `--state-dir=${state}`,
+        `--inbox-dir=${inbox}`,
+        `--outbox-dir=${outbox}`,
+        `--archive-dir=${archive}`,
+      ],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    const reports = (await readdir(outbox)).filter((file) => file.endsWith(".md"));
+    expect(reports).toHaveLength(1);
+    const report = await readFile(join(outbox, reports[0]), "utf8");
+    expect(report).toContain("# ceo-turn");
+    expect(report).toContain("Plain non-slash Telegram text -> `ceo:turn`.");
+    expect(report).toContain("No shell command was executed.");
+
+    const turns = await new CeoTurnStore(join(state, "ceo-turns.jsonl")).list();
+    expect(turns).toEqual([
+      expect.objectContaining({
+        source: "remote",
+        actor: "bk",
+        text: "사만다 지금 막힌 작업만 짧게 정리해줘",
+        detectedIntent: { kind: "natural_turn", summary: "Natural CEO turn captured from inbox routing." },
+        responseBoundary: {
+          kind: "queued_for_ceo_turn_runner",
+          summary: "Stage 3 records natural input only; no approval, execution, or orchestration transition was performed.",
+        },
+        linkedStateIds: {},
+        createdAt: "2026-05-12T09:15:00.000Z",
+        updatedAt: "2026-05-12T09:15:00.000Z",
+      }),
+    ]);
+    expect(await pathExists(join(state, "orchestration-requests.jsonl"))).toBe(false);
+    expect(await pathExists(join(state, "decisions.jsonl"))).toBe(false);
+    expect(await pathExists(join(state, "tasks.jsonl"))).toBe(false);
+    expect(await pathExists(join(state, "remote-actions.jsonl"))).toBe(false);
   });
 
   test("processes remote dispatch preparation into a pending action without executing", async () => {

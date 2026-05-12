@@ -15,6 +15,7 @@ import {
   type AutopilotTransition,
 } from "./lib/autopilot-evidence-store";
 import { buildCeoStatusSnapshot, formatCeoStatusReport, type CeoStatusSnapshot } from "./lib/ceo-status";
+import { CeoTurnStore } from "./lib/ceo-turn-store";
 import {
   buildCeoReportId,
   buildNotificationDigestId,
@@ -274,6 +275,10 @@ function remoteActionsPath(args: ParsedArgs): string {
 
 function ceoReportsPath(args: ParsedArgs): string {
   return join(stateDir(args), "ceo-reports.jsonl");
+}
+
+function ceoTurnsPath(args: ParsedArgs): string {
+  return join(stateDir(args), "ceo-turns.jsonl");
 }
 
 function projectBriefsPath(args: ParsedArgs): string {
@@ -3241,6 +3246,40 @@ async function handleInboxCommand(command: InboxCommand, args: ParsedArgs): Prom
       command: String(command.args?.command ?? "unknown"),
       replacement: String(command.args?.replacement ?? "/now"),
     });
+  }
+  if (command.type === "ceo:turn") {
+    const text = String(command.args?.text ?? "");
+    if (!text.trim()) throw new Error("CEO turn text is required");
+    const createdAt = String(command.args?.receivedAt ?? new Date().toISOString());
+    const source = command.args?.source === "local" || command.args?.source === "system" ? command.args.source : "remote";
+    const actor = command.args?.actor === "operator" || command.args?.actor === "system" ? command.args.actor : "bk";
+    await new CeoTurnStore(ceoTurnsPath(args)).create({
+      source,
+      actor,
+      text,
+      detectedIntent: {
+        kind: "natural_turn",
+        summary: "Natural CEO turn captured from inbox routing.",
+      },
+      responseBoundary: {
+        kind: "queued_for_ceo_turn_runner",
+        summary: "Stage 3 records natural input only; no approval, execution, or orchestration transition was performed.",
+      },
+      createdAt,
+    });
+    return [
+      "# ceo-turn",
+      "",
+      "Natural CEO turn recorded.",
+      "",
+      "Routing:",
+      "- Plain non-slash Telegram text -> `ceo:turn`.",
+      "- Slash commands keep their compatibility mappings.",
+      "",
+      "Boundary:",
+      "- No shell command was executed.",
+      "- No approval, orchestration request, task, action, dispatch, merge, push, cleanup, or recovery was performed.",
+    ].join("\n");
   }
   if (command.type === "status:show") {
     const runs = await new RunIndex(runsPath(args)).list();

@@ -25,6 +25,21 @@ describe("commandFromRemoteInput", () => {
     expect(command.id).toContain("ceo-turn");
   });
 
+  test("keeps natural text out of shell and approval command paths", () => {
+    expect(commandFromRemoteInput({ senderId: "bk", text: "bun run typecheck 실행해줘" }, "bk")).toMatchObject({
+      type: "ceo:turn",
+      args: { text: "bun run typecheck 실행해줘" },
+    });
+    expect(commandFromRemoteInput({ senderId: "bk", text: "좋아 승인해" }, "bk")).toMatchObject({
+      type: "ceo:turn",
+      args: { text: "좋아 승인해" },
+    });
+  });
+
+  test("rejects unsupported slash commands", () => {
+    expect(() => commandFromRemoteInput({ senderId: "bk", text: "/shell bun run typecheck" }, "bk")).toThrow("unsupported remote command");
+  });
+
   test("maps narrow Telegram approval to latest decision approval without ids", () => {
     const command = commandFromRemoteInput(
       {
